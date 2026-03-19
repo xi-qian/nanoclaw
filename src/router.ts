@@ -1,52 +1,68 @@
-import { Channel, NewMessage } from './types.js';
-import { formatLocalTime } from './timezone.js';
+/**
+ * Router
+ *
+ * 消息路由和格式化
+ */
 
-export function escapeXml(s: string): string {
-  if (!s) return '';
-  return s
+import type { Channel } from './types.js';
+
+/**
+ * 根据 JID 查找对应的通道
+ */
+export function findChannel(channels: Channel[], jid: string): Channel | undefined {
+  return channels.find((ch) => ch.ownsJid(jid));
+}
+
+/**
+ * 移除内部标签（用于隐藏思考过程等）
+ */
+export function stripInternalTags(text: string): string {
+  // 移除单行和多行的 <internal>...</internal> 标签
+  return text.replace(/<internal>[\s\S]*?<\/internal>/gi, '');
+}
+
+/**
+ * 格式化消息列表为 XML（用于 Agent 提示词）
+ */
+export function formatMessages(messages: any[], timezone: string): string {
+  const formattedMessages = messages
+    .map((msg) => {
+      const timestamp = new Date(msg.timestamp).toLocaleString('en-US', {
+        timeZone: timezone,
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      });
+      const sender = escapeXml(msg.sender_name || 'User');
+      const content = escapeXml(msg.content);
+      return `    <message sender="${sender}" timestamp="${timestamp}">${content}</message>`;
+    })
+    .join('\n');
+
+  return `<context timezone="${timezone}" />\n<messages>\n${formattedMessages}\n</messages>`;
+}
+
+/**
+ * 格式化出站消息（移除内部标签，可选添加前缀）
+ */
+export function formatOutbound(text: string, assistantName?: string): string {
+  const stripped = stripInternalTags(text);
+  if (assistantName) {
+    return `${assistantName}: ${stripped}`;
+  }
+  return stripped;
+}
+
+/**
+ * 转义 XML 特殊字符
+ */
+export function escapeXml(unsafe: string): string {
+  return unsafe
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-export function formatMessages(
-  messages: NewMessage[],
-  timezone: string,
-): string {
-  const lines = messages.map((m) => {
-    const displayTime = formatLocalTime(m.timestamp, timezone);
-    return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}">${escapeXml(m.content)}</message>`;
-  });
-
-  const header = `<context timezone="${escapeXml(timezone)}" />\n`;
-
-  return `${header}<messages>\n${lines.join('\n')}\n</messages>`;
-}
-
-export function stripInternalTags(text: string): string {
-  return text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-}
-
-export function formatOutbound(rawText: string): string {
-  const text = stripInternalTags(rawText);
-  if (!text) return '';
-  return text;
-}
-
-export function routeOutbound(
-  channels: Channel[],
-  jid: string,
-  text: string,
-): Promise<void> {
-  const channel = channels.find((c) => c.ownsJid(jid) && c.isConnected());
-  if (!channel) throw new Error(`No channel for JID: ${jid}`);
-  return channel.sendMessage(jid, text);
-}
-
-export function findChannel(
-  channels: Channel[],
-  jid: string,
-): Channel | undefined {
-  return channels.find((c) => c.ownsJid(jid));
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }

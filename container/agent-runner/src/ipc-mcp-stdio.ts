@@ -14,6 +14,8 @@ import { CronExpressionParser } from 'cron-parser';
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const FEISHU_REQUESTS_DIR = path.join(IPC_DIR, 'feishu', 'requests');
+const FEISHU_RESULTS_DIR = path.join(IPC_DIR, 'feishu', 'results');
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -330,6 +332,200 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     return {
       content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
     };
+  },
+);
+
+// ==================== 飞书工具 ====================
+
+/**
+ * 等待飞书 IPC 结果（带超时）
+ */
+async function waitForFeishuResult(requestId: string, timeoutMs: number = 30000): Promise<any> {
+  const startTime = Date.now();
+  const resultFile = path.join(FEISHU_RESULTS_DIR, requestId);
+
+  while (Date.now() - startTime < timeoutMs) {
+    if (fs.existsSync(resultFile)) {
+      const result = JSON.parse(fs.readFileSync(resultFile, 'utf-8'));
+      // 删除结果文件
+      try {
+        fs.unlinkSync(resultFile);
+      } catch {}
+      return result;
+    }
+    // 等待 100ms 后重试
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+
+  throw new Error('Timeout waiting for feishu IPC result');
+}
+
+server.tool(
+  'feishu_fetch_doc',
+  '获取飞书云文档内容，返回 Markdown 格式。支持文档 ID 或完整 URL。',
+  {
+    doc_id: z.string().describe('文档 ID 或完整 URL（支持自动解析）'),
+    offset: z.number().optional().describe('字符偏移量（用于分页获取大文档，可选）'),
+    limit: z.number().optional().describe('返回的最大字符数（仅在需要分页时使用）'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'fetch_doc',
+      doc_id: args.doc_id,
+      offset: args.offset,
+      limit: args.limit,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        const content = `# ${result.title}\n\n${result.content || '(空文档)'}`;
+        return {
+          content: [{ type: 'text' as const, text: content }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `获取文档失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `获取文档超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_create_doc',
+  '从 Markdown 创建飞书云文档。可指定父文件夹或知识库节点。',
+  {
+    title: z.string().describe('文档标题'),
+    markdown: z.string().describe('Markdown 内容'),
+    folder_token: z.string().optional().describe('父文件夹 token（可选）'),
+    wiki_node: z.string().optional().describe('知识库节点 token 或 URL（可选，传入则在该节点下创建文档）'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'create_doc',
+      title: args.title,
+      markdown: args.markdown,
+      folder_token: args.folder_token,
+      wiki_node: args.wiki_node,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: `文档创建成功!\n\n标题: ${result.title}\n文档 ID: ${result.doc_id}\n链接: ${result.url || '(未返回链接)'}` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `创建文档失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `创建文档超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_update_doc',
+  '更新飞书云文档内容。提供文档 ID 和新的 Markdown 内容。',
+  {
+    doc_id: z.string().describe('文档 ID 或 URL'),
+    markdown: z.string().describe('新的 Markdown 内容'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'update_doc',
+      doc_id: args.doc_id,
+      markdown: args.markdown,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: '文档更新成功!' }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `更新文档失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `更新文档超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_search_docs',
+  '搜索飞书云文档。返回匹配的文档列表。',
+  {
+    query: z.string().describe('搜索关键词'),
+    limit: z.number().optional().describe('返回结果数量（默认 10）'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'search_docs',
+      query: args.query,
+      limit: args.limit || 10,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success && Array.isArray(result.results)) {
+        if (result.results.length === 0) {
+          return {
+            content: [{ type: 'text' as const, text: '未找到匹配的文档。' }],
+          };
+        }
+
+        const formatted = result.results
+          .map((r: any) => `- ${r.title}\n  ID: ${r.doc_id}\n  ${r.snippet ? `摘要: ${r.snippet}` : ''}\n  ${r.url ? `链接: ${r.url}` : ''}`)
+          .join('\n\n');
+
+        return {
+          content: [{ type: 'text' as const, text: `找到 ${result.results.length} 个文档:\n\n${formatted}` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `搜索文档失败: ${result.error || '未知错误'}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `搜索文档超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
   },
 );
 
