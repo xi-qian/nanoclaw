@@ -9,7 +9,10 @@ import type { Channel } from './types.js';
 /**
  * 根据 JID 查找对应的通道
  */
-export function findChannel(channels: Channel[], jid: string): Channel | undefined {
+export function findChannel(
+  channels: Channel[],
+  jid: string,
+): Channel | undefined {
   return channels.find((ch) => ch.ownsJid(jid));
 }
 

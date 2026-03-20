@@ -6,7 +6,13 @@
  */
 
 import * as Lark from '@larksuiteoapi/node-sdk';
-import type { FeishuCredentials, FeishuDocInfo, CreateDocOptions, LarkBrand, FeishuDocSearchResult } from './types.js';
+import type {
+  FeishuCredentials,
+  FeishuDocInfo,
+  CreateDocOptions,
+  LarkBrand,
+  FeishuDocSearchResult,
+} from './types.js';
 import type { FeishuEvent } from './types.js';
 import { larkLogger } from './logger.js';
 
@@ -52,35 +58,52 @@ export class FeishuClient {
    * 建立 WebSocket 长连接
    */
   async connect(): Promise<void> {
-    if (!this.credentials.accessToken) {
-      throw new Error('Access token not available. Please complete OAuth authentication first.');
-    }
-
     try {
       log.info('Starting WebSocket connection...');
 
-      // 创建 WebSocket 客户端
-      // 注意：根据 SDK 版本，API 可能有所不同
+      // 创建 WebSocket 客户端（启用调试日志）
       this.wsClient = new Lark.WSClient({
         appId: this.credentials.appId,
         appSecret: this.credentials.appSecret,
         domain: BRAND_TO_DOMAIN[this.brand],
+        loggerLevel: Lark.LoggerLevel.debug,
       });
 
-      // TODO: 设置事件监听器
-      // 由于 SDK API 可能不同，这里先做基础连接
+      // 创建事件分发器来处理接收的事件（启用调试日志）
+      const self = this;
+      const eventDispatcher = new Lark.EventDispatcher({
+        loggerLevel: Lark.LoggerLevel.debug,
+      }).register({
+        'im.message.receive_v1': async (data: any) => {
+          log.info(
+            { data: JSON.stringify(data) },
+            'Event received from EventDispatcher',
+          );
+          self.emit('im.message.receive_v1', {
+            type: 'im.message.receive_v1',
+            event: data,
+          });
+        },
+      });
+      log.info('EventDispatcher registered for im.message.receive_v1');
 
       // 启动 WebSocket 连接
-      await this.wsClient.start();
+      const startParams = { eventDispatcher };
+      await this.wsClient.start(startParams);
 
       log.info('Feishu WebSocket client connected');
     } catch (error) {
-      log.error({ error: error instanceof Error ? error.message : String(error) }, 'Failed to connect WebSocket');
+      log.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Failed to connect WebSocket',
+      );
 
       // 提供更详细的错误信息
       if (error instanceof Error) {
-        log.error('WebSocket connection failed. This may require:');
-        log.error('1. Valid access_token (run OAuth authentication first)');
+        log.error('WebSocket connection failed. Please ensure:');
+        log.error(
+          '1. The app is configured for persistent connection in Feishu console',
+        );
         log.error('2. Network connectivity');
         log.error('3. Correct App ID and App Secret');
       }
@@ -96,7 +119,10 @@ export class FeishuClient {
       this.eventHandlers.set(eventType, []);
     }
     this.eventHandlers.get(eventType)!.push(handler);
-    log.debug({ eventType, handlerCount: this.eventHandlers.get(eventType)!.length }, 'Event handler registered');
+    log.debug(
+      { eventType, handlerCount: this.eventHandlers.get(eventType)!.length },
+      'Event handler registered',
+    );
   }
 
   /**
@@ -109,7 +135,13 @@ export class FeishuClient {
         try {
           handler(event);
         } catch (error) {
-          log.error({ eventType, error: error instanceof Error ? error.message : String(error) }, 'Event handler error');
+          log.error(
+            {
+              eventType,
+              error: error instanceof Error ? error.message : String(error),
+            },
+            'Event handler error',
+          );
         }
       }
     }
@@ -132,12 +164,21 @@ export class FeishuClient {
       });
 
       if (response.code === 0) {
-        log.debug({ chatId, messageId: response.data?.message_id }, 'Message sent');
+        log.debug(
+          { chatId, messageId: response.data?.message_id },
+          'Message sent',
+        );
       } else {
         throw new Error(`Failed to send message: ${response.msg}`);
       }
     } catch (error) {
-      log.error({ chatId, error: error instanceof Error ? error.message : String(error) }, 'Failed to send message');
+      log.error(
+        {
+          chatId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to send message',
+      );
       throw error;
     }
   }
@@ -163,12 +204,21 @@ export class FeishuClient {
       });
 
       if (response.code === 0) {
-        log.debug({ chatId, messageId: response.data?.message_id }, 'Rich text message sent');
+        log.debug(
+          { chatId, messageId: response.data?.message_id },
+          'Rich text message sent',
+        );
       } else {
         throw new Error(`Failed to send rich text: ${response.msg}`);
       }
     } catch (error) {
-      log.error({ chatId, error: error instanceof Error ? error.message : String(error) }, 'Failed to send rich text');
+      log.error(
+        {
+          chatId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to send rich text',
+      );
       throw error;
     }
   }
@@ -190,12 +240,21 @@ export class FeishuClient {
       });
 
       if (response.code === 0) {
-        log.debug({ chatId, messageId: response.data?.message_id }, 'Card message sent');
+        log.debug(
+          { chatId, messageId: response.data?.message_id },
+          'Card message sent',
+        );
       } else {
         throw new Error(`Failed to send card: ${response.msg}`);
       }
     } catch (error) {
-      log.error({ chatId, error: error instanceof Error ? error.message : String(error) }, 'Failed to send card');
+      log.error(
+        {
+          chatId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to send card',
+      );
       throw error;
     }
   }
@@ -203,21 +262,35 @@ export class FeishuClient {
   /**
    * 获取文档内容
    */
-  async fetchDoc(docId: string, offset?: number, limit?: number): Promise<FeishuDocInfo> {
+  async fetchDoc(
+    docId: string,
+    offset?: number,
+    limit?: number,
+  ): Promise<FeishuDocInfo> {
     try {
       const actualDocId = this.extractDocId(docId);
 
       // TODO: 实现完整的文档获取逻辑
-      log.warn({ docId: actualDocId }, 'Document fetching not fully implemented, returning mock data');
+      log.warn(
+        { docId: actualDocId },
+        'Document fetching not fully implemented, returning mock data',
+      );
 
       return {
         doc_id: actualDocId,
         title: 'Mock Document',
-        content: 'This is a placeholder. Document fetching is not yet fully implemented.',
+        content:
+          'This is a placeholder. Document fetching is not yet fully implemented.',
         has_more: false,
       };
     } catch (error) {
-      log.error({ docId, error: error instanceof Error ? error.message : String(error) }, 'Failed to fetch doc');
+      log.error(
+        {
+          docId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to fetch doc',
+      );
       throw error;
     }
   }
@@ -225,9 +298,16 @@ export class FeishuClient {
   /**
    * 创建文档
    */
-  async createDoc(title: string, markdown: string, options?: CreateDocOptions): Promise<FeishuDocInfo> {
+  async createDoc(
+    title: string,
+    markdown: string,
+    options?: CreateDocOptions,
+  ): Promise<FeishuDocInfo> {
     try {
-      log.warn({ title, markdownLength: markdown.length }, 'Document creation not fully implemented');
+      log.warn(
+        { title, markdownLength: markdown.length },
+        'Document creation not fully implemented',
+      );
 
       return {
         doc_id: 'mock_doc_' + Date.now(),
@@ -235,7 +315,13 @@ export class FeishuClient {
         url: 'https://feishu.cn/mock',
       };
     } catch (error) {
-      log.error({ title, error: error instanceof Error ? error.message : String(error) }, 'Failed to create doc');
+      log.error(
+        {
+          title,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to create doc',
+      );
       throw error;
     }
   }
@@ -246,9 +332,18 @@ export class FeishuClient {
   async updateDoc(docId: string, markdown: string): Promise<void> {
     try {
       const actualDocId = this.extractDocId(docId);
-      log.warn({ docId: actualDocId, markdownLength: markdown.length }, 'Document update not implemented');
+      log.warn(
+        { docId: actualDocId, markdownLength: markdown.length },
+        'Document update not implemented',
+      );
     } catch (error) {
-      log.error({ docId, error: error instanceof Error ? error.message : String(error) }, 'Failed to update doc');
+      log.error(
+        {
+          docId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to update doc',
+      );
       throw error;
     }
   }
@@ -256,13 +351,25 @@ export class FeishuClient {
   /**
    * 搜索文档
    */
-  async searchDocs(query: string, limit: number = 10): Promise<FeishuDocSearchResult[]> {
+  async searchDocs(
+    query: string,
+    limit: number = 10,
+  ): Promise<FeishuDocSearchResult[]> {
     try {
-      log.warn({ query, limit }, 'Document search not implemented, returning empty results');
+      log.warn(
+        { query, limit },
+        'Document search not implemented, returning empty results',
+      );
 
       return [];
     } catch (error) {
-      log.error({ query, error: error instanceof Error ? error.message : String(error) }, 'Failed to search docs');
+      log.error(
+        {
+          query,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to search docs',
+      );
       throw error;
     }
   }
@@ -270,7 +377,11 @@ export class FeishuClient {
   /**
    * 获取消息历史
    */
-  async getMessageHistory(chatId: string, limit: number = 20, beforeId?: string): Promise<any[]> {
+  async getMessageHistory(
+    chatId: string,
+    limit: number = 20,
+    beforeId?: string,
+  ): Promise<any[]> {
     try {
       const response = await this.client.im.message.list({
         params: {
@@ -287,7 +398,13 @@ export class FeishuClient {
 
       return response.data?.items || [];
     } catch (error) {
-      log.error({ chatId, error: error instanceof Error ? error.message : String(error) }, 'Failed to get message history');
+      log.error(
+        {
+          chatId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to get message history',
+      );
       throw error;
     }
   }
@@ -309,7 +426,10 @@ export class FeishuClient {
         this.wsClient = null;
         log.info('Feishu WebSocket client disconnected');
       } catch (error) {
-        log.error({ error: error instanceof Error ? error.message : String(error) }, 'Failed to stop WebSocket');
+        log.error(
+          { error: error instanceof Error ? error.message : String(error) },
+          'Failed to stop WebSocket',
+        );
       }
     }
   }

@@ -30,6 +30,15 @@ export interface FeishuEvent {
     operator?: {
       open_id: string;
     };
+    sender?: {
+      sender_id: {
+        open_id: string;
+        union_id?: string;
+        user_id?: string | null;
+      };
+      sender_type: string;
+      tenant_key: string;
+    };
     message?: {
       message_id: string;
       chat_id: string;

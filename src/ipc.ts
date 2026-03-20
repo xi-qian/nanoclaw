@@ -159,7 +159,9 @@ export function startIpcWatcher(deps: IpcDeps): void {
         fs.mkdirSync(resultsDir, { recursive: true });
 
         if (fs.existsSync(requestsDir)) {
-          const requestFiles = fs.readdirSync(requestsDir).filter((f) => f.endsWith('.json'));
+          const requestFiles = fs
+            .readdirSync(requestsDir)
+            .filter((f) => f.endsWith('.json'));
 
           for (const file of requestFiles) {
             const filePath = path.join(requestsDir, file);
@@ -177,31 +179,56 @@ export function startIpcWatcher(deps: IpcDeps): void {
               // 根据请求类型调用相应方法
               switch (request.type) {
                 case 'fetch_doc':
-                  result = await feishuChannel.fetchDoc(request.doc_id, request.offset, request.limit);
+                  result = await feishuChannel.fetchDoc(
+                    request.doc_id,
+                    request.offset,
+                    request.limit,
+                  );
                   break;
                 case 'create_doc':
-                  result = await feishuChannel.createDoc(request.title, request.markdown, {
-                    folder_token: request.folder_token,
-                    wiki_node: request.wiki_node,
-                  });
+                  result = await feishuChannel.createDoc(
+                    request.title,
+                    request.markdown,
+                    {
+                      folder_token: request.folder_token,
+                      wiki_node: request.wiki_node,
+                    },
+                  );
                   break;
                 case 'update_doc':
-                  result = await feishuChannel.updateDoc(request.doc_id, request.markdown);
+                  result = await feishuChannel.updateDoc(
+                    request.doc_id,
+                    request.markdown,
+                  );
                   break;
                 case 'search_docs':
-                  result = await feishuChannel.searchDocs(request.query, request.limit);
+                  result = await feishuChannel.searchDocs(
+                    request.query,
+                    request.limit,
+                  );
                   break;
                 default:
-                  throw new Error(`Unknown feishu request type: ${request.type}`);
+                  throw new Error(
+                    `Unknown feishu request type: ${request.type}`,
+                  );
               }
 
               // 写入结果文件
               const resultFile = path.join(resultsDir, file);
-              fs.writeFileSync(resultFile, JSON.stringify({ success: true, ...result }));
+              fs.writeFileSync(
+                resultFile,
+                JSON.stringify({ success: true, ...result }),
+              );
 
-              logger.debug({ type: request.type, file }, 'Feishu IPC request processed');
+              logger.debug(
+                { type: request.type, file },
+                'Feishu IPC request processed',
+              );
             } catch (err) {
-              logger.error({ file, err }, 'Error processing feishu IPC request');
+              logger.error(
+                { file, err },
+                'Error processing feishu IPC request',
+              );
 
               // 写入错误结果
               const resultFile = path.join(resultsDir, file);

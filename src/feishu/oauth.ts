@@ -52,22 +52,34 @@ export class FeishuOAuthClient {
    */
   async startDeviceAuth(): Promise<DeviceAuthResponse> {
     try {
-      const response = await fetch(`${FEISHU_API_BASE}/authen/user_device_auth/create`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const response = await fetch(
+        `${FEISHU_API_BASE}/authen/user_device_auth/create`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            app_id: this.appId,
+            app_secret: this.appSecret,
+          }),
         },
-        body: JSON.stringify({
-          app_id: this.appId,
-          app_secret: this.appSecret,
-        }),
-      });
+      );
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const data = await response.json() as { code?: number; msg?: string; data?: { device_code?: string; user_code?: string; expires_in?: number; interval?: number } };
+      const data = (await response.json()) as {
+        code?: number;
+        msg?: string;
+        data?: {
+          device_code?: string;
+          user_code?: string;
+          expires_in?: number;
+          interval?: number;
+        };
+      };
 
       if (data.code !== 0) {
         throw new Error(`Failed to start device auth: ${data.msg}`);
@@ -114,26 +126,42 @@ export class FeishuOAuthClient {
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        log.debug({ attempt: attempt + 1, deviceCode }, 'Polling for access token');
+        log.debug(
+          { attempt: attempt + 1, deviceCode },
+          'Polling for access token',
+        );
 
-        const response = await fetch(`${FEISHU_API_BASE}/authen/user_device_auth/poll`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+        const response = await fetch(
+          `${FEISHU_API_BASE}/authen/user_device_auth/poll`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              app_id: this.appId,
+              app_secret: this.appSecret,
+              device_code: deviceCode,
+              grant_type: 'device_code',
+            }),
           },
-          body: JSON.stringify({
-            app_id: this.appId,
-            app_secret: this.appSecret,
-            device_code: deviceCode,
-            grant_type: 'device_code',
-          }),
-        });
+        );
 
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        const data = await response.json() as { code?: number; msg?: string; data?: { access_token?: string; token_type?: string; expires_in?: number; refresh_token?: string; scope?: string } };
+        const data = (await response.json()) as {
+          code?: number;
+          msg?: string;
+          data?: {
+            access_token?: string;
+            token_type?: string;
+            expires_in?: number;
+            refresh_token?: string;
+            scope?: string;
+          };
+        };
 
         if (data.code !== 0) {
           // 某些错误码表示需要继续等待
@@ -165,22 +193,36 @@ export class FeishuOAuthClient {
       } catch (error) {
         // 网络错误或超时，继续轮询
         if (attempt < maxAttempts - 1) {
-          log.warn({ attempt: attempt + 1, error: error instanceof Error ? error.message : String(error) }, 'Polling error, retrying...');
+          log.warn(
+            {
+              attempt: attempt + 1,
+              error: error instanceof Error ? error.message : String(error),
+            },
+            'Polling error, retrying...',
+          );
           await this.sleep(interval * 1000);
           continue;
         }
-        log.error({ error: error instanceof Error ? error.message : String(error) }, 'Polling failed after all attempts');
+        log.error(
+          { error: error instanceof Error ? error.message : String(error) },
+          'Polling failed after all attempts',
+        );
         throw error;
       }
     }
 
-    throw new Error('Authorization timeout - user did not complete authorization in time');
+    throw new Error(
+      'Authorization timeout - user did not complete authorization in time',
+    );
   }
 
   /**
    * 完整的 OAuth 流程：启动授权并等待用户完成
    */
-  async authenticate(): Promise<{ credentials: FeishuCredentials; tokens: TokenResponse }> {
+  async authenticate(): Promise<{
+    credentials: FeishuCredentials;
+    tokens: TokenResponse;
+  }> {
     // 步骤 1: 启动设备授权
     const deviceAuth = await this.startDeviceAuth();
 
@@ -189,14 +231,19 @@ export class FeishuOAuthClient {
     console.log('========================================');
     console.log(`\n1. 访问验证页面:\n   ${deviceAuth.verification_uri}`);
     console.log(`\n2. 输入授权码:\n   ${deviceAuth.user_code}`);
-    console.log(`\n授权码 ${deviceAuth.user_code} 有效期: ${Math.floor(deviceAuth.expires_in / 60)} 分钟`);
+    console.log(
+      `\n授权码 ${deviceAuth.user_code} 有效期: ${Math.floor(deviceAuth.expires_in / 60)} 分钟`,
+    );
     console.log('\n提示: 请确保在飞书开放平台为您的应用启用了以下权限:');
     console.log('  - im:message (获取与发送消息)');
     console.log('  - im:message:send_as_bot (以机器人身份发送)');
     console.log('  - im:chat (访问聊天信息)');
     console.log('\n========================================\n');
 
-    log.info({ userCode: deviceAuth.user_code }, 'Waiting for user authorization...');
+    log.info(
+      { userCode: deviceAuth.user_code },
+      'Waiting for user authorization...',
+    );
 
     // 步骤 2: 轮询获取 access_token
     const tokens = await this.pollAccessToken(deviceAuth.device_code, {
@@ -205,7 +252,9 @@ export class FeishuOAuthClient {
     });
 
     // 计算过期时间
-    const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
+    const expiresAt = new Date(
+      Date.now() + tokens.expires_in * 1000,
+    ).toISOString();
 
     // 更新凭证
     const updatedCredentials: FeishuCredentials = {
@@ -218,7 +267,9 @@ export class FeishuOAuthClient {
 
     console.log('\n========================================');
     console.log('✅ 授权成功！');
-    console.log(`Access Token 有效期: ${tokens.expires_in} 秒 (${Math.floor(tokens.expires_in / 60)} 分钟)`);
+    console.log(
+      `Access Token 有效期: ${tokens.expires_in} 秒 (${Math.floor(tokens.expires_in / 60)} 分钟)`,
+    );
     console.log('========================================\n');
 
     return {

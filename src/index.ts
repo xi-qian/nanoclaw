@@ -114,9 +114,73 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
 
   logger.info(
-    { jid, name: group.name, folder: group.folder },
+    { jid, name: group.name, folder: group.folder, isMain: group.isMain },
     'Group registered',
   );
+}
+
+/**
+ * Auto-register a group as main group if no groups are registered yet.
+ * This solves the "chicken-and-egg" problem where the first group
+ * cannot be registered without being able to send commands.
+ */
+function maybeAutoRegisterMainGroup(jid: string, chatName?: string): boolean {
+  // Check if this JID is already registered in the database
+  const existingGroup = getRegisteredGroup(jid);
+  if (existingGroup) {
+    // Group already exists in database, load it into memory
+    logger.info(
+      { jid, folder: existingGroup.folder },
+      'Group already registered, loading into memory',
+    );
+    registeredGroups[jid] = existingGroup;
+    return false;
+  }
+
+  // Check if any groups are already registered
+  const registeredCount = Object.keys(registeredGroups).length;
+  if (registeredCount > 0) {
+    return false; // Already have registered groups
+  }
+
+  // Extract folder name from JID for auto-registration
+  // For Feishu: feishu:oc_xxx -> feishu-oc_xxx
+  let folder: string;
+  if (jid.startsWith('feishu:')) {
+    const uniqueId = jid.replace('feishu:', '');
+    folder = `feishu-${uniqueId}`;
+  } else {
+    // Fallback: generate a safe folder name from chat name
+    const safeName = (chatName || 'chat')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .slice(0, 30);
+    folder = `auto-${safeName}-${Date.now().toString(36)}`;
+  }
+
+  // Validate folder can be created
+  try {
+    resolveGroupFolderPath(folder);
+  } catch (err) {
+    logger.warn({ jid, folder, err }, 'Cannot auto-register: invalid folder');
+    return false;
+  }
+
+  // Register as main group
+  logger.info(
+    { jid, chatName, folder },
+    'Auto-registering first group as main group',
+  );
+
+  registerGroup(jid, {
+    name: chatName || 'Main',
+    folder: folder,
+    trigger: `@${ASSISTANT_NAME}\\b`,
+    added_at: new Date().toISOString(),
+    isMain: true, // First group becomes main group
+  });
+
+  return true;
 }
 
 /**
@@ -336,6 +400,19 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
+      // If the error is about a session not found, clear the session
+      // so the next request will start fresh (useful for APIs that don't
+      // support persistent sessions like Zhipu API)
+      if (output.error && output.error.toLowerCase().includes('session')) {
+        logger.info(
+          { group: group.name, sessionId: sessions[group.folder] },
+          'Session error detected, clearing session',
+        );
+        delete sessions[group.folder];
+        // Clear from database too
+        const { deleteSession } = await import('./db.js');
+        deleteSession(group.folder);
+      }
       return 'error';
     }
 
@@ -572,7 +649,12 @@ async function main(): Promise<void> {
       name?: string,
       channel?: string,
       isGroup?: boolean,
-    ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
+    ) => {
+      storeChatMetadata(chatJid, timestamp, name, channel, isGroup);
+
+      // Auto-register first group as main group to solve "chicken-and-egg" problem
+      maybeAutoRegisterMainGroup(chatJid, name);
+    },
     registeredGroups: () => registeredGroups,
   };
 

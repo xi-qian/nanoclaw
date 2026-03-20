@@ -62,7 +62,10 @@ export function loadCredentials(): FeishuCredentials | null {
 
     return credentials;
   } catch (error) {
-    log.error({ error: error instanceof Error ? error.message : String(error) }, 'Failed to load credentials');
+    log.error(
+      { error: error instanceof Error ? error.message : String(error) },
+      'Failed to load credentials',
+    );
     return null;
   }
 }
@@ -79,7 +82,10 @@ export function saveCredentials(credentials: FeishuCredentials): void {
 
     log.info({ appId: credentials.appId }, 'Credentials saved');
   } catch (error) {
-    log.error({ error: error instanceof Error ? error.message : String(error) }, 'Failed to save credentials');
+    log.error(
+      { error: error instanceof Error ? error.message : String(error) },
+      'Failed to save credentials',
+    );
     throw error;
   }
 }
