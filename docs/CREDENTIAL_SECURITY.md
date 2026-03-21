@@ -297,3 +297,123 @@ if (authMode === 'api-key') {
 | `src/feishu/client.ts` | 飞书 API 客户端，使用凭证调用 API |
 | `src/mount-security.ts` | 挂载安全检查，敏感目录保护 |
 | `container/agent-runner/src/ipc-mcp-stdio.ts` | 容器内 MCP 工具，通过 IPC 转发请求 |
+
+---
+
+## 网络端口安全
+
+### 服务端口绑定策略
+
+NanoClaw 启动时会绑定以下端口：
+
+| 服务 | 端口 | 绑定地址 | 用途 |
+|------|------|---------|------|
+| **Credential Proxy** | 3002 (可配置) | docker0 网桥 IP | 容器访问 Host 凭证代理 |
+
+### 绑定地址选择逻辑
+
+`src/container-runtime.ts`:
+
+```typescript
+function detectProxyBindHost(): string {
+  // macOS: Docker Desktop 通过 VM 路由，使用 loopback
+  if (os.platform() === 'darwin') return '127.0.0.1';
+
+  // WSL: 同样通过 Docker Desktop VM
+  if (fs.existsSync('/proc/sys/fs/binfmt_misc/WSLInterop')) return '127.0.0.1';
+
+  // Linux 裸机: 绑定 docker0 网桥 IP（只有容器能访问）
+  const ifaces = os.networkInterfaces();
+  const docker0 = ifaces['docker0'];
+  if (docker0) {
+    const ipv4 = docker0.find((a) => a.family === 'IPv4');
+    if (ipv4) return ipv4.address;  // 例如 172.17.0.1
+  }
+
+  // Fallback（不安全，但作为最后手段）
+  return '0.0.0.0';
+}
+```
+
+### 网络拓扑
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          外网 (Internet)                                 │
+│                              172.31.0.2                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ ✅ 无法访问 172.17.0.1:3002
+                                    │    (docker0 是内部网络)
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          Host (NanoClaw)                                 │
+│                                                                          │
+│   eth0: 172.31.0.2 (外网接口)                                            │
+│   docker0: 172.17.0.1 (容器网桥)                                         │
+│                                                                          │
+│   ┌─────────────────────────┐                                           │
+│   │ Credential Proxy :3002  │ ◀── 绑定 172.17.0.1                        │
+│   │                         │                                           │
+│   │ 只有容器网络可访问        │                                           │
+│   └─────────────────────────┘                                           │
+│              ▲                                                           │
+│              │ 容器通过 host.docker.internal 访问                        │
+│              │ (解析为 host-gateway，指向 172.17.0.1)                    │
+└──────────────│──────────────────────────────────────────────────────────┘
+               │
+┌──────────────│──────────────────────────────────────────────────────────┐
+│              ▼                                                           │
+│   ┌─────────────────────────┐                                           │
+│   │ Docker Container        │                                           │
+│   │                         │                                           │
+│   │ 网络命名空间隔离          │                                           │
+│   │ 可访问 172.17.0.1:3002   │                                           │
+│   └─────────────────────────┘                                           │
+│                                                                          │
+│                        Docker Container                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 安全检查结果 (2026-03-21)
+
+```
+$ ss -tlnp | grep node
+LISTEN 0  511  172.17.0.1:3002  0.0.0.0:*  users:(("node",pid=1021048,fd=32))
+
+$ curl http://172.31.0.2:3002
+# 连接失败 - 外网无法访问
+
+$ curl http://127.0.0.1:3002
+# 连接失败 - 本地 loopback 也无法访问（只有 docker0 可访问）
+```
+
+**结论**：✅ Credential Proxy 未对外网暴露，只有容器网络可访问。
+
+### 防火墙状态
+
+```
+$ ufw status
+Status: inactive
+
+$ iptables -L INPUT -n
+Chain INPUT (policy ACCEPT)
+```
+
+**建议**：虽然当前端口绑定安全，但建议启用防火墙增加保护层：
+
+```bash
+# 启用 UFW 基础防护
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow ssh
+ufw enable
+```
+
+### 潜在风险
+
+| 场景 | 风险 | 缓解措施 |
+|------|------|---------|
+| docker0 接口不存在 | Fallback 到 `0.0.0.0`，对外暴露 | 检查 docker0 存在后再启动服务 |
+| 防火墙未启用 | 其他服务可能对外暴露 | 启用 UFW，只开放必要端口 |
+| 端口扫描 | 攻击者发现开放端口 | 定期审计监听端口 |
