@@ -529,6 +529,128 @@ server.tool(
   },
 );
 
+server.tool(
+  'feishu_create_bitable',
+  '创建飞书多维表格（Bitable）。返回应用 token 和 URL。',
+  {
+    name: z.string().describe('多维表格名称'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'create_bitable',
+      name: args.name,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: `多维表格创建成功!\n\n名称: ${result.name}\nApp Token: ${result.app_token}\n链接: ${result.app_url || '(未返回链接)'}` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `创建多维表格失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `创建多维表格超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_create_bitable_table',
+  '在多维表格中创建数据表。需要提供应用 token、表名和字段定义。',
+  {
+    app_token: z.string().describe('多维表格应用 token'),
+    name: z.string().describe('数据表名称'),
+    fields: z.array(z.object({
+      field_name: z.string().describe('字段名称'),
+      type: z.number().describe('字段类型：1=文本, 2=数字, 3=单选, 4=多选, 5=日期, 7=复选框, 11=人员, 15=超链接'),
+      property: z.any().optional().describe('字段属性，如单选/多选的选项列表'),
+    })).describe('字段定义列表'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'create_bitable_table',
+      app_token: args.app_token,
+      name: args.name,
+      fields: args.fields,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: `数据表创建成功!\n\n表名: ${result.name}\nTable ID: ${result.table_id}` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `创建数据表失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `创建数据表超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_add_bitable_records',
+  '向多维表格数据表中添加记录。支持单条或批量添加（最多 500 条）。',
+  {
+    app_token: z.string().describe('多维表格应用 token'),
+    table_id: z.string().describe('数据表 ID'),
+    records: z.array(z.object({
+      fields: z.record(z.string(), z.any()).describe('字段值，key 为字段名，value 为字段值'),
+    })).describe('记录列表，每条记录包含 fields 对象'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'add_bitable_records',
+      app_token: args.app_token,
+      table_id: args.table_id,
+      records: args.records,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: `记录添加成功!\n\n添加记录数: ${result.record_ids?.length || args.records.length}` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `添加记录失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `添加记录超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

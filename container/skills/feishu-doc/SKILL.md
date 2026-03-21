@@ -1,0 +1,185 @@
+---
+name: feishu-doc
+description: |
+  飞书（Feishu/Lark）文档、多维表格和知识库操作工具。
+
+  **当以下情况时使用此 Skill**：
+  (1) 需要创建、编辑、查看飞书文档
+  (2) 需要创建、管理飞书多维表格（Bitable/表格）
+  (3) 需要在知识库中创建文档节点
+  (4) 用户提到"飞书文档"、"表格"、"知识库"、"wiki"、"bitable"
+  (5) 需要批量导入数据到飞书表格
+
+  **重要说明**：
+  - 此 Skill 使用 MCP 工具与飞书 API 交互
+  - 所有操作需要飞书凭证（appId 和 appSecret），已自动注入
+  - 不要使用 Bash 命令，使用对应的 MCP 工具
+---
+
+# Feishu Doc (飞书文档/表格/知识库) SKILL
+
+## 🚨 执行前必读
+
+### 链接格式（重要）
+- ⚠️ **飞书文档链接必须使用 `/docx/` 而不是 `/docs/`**
+- 正确格式：`https://feishu.cn/docx/xxxxxxxxxx`
+- 错误格式：`https://feishu.cn/docs/xxxxxxxxxx`（会导致链接无法访问）
+- 多维表格链接使用 `/base/`：`https://feishu.cn/base/xxxxxxxxxx`
+
+### 操作方式
+- **文档操作**：使用 `feishu_create_doc`、`feishu_fetch_doc`、`feishu_update_doc`、`feishu_search_docs` 工具
+- **多维表格操作**：使用 `feishu_create_bitable`、`feishu_create_bitable_table`、`feishu_add_bitable_records` 工具
+- **不要使用 Bash 命令**，使用对应的 MCP 工具
+
+### 数据格式约束
+- ✅ **日期字段**：毫秒时间戳（例如 `1674206443000`）
+- ✅ **人员字段**：`[{id: "ou_xxx"}]` 格式
+- ✅ **单选字段**：字符串（例如 `"选项1"`）
+- ✅ **多选字段**：字符串数组（例如 `["选项1", "选项2"]`）
+- ✅ **批量操作上限**：每次最多 500 条记录
+
+---
+
+## 📋 快速索引：意图 → MCP 工具
+
+| 用户意图 | MCP 工具 | 说明 |
+|---------|---------|------|
+| 创建文档 | `feishu_create_doc` | 从 Markdown 创建飞书文档 |
+| 获取文档 | `feishu_fetch_doc` | 获取文档内容 |
+| 更新文档 | `feishu_update_doc` | 更新文档内容 |
+| 搜索文档 | `feishu_search_docs` | 搜索飞书文档 |
+| 创建多维表格 | `feishu_create_bitable` | 创建多维表格应用 |
+| 创建数据表 | `feishu_create_bitable_table` | 在多维表格中创建数据表 |
+| 添加记录 | `feishu_add_bitable_records` | 批量添加记录 |
+
+---
+
+## 🎯 核心操作
+
+### 1. 创建飞书文档
+
+使用 `feishu_create_doc` 工具：
+- `title`: 文档标题
+- `markdown`: Markdown 格式的内容
+
+### 2. 获取文档内容
+
+使用 `feishu_fetch_doc` 工具：
+- `doc_id`: 文档 ID 或完整 URL
+
+### 3. 更新文档
+
+使用 `feishu_update_doc` 工具：
+- `doc_id`: 文档 ID
+- `markdown`: 要追加的 Markdown 内容
+
+### 4. 搜索文档
+
+使用 `feishu_search_docs` 工具：
+- `query`: 搜索关键词
+- `limit`: 返回结果数量（可选）
+
+---
+
+## 📊 多维表格操作
+
+### 1. 创建多维表格应用
+
+使用 `feishu_create_bitable` 工具：
+- `name`: 多维表格名称
+
+**返回**：`app_token`（后续操作需要）和 `app_url`
+
+### 2. 创建数据表
+
+使用 `feishu_create_bitable_table` 工具：
+- `app_token`: 上一步返回的 app_token
+- `name`: 数据表名称
+- `fields`: 字段定义数组
+
+**字段类型对照表**：
+| type | 类型 | 说明 |
+|------|------|------|
+| 1 | 文本 | 普通文本 |
+| 2 | 数字 | 数值 |
+| 3 | 单选 | 需配置 `property.options` |
+| 4 | 多选 | 需配置 `property.options` |
+| 5 | 日期 | 毫秒时间戳 |
+| 7 | 复选框 | 布尔值 |
+| 11 | 人员 | `[{id: "ou_xxx"}]` |
+| 15 | 超链接 | `{link: "url", text: "文本"}` |
+
+**示例字段定义**：
+```json
+[
+  {"field_name": "客户名称", "type": 1},
+  {"field_name": "负责人", "type": 11},
+  {"field_name": "状态", "type": 3, "property": {"options": [{"name": "进行中"}, {"name": "已完成"}]}},
+  {"field_name": "签约日期", "type": 5}
+]
+```
+
+### 3. 批量添加记录
+
+使用 `feishu_add_bitable_records` 工具：
+- `app_token`: 多维表格 app_token
+- `table_id`: 数据表 table_id
+- `records`: 记录数组
+
+**示例**：
+```json
+{
+  "app_token": "appxxxxxxxxxxxx",
+  "table_id": "tblxxxxxxxxxxxx",
+  "records": [
+    {"fields": {"客户名称": "字节跳动", "状态": "进行中"}},
+    {"fields": {"客户名称": "腾讯", "状态": "已完成"}}
+  ]
+}
+```
+
+---
+
+## 📖 完整示例：创建客户管理表
+
+**步骤 1**：创建多维表格应用
+```
+使用 feishu_create_bitable 工具，参数 name="客户管理表"
+```
+记录返回的 `app_token`
+
+**步骤 2**：创建数据表
+```
+使用 feishu_create_bitable_table 工具，参数：
+- app_token: "上一步的 app_token"
+- name: "客户列表"
+- fields: [
+    {"field_name": "客户名称", "type": 1},
+    {"field_name": "负责人", "type": 11},
+    {"field_name": "状态", "type": 3, "property": {"options": [{"name": "进行中"}, {"name": "已完成"}]}},
+    {"field_name": "签约日期", "type": 5}
+  ]
+```
+记录返回的 `table_id`
+
+**步骤 3**：添加数据
+```
+使用 feishu_add_bitable_records 工具，参数：
+- app_token: "app_token"
+- table_id: "table_id"
+- records: [
+    {"fields": {"客户名称": "字节跳动", "状态": "进行中", "签约日期": 1674206443000}},
+    {"fields": {"客户名称": "腾讯", "状态": "已完成", "签约日期": 1675416243000}}
+  ]
+```
+
+---
+
+## 🔧 常见错误与排查
+
+| 错误码 | 原因 | 解决方案 |
+|-------|------|----------|
+| `99991663` | 无权限 | 检查飞书应用权限配置 |
+| `1254064` | 日期格式错误 | 使用毫秒时间戳 |
+| `1254066` | 人员字段格式错误 | 使用 `[{id: "ou_xxx"}]` 格式 |
+| `1254104` | 批量操作超限 | 每批不超过 500 条 |

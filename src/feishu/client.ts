@@ -270,17 +270,24 @@ export class FeishuClient {
     try {
       const actualDocId = this.extractDocId(docId);
 
-      // TODO: 实现完整的文档获取逻辑
-      log.warn(
-        { docId: actualDocId },
-        'Document fetching not fully implemented, returning mock data',
-      );
+      // 使用 HTTP 请求获取文档内容
+      const response = await this.client.request({
+        url: `/open-apis/docx/v1/documents/${actualDocId}/blocks/${actualDocId}`,
+        method: 'GET',
+        params: {
+          page_size: limit ? Math.min(limit, 500) : 100,
+          page_token: offset,
+        },
+      });
+
+      if (response.code !== 0) {
+        throw new Error(`Failed to fetch doc: ${response.msg}`);
+      }
 
       return {
         doc_id: actualDocId,
-        title: 'Mock Document',
-        content:
-          'This is a placeholder. Document fetching is not yet fully implemented.',
+        title: response.data?.title || '',
+        content: JSON.stringify(response.data),
         has_more: false,
       };
     } catch (error) {
@@ -304,15 +311,75 @@ export class FeishuClient {
     options?: CreateDocOptions,
   ): Promise<FeishuDocInfo> {
     try {
-      log.warn(
-        { title, markdownLength: markdown.length },
-        'Document creation not fully implemented',
-      );
+      // Step 1: 创建空文档
+      const createResponse = await this.client.request({
+        url: '/open-apis/docx/v1/documents',
+        method: 'POST',
+        data: {
+          title: title,
+          folder_token: options?.folder_token,
+        },
+      });
+
+      if (createResponse.code !== 0) {
+        throw new Error(`Failed to create document: ${createResponse.msg}`);
+      }
+
+      const documentId = createResponse.data?.document?.document_id;
+      if (!documentId) {
+        throw new Error('No document_id returned from create API');
+      }
+
+      // Step 2: 尝试添加内容（非阻塞，失败不影响文档创建成功）
+      const blocks = this.markdownToBlocks(markdown);
+      if (blocks.length > 0) {
+        try {
+          // 使用原始请求方法创建块
+          for (let i = 0; i < blocks.length; i++) {
+            const block = blocks[i];
+            const blockResponse = await this.client.request({
+              url: `/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+              method: 'POST',
+              data: {
+                index: i,
+                children: [block],
+              },
+            });
+            if (blockResponse.code !== 0) {
+              log.warn(
+                {
+                  documentId,
+                  index: i,
+                  code: blockResponse.code,
+                  msg: blockResponse.msg,
+                },
+                'Failed to add block',
+              );
+            }
+          }
+        } catch (blockError) {
+          log.warn(
+            {
+              documentId,
+              error:
+                blockError instanceof Error
+                  ? blockError.message
+                  : String(blockError),
+            },
+            'Document created but failed to add some content',
+          );
+        }
+      }
+
+      // 获取文档 URL
+      const url = this.buildDocUrl(documentId, this.brand);
+
+      log.info({ documentId, title, url }, 'Document created successfully');
 
       return {
-        doc_id: 'mock_doc_' + Date.now(),
+        doc_id: documentId,
         title,
-        url: 'https://feishu.cn/mock',
+        url,
       };
     } catch (error) {
       log.error(
@@ -332,9 +399,28 @@ export class FeishuClient {
   async updateDoc(docId: string, markdown: string): Promise<void> {
     try {
       const actualDocId = this.extractDocId(docId);
-      log.warn(
-        { docId: actualDocId, markdownLength: markdown.length },
-        'Document update not implemented',
+
+      // 简化实现：将 markdown 转换为文档块并追加
+      const blocks = this.markdownToBlocks(markdown);
+
+      // 使用批量创建块 API
+      await this.client.request({
+        url: `/open-apis/docx/v1/documents/${actualDocId}/blocks/${actualDocId}/children/batch_create`,
+        method: 'POST',
+        data: {
+          requests: blocks.map((block) => ({
+            create_block: {
+              block,
+              position: actualDocId,
+            },
+          })),
+          index: -1,
+        },
+      });
+
+      log.info(
+        { docId: actualDocId, blocksCount: blocks.length },
+        'Document updated successfully',
       );
     } catch (error) {
       log.error(
@@ -445,5 +531,543 @@ export class FeishuClient {
       }
     }
     return input;
+  }
+
+  /**
+   * 将 Markdown 转换为 Feishu 文档块
+   */
+  private markdownToBlocks(markdown: string): any[] {
+    const blocks: any[] = [];
+    const lines = markdown.split('\n');
+
+    for (const line of lines) {
+      if (!line.trim()) {
+        // 空行跳过
+        continue;
+      }
+
+      // 标题 (block_type: 3=heading1, 4=heading2, 5=heading3)
+      if (line.startsWith('#')) {
+        const match = line.match(/^(#{1,3})\s+(.*)/);
+        if (match) {
+          const level = match[1].length;
+          const text = match[2];
+          blocks.push({
+            block_type: 2 + level, // 3, 4, or 5
+            heading1:
+              level === 1
+                ? {
+                    elements: [{ text_run: { content: text } }],
+                  }
+                : undefined,
+            heading2:
+              level === 2
+                ? {
+                    elements: [{ text_run: { content: text } }],
+                  }
+                : undefined,
+            heading3:
+              level === 3
+                ? {
+                    elements: [{ text_run: { content: text } }],
+                  }
+                : undefined,
+          });
+          continue;
+        }
+      }
+
+      // 无序列表 (block_type: 12)
+      if (line.startsWith('- ') || line.startsWith('* ')) {
+        const text = line.substring(2);
+        blocks.push({
+          block_type: 12,
+          bullet: {
+            elements: [{ text_run: { content: text } }],
+          },
+        });
+        continue;
+      }
+
+      // 普通段落 (block_type: 2)
+      blocks.push({
+        block_type: 2,
+        text: {
+          elements: [{ text_run: { content: line } }],
+        },
+      });
+    }
+
+    return blocks;
+  }
+
+  /**
+   * 构建文档 URL
+   */
+  private buildDocUrl(docId: string, brand: LarkBrand): string {
+    const domain = brand === 'lark' ? 'larksuite.com' : 'feishu.cn';
+    return `https://${domain}/docx/${docId}`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Wiki Operations
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 创建知识库节点
+   */
+  async createWikiNode(
+    spaceId: string,
+    objType:
+      | 'doc'
+      | 'sheet'
+      | 'bitable'
+      | 'mindnote'
+      | 'file'
+      | 'docx'
+      | 'slides',
+    title: string,
+    parentNodeToken?: string,
+  ): Promise<{ node_token: string; obj_token: string }> {
+    try {
+      const response = await this.client.request({
+        url: `/open-apis/wiki/v2/spaces/${spaceId}/nodes`,
+        method: 'POST',
+        data: {
+          node_type: 'origin',
+          obj_type: objType,
+          parent_node_token: parentNodeToken,
+          title,
+        },
+      });
+
+      if (response.code !== 0 || !response.data?.node) {
+        throw new Error(`Failed to create wiki node: ${response.msg}`);
+      }
+
+      const nodeToken = response.data.node.node_token;
+      const objToken = response.data.node.obj_token;
+
+      log.info(
+        { spaceId, nodeToken, objToken, title },
+        'Wiki node created successfully',
+      );
+
+      return { node_token: nodeToken, obj_token: objToken };
+    } catch (error) {
+      log.error(
+        {
+          spaceId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to create wiki node',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 列出知识库节点
+   */
+  async listWikiNodes(
+    spaceId: string,
+    parentNodeToken?: string,
+  ): Promise<any[]> {
+    try {
+      const params: Record<string, string> = {};
+      if (parentNodeToken) {
+        params.parent_node_token = parentNodeToken;
+      }
+
+      const response = await this.client.request({
+        url: `/open-apis/wiki/v2/spaces/${spaceId}/nodes`,
+        method: 'GET',
+        params,
+      });
+
+      if (response.code !== 0) {
+        throw new Error(`Failed to list wiki nodes: ${response.msg}`);
+      }
+
+      return response.data?.items || [];
+    } catch (error) {
+      log.error(
+        {
+          spaceId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to list wiki nodes',
+      );
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bitable (Spreadsheet) Operations
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 创建多维表格应用
+   */
+  async createBitableApp(
+    name: string,
+    folderToken?: string,
+  ): Promise<{ app_token: string; app_url: string }> {
+    try {
+      const response = await this.client.request({
+        url: '/open-apis/bitable/v1/apps',
+        method: 'POST',
+        data: {
+          name,
+          folder_token: folderToken,
+        },
+      });
+
+      if (response.code !== 0 || !response.data?.app) {
+        throw new Error(
+          `Failed to create bitable app: ${response.msg} (code: ${response.code})`,
+        );
+      }
+
+      const appToken = response.data.app.app_token;
+      const domain = this.brand === 'lark' ? 'larksuite.com' : 'feishu.cn';
+      const url = `https://${domain}/base/${appToken}`;
+
+      log.info({ appToken, name, url }, 'Bitable app created successfully');
+
+      return { app_token: appToken, app_url: url };
+    } catch (error) {
+      log.error(
+        {
+          name,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to create bitable app',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 创建数据表
+   */
+  async createBitableTable(
+    appToken: string,
+    name: string,
+    fields?: any[],
+  ): Promise<{ table_id: string; table_name: string }> {
+    try {
+      const defaultFields = fields || [
+        {
+          field_name: '标题',
+          type: 1, // Text
+        },
+      ];
+
+      const response = await this.client.request({
+        url: `/open-apis/bitable/v1/apps/${appToken}/tables`,
+        method: 'POST',
+        data: {
+          table: {
+            name,
+            default_view_name: '表格',
+            fields: defaultFields,
+          },
+        },
+      });
+
+      if (response.code !== 0 || !response.data?.table_id) {
+        throw new Error(
+          `Failed to create bitable table: ${response.msg} (code: ${response.code})`,
+        );
+      }
+
+      const tableId = response.data.table_id;
+      const tableName = name;
+
+      log.info(
+        { appToken, tableId, tableName },
+        'Bitable table created successfully',
+      );
+
+      return { table_id: tableId, table_name: tableName };
+    } catch (error) {
+      log.error(
+        {
+          appToken,
+          name,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to create bitable table',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 添加记录到数据表
+   */
+  async addBitableRecord(
+    appToken: string,
+    tableId: string,
+    fields: Record<string, any>,
+  ): Promise<{ record_id: string }> {
+    try {
+      const response = await this.client.bitable.appTableRecord.create({
+        path: {
+          app_token: appToken,
+          table_id: tableId,
+        },
+        data: {
+          fields,
+        },
+      });
+
+      if (response.code !== 0 || !response.data?.record) {
+        throw new Error(`Failed to add bitable record: ${response.msg}`);
+      }
+
+      const recordId = response.data.record?.record_id;
+      if (!recordId) {
+        throw new Error('No record_id returned from create API');
+      }
+
+      log.info(
+        { appToken, tableId, recordId },
+        'Bitable record added successfully',
+      );
+
+      return { record_id: recordId };
+    } catch (error) {
+      log.error(
+        {
+          appToken,
+          tableId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to add bitable record',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 批量添加记录到数据表
+   */
+  async batchAddBitableRecords(
+    appToken: string,
+    tableId: string,
+    records: Array<{ fields: Record<string, any> }>,
+  ): Promise<{ record_ids: string[] }> {
+    try {
+      // 限制每批最多 500 条
+      if (records.length > 500) {
+        throw new Error('Batch create limited to 500 records per call');
+      }
+
+      const response = await this.client.bitable.appTableRecord.batchCreate({
+        path: {
+          app_token: appToken,
+          table_id: tableId,
+        },
+        data: {
+          records,
+        },
+      });
+
+      if (response.code !== 0) {
+        throw new Error(`Failed to batch add bitable records: ${response.msg}`);
+      }
+
+      const recordIds = (response.data?.records || []).map(
+        (r: any) => r.record_id,
+      );
+
+      log.info(
+        { appToken, tableId, count: recordIds.length },
+        'Bitable records batch added successfully',
+      );
+
+      return { record_ids: recordIds };
+    } catch (error) {
+      log.error(
+        {
+          appToken,
+          tableId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to batch add bitable records',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 查询数据表记录
+   */
+  async listBitableRecords(
+    appToken: string,
+    tableId: string,
+    options?: {
+      viewId?: string;
+      filter?: any;
+      sort?: any[];
+      pageSize?: number;
+      pageToken?: string;
+    },
+  ): Promise<{ records: any[]; has_more: boolean; page_token?: string }> {
+    try {
+      // 使用 search API
+      const requestData: any = {};
+      if (options?.viewId) {
+        requestData.view_id = options.viewId;
+      }
+      if (options?.filter) {
+        requestData.filter = options.filter;
+      }
+      if (options?.sort) {
+        requestData.sort = options.sort;
+      }
+      if (options?.pageSize) {
+        requestData.page_size = options.pageSize;
+      }
+      if (options?.pageToken) {
+        requestData.page_token = options.pageToken;
+      }
+
+      const response = await this.client.bitable.appTableRecord.search({
+        path: {
+          app_token: appToken,
+          table_id: tableId,
+        },
+        data: requestData,
+      });
+
+      if (response.code !== 0) {
+        throw new Error(`Failed to list bitable records: ${response.msg}`);
+      }
+
+      return {
+        records: response.data?.items || [],
+        has_more: response.data?.has_more || false,
+        page_token: response.data?.page_token,
+      };
+    } catch (error) {
+      log.error(
+        {
+          appToken,
+          tableId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to list bitable records',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 获取数据表字段列表
+   */
+  async listBitableFields(appToken: string, tableId: string): Promise<any[]> {
+    try {
+      const response = await this.client.bitable.appTableField.list({
+        path: {
+          app_token: appToken,
+          table_id: tableId,
+        },
+      });
+
+      if (response.code !== 0) {
+        throw new Error(`Failed to list bitable fields: ${response.msg}`);
+      }
+
+      return response.data?.items || [];
+    } catch (error) {
+      log.error(
+        {
+          appToken,
+          tableId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to list bitable fields',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 更新数据表记录
+   */
+  async updateBitableRecord(
+    appToken: string,
+    tableId: string,
+    recordId: string,
+    fields: Record<string, any>,
+  ): Promise<void> {
+    try {
+      const response = await this.client.bitable.appTableRecord.update({
+        path: {
+          app_token: appToken,
+          table_id: tableId,
+          record_id: recordId,
+        },
+        data: {
+          fields,
+        },
+      });
+
+      if (response.code !== 0) {
+        throw new Error(`Failed to update bitable record: ${response.msg}`);
+      }
+
+      log.info({ appToken, tableId, recordId }, 'Bitable record updated');
+    } catch (error) {
+      log.error(
+        {
+          appToken,
+          tableId,
+          recordId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to update bitable record',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 删除数据表记录
+   */
+  async deleteBitableRecord(
+    appToken: string,
+    tableId: string,
+    recordId: string,
+  ): Promise<void> {
+    try {
+      const response = await this.client.bitable.appTableRecord.delete({
+        path: {
+          app_token: appToken,
+          table_id: tableId,
+          record_id: recordId,
+        },
+      });
+
+      if (response.code !== 0) {
+        throw new Error(`Failed to delete bitable record: ${response.msg}`);
+      }
+
+      log.info({ appToken, tableId, recordId }, 'Bitable record deleted');
+    } catch (error) {
+      log.error(
+        {
+          appToken,
+          tableId,
+          recordId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to delete bitable record',
+      );
+      throw error;
+    }
   }
 }

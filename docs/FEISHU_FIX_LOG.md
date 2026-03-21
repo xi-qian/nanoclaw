@@ -1,0 +1,250 @@
+# 飞书文档和多维表格功能修复记录
+
+## 修复日期
+2026-03-20 ~ 2026-03-21
+
+## 问题概述
+
+NanoClaw 的飞书文档和多维表格功能存在多个问题，导致无法正常创建文档、多维表格以及添加数据。
+
+---
+
+## 修复问题清单
+
+### 1. 飞书凭证未传递到容器
+
+**问题描述**：
+容器内无法获取飞书的 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 环境变量。
+
+**修复方案**：
+在 `src/container-runner.ts` 中添加凭证加载和传递逻辑：
+
+```typescript
+// 加载飞书凭证
+const FEISHU_CREDENTIALS_FILE = path.join(
+  STORE_DIR,
+  'auth',
+  'feishu',
+  'credentials.json',
+);
+
+function loadFeishuCredentials(): FeishuCredentials | null {
+  // 从文件读取并返回凭证
+}
+
+// 在 buildContainerArgs 中传递凭证
+const feishuCredentials = loadFeishuCredentials();
+if (feishuCredentials) {
+  args.push('-e', `FEISHU_APP_ID=${feishuCredentials.appId}`);
+  args.push('-e', `FEISHU_APP_SECRET=${feishuCredentials.appSecret}`);
+}
+```
+
+---
+
+### 2. SKILL.md 路径错误
+
+**问题描述**：
+SKILL.md 中使用相对路径 `./dist/feishu/client.js`，但容器工作目录是 `/workspace/group`，不是项目根目录。
+
+**修复方案**：
+修改为绝对路径 `/workspace/project/dist/feishu/client.js`。
+
+---
+
+### 3. IPC 路径不匹配
+
+**问题描述**：
+- 主机 IPC 监听全局目录 `data/ipc/feishu/`
+- 容器写入群组特定目录 `data/ipc/feishu-main/feishu/`
+
+**修复方案**：
+修改 `src/ipc.ts`，扫描所有群组的 feishu 子目录：
+
+```typescript
+// 遍历所有群组目录
+for (const sourceGroup of groupFolders) {
+  const feishuDir = path.join(ipcBaseDir, sourceGroup, 'feishu');
+  // 处理该群组的飞书请求
+}
+```
+
+---
+
+### 4. getFeishuChannel 未传递
+
+**问题描述**：
+`startIpcWatcher` 缺少 `getFeishuChannel` 参数，无法获取飞书 channel 处理请求。
+
+**修复方案**：
+在 `src/index.ts` 中添加参数：
+
+```typescript
+startIpcWatcher({
+  // ...其他参数
+  getFeishuChannel: () => channels.find((ch) => ch.name === 'feishu'),
+});
+```
+
+---
+
+### 5. 文档内容添加 API 问题
+
+**问题描述**：
+- 使用了不存在的 `batch_create` 端点
+- SDK 类型定义不匹配
+
+**修复方案**：
+使用原始 HTTP 请求逐个创建块：
+
+```typescript
+const blockResponse = await this.client.request({
+  url: `/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+  method: 'POST',
+  data: {
+    index: i,
+    children: [block],
+  },
+});
+```
+
+---
+
+### 6. 多维表格 MCP 工具缺失
+
+**问题描述**：
+容器内缺少多维表格相关的 MCP 工具。
+
+**修复方案**：
+
+1. 在 `container/agent-runner/src/ipc-mcp-stdio.ts` 添加三个新工具：
+   - `feishu_create_bitable` - 创建多维表格应用
+   - `feishu_create_bitable_table` - 创建数据表
+   - `feishu_add_bitable_records` - 批量添加记录
+
+2. 在 `src/channels/feishu.ts` 添加对应的代理方法
+
+3. 在 `src/ipc.ts` 添加请求处理逻辑
+
+---
+
+### 7. agent-runner-src 目录未更新
+
+**问题描述**：
+`data/sessions/feishu-main/agent-runner-src/` 目录挂载到容器，但文件是旧版本。
+
+**修复方案**：
+将最新源文件复制到该目录：
+
+```bash
+cp container/agent-runner/src/*.ts data/sessions/feishu-main/agent-runner-src/
+```
+
+---
+
+### 8. 多维表格创建 API 端点错误
+
+**问题描述**：
+使用 `/open-apis/drive/v1/files/create_folder` 创建多维表格，返回 400 错误。
+
+**修复方案**：
+修改为正确的 API 端点 `/open-apis/bitable/v1/apps`：
+
+```typescript
+const response = await this.client.request({
+  url: '/open-apis/bitable/v1/apps',
+  method: 'POST',
+  data: { name, folder_token: folderToken },
+});
+```
+
+---
+
+### 9. 创建数据表返回结构错误
+
+**问题描述**：
+代码检查 `response.data?.table`，但实际返回的是 `response.data.table_id`。
+
+**修复方案**：
+修改检查逻辑：
+
+```typescript
+if (response.code !== 0 || !response.data?.table_id) {
+  throw new Error(`Failed to create bitable table: ${response.msg}`);
+}
+const tableId = response.data.table_id;
+```
+
+---
+
+### 10. 飞书文档链接格式错误
+
+**问题描述**：
+生成的文档链接使用 `/docs/` 而不是 `/docx/`，导致链接无法访问。
+
+**修复方案**：
+
+1. 修改 `src/feishu/client.ts` 中的 `buildDocUrl` 方法：
+
+```typescript
+private buildDocUrl(docId: string, brand: LarkBrand): string {
+  const domain = brand === 'lark' ? 'larksuite.com' : 'feishu.cn';
+  return `https://${domain}/docx/${docId}`;  // 改为 /docx/
+}
+```
+
+2. 更新 SKILL.md 添加链接格式注意事项：
+
+```markdown
+### 链接格式（重要）
+- ⚠️ **飞书文档链接必须使用 `/docx/` 而不是 `/docs/`**
+- 正确格式：`https://feishu.cn/docx/xxxxxxxxxx`
+- 错误格式：`https://feishu.cn/docs/xxxxxxxxxx`
+- 多维表格链接使用 `/base/`：`https://feishu.cn/base/xxxxxxxxxx`
+```
+
+---
+
+## 文件修改清单
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/container-runner.ts` | 添加飞书凭证加载和传递 |
+| `src/ipc.ts` | 修复 IPC 路径扫描，添加多维表格请求处理 |
+| `src/index.ts` | 添加 getFeishuChannel 参数 |
+| `src/channels/feishu.ts` | 添加多维表格操作方法 |
+| `src/feishu/client.ts` | 修复 API 端点、返回结构、链接格式 |
+| `container/agent-runner/src/ipc-mcp-stdio.ts` | 添加多维表格 MCP 工具 |
+| `container/skills/feishu-doc/SKILL.md` | 重写，强调使用 MCP 工具和链接格式 |
+| `data/sessions/feishu-main/agent-runner-src/*.ts` | 更新源文件 |
+
+---
+
+## 测试验证
+
+### 文档创建测试
+```bash
+node -e "
+const { FeishuClient } = require('./dist/feishu/client.js');
+const client = new FeishuClient({ appId: '...', appSecret: '...' });
+client.createDoc('测试文档', '# 测试\n内容');
+"
+# 结果：成功创建文档，链接格式正确
+```
+
+### 多维表格完整流程测试
+```bash
+# 1. 创建多维表格 -> 成功
+# 2. 创建数据表 -> 成功
+# 3. 批量添加记录 -> 成功
+# 结果：https://feishu.cn/base/LMvobcpBtaLkCJsdJPlcbKn5nxc
+```
+
+---
+
+## 注意事项
+
+1. **重新构建容器**：修改 `container/agent-runner/src/` 后需要运行 `./container/build.sh`
+2. **更新 agent-runner-src**：修改源文件后需要同步到 `data/sessions/feishu-main/agent-runner-src/`
+3. **重启服务**：修改代码后需要 `systemctl --user restart nanoclaw-fork`
+4. **权限配置**：飞书应用需要开通文档和多维表格相关权限

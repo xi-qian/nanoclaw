@@ -214,6 +214,59 @@ export class FeishuChannel implements Channel {
     return await this.client.searchDocs(query, limit || 10);
   }
 
+  // ==================== 多维表格操作方法 ====================
+
+  /**
+   * 创建多维表格应用
+   */
+  async createBitableApp(name: string): Promise<any> {
+    return await this.client.createBitableApp(name);
+  }
+
+  /**
+   * 创建多维表格数据表
+   */
+  async createBitableTable(
+    appToken: string,
+    name: string,
+    fields: any[],
+  ): Promise<any> {
+    return await this.client.createBitableTable(appToken, name, fields);
+  }
+
+  /**
+   * 添加多维表格记录
+   */
+  async addBitableRecord(
+    appToken: string,
+    tableId: string,
+    fields: Record<string, any>,
+  ): Promise<any> {
+    return await this.client.addBitableRecord(appToken, tableId, fields);
+  }
+
+  /**
+   * 批量添加多维表格记录
+   */
+  async batchAddBitableRecords(
+    appToken: string,
+    tableId: string,
+    records: Array<{ fields: Record<string, any> }>,
+  ): Promise<any> {
+    return await this.client.batchAddBitableRecords(appToken, tableId, records);
+  }
+
+  /**
+   * 查询多维表格记录
+   */
+  async listBitableRecords(
+    appToken: string,
+    tableId: string,
+    options?: any,
+  ): Promise<any> {
+    return await this.client.listBitableRecords(appToken, tableId, options);
+  }
+
   /**
    * 发送富文本消息
    */

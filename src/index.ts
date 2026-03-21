@@ -729,6 +729,7 @@ async function main(): Promise<void> {
         writeTasksSnapshot(group.folder, group.isMain === true, taskRows);
       }
     },
+    getFeishuChannel: () => channels.find((ch) => ch.name === 'feishu'),
   });
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
