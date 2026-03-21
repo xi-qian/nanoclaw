@@ -76,6 +76,8 @@
 - 当前会话 ID
 - Agent 的中间状态
 
+**注意**："短期"指的是**上下文范围**（仅在当前会话中使用），而非生命周期。所有数据都是持久化存储的。
+
 #### 2. 存储位置
 
 | 数据 | 存储位置 | 说明 |
@@ -264,7 +266,27 @@ env: {
 }
 ```
 
-**存储位置**：`~/.claude/memory/*.md`
+**存储位置**：
+
+```
+容器内: ~/.claude/memory/
+Host:   data/sessions/{folder}/.claude/memory/
+```
+
+**重要**：Auto-Memory 是**持久化的**，不会因为 session 结束而销毁。
+
+原因是容器挂载配置：
+
+```typescript
+// 容器内 ~/.claude 挂载到 Host 的 session 目录
+mounts.push({
+  hostPath: groupSessionsDir,  // data/sessions/{folder}/.claude
+  containerPath: '/home/node/.claude',  // 持久化目录
+  readonly: false,
+});
+```
+
+容器退出后，`data/sessions/{folder}/.claude/memory/` 保留，下次启动时重新挂载。
 
 **格式示例**：
 ```markdown
@@ -278,6 +300,13 @@ User prefers:
 - Code examples in TypeScript
 - Links to documentation
 ```
+
+**Auto-Memory vs Session 的区别**：
+
+| 类型 | 存储位置 | 生命周期 |
+|------|---------|---------|
+| **Session 会话文件** | `~/.claude/projects/*/sessions/*.jsonl` | 会话压缩后归档到 `conversations/` |
+| **Auto-Memory** | `~/.claude/memory/*.md` | 永久持久化 |
 
 ---
 
@@ -443,6 +472,19 @@ Write({
 
 ## 记忆生命周期管理
 
+### 记忆持久化级别
+
+| 记忆类型 | 持久化 | 容器退出后 | 说明 |
+|---------|--------|-----------|------|
+| **消息历史** | ✅ SQLite | 保留 | 永久存储在数据库 |
+| **Session ID** | ✅ SQLite | 保留 | 用于恢复会话 |
+| **会话文件 (.jsonl)** | ✅ 文件 | 保留 | 压缩后归档到 conversations/ |
+| **Auto-Memory** | ✅ 文件 | 保留 | 永久用户偏好 |
+| **CLAUDE.md** | ✅ 文件 | 保留 | 永久群组知识 |
+| **Skills** | ✅ 文件 | 保留 | 永久指令扩展 |
+
+**重要**：所有记忆都是持久化的，容器退出后不会丢失。
+
 ### 会话归档
 
 当会话被压缩 (compact) 时，SDK 会触发 `PreCompact` hook：
@@ -559,9 +601,15 @@ query({
 
 ## 总结
 
-| 记忆类型 | 作用 | 存储位置 | 修改方式 |
-|---------|------|---------|---------|
-| **短期记忆** | 当前对话上下文 | SQLite + SDK 会话文件 | SQL / 删除文件 |
-| **长期记忆** | 跨会话知识 | CLAUDE.md | 编辑文件 |
-| **指令记忆** | 可执行知识扩展 | Skills | 编辑 / 创建 Skill |
-| **用户偏好** | 个人设置 | Auto-Memory | 对话中说明 / 编辑文件 |
+| 记忆类型 | 作用 | 存储位置 | 持久化 | 修改方式 |
+|---------|------|---------|--------|---------|
+| **消息历史** | 对话上下文 | SQLite | ✅ 永久 | SQL 删除 |
+| **Session 文件** | 当前会话状态 | `.jsonl` 文件 | ✅ 保留（压缩后归档） | 删除文件 |
+| **Auto-Memory** | 用户偏好 | `~/.claude/memory/` | ✅ 永久 | 对话中说明 / 编辑文件 |
+| **CLAUDE.md** | 群组知识 | `/workspace/group/` | ✅ 永久 | 编辑文件 |
+| **Skills** | 指令扩展 | `~/.claude/skills/` | ✅ 永久 | 创建 / 编辑 Skill |
+
+**关键点**：
+- 所有记忆都是持久化的，容器退出不会丢失
+- "短期记忆"指的是**对话上下文范围**，而非生命周期
+- Session 压缩时会归档到 `conversations/` 目录，内容仍可查阅
