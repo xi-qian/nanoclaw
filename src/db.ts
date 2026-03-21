@@ -363,6 +363,35 @@ export function getMessagesSince(
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
 }
 
+/**
+ * Get messages before a timestamp (for context history).
+ * Used to provide conversation context when starting a new session.
+ * Returns messages in chronological order (oldest first).
+ */
+export function getMessagesBefore(
+  chatJid: string,
+  beforeTimestamp: string,
+  botPrefix: string,
+  limit: number = 20,
+): NewMessage[] {
+  // Filter bot messages and get N most recent messages before the timestamp
+  // Subquery takes the N most recent, outer query re-sorts chronologically.
+  const sql = `
+    SELECT * FROM (
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      FROM messages
+      WHERE chat_jid = ? AND timestamp <= ?
+        AND is_bot_message = 0 AND content NOT LIKE ?
+        AND content != '' AND content IS NOT NULL
+      ORDER BY timestamp DESC
+      LIMIT ?
+    ) ORDER BY timestamp
+  `;
+  return db
+    .prepare(sql)
+    .all(chatJid, beforeTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+}
+
 export function createTask(
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
 ): void {

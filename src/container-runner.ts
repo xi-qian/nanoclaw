@@ -116,6 +116,7 @@ function buildVolumeMounts(
 
   // Per-group Claude sessions directory (isolated from other groups)
   // Each group gets their own .claude/ to prevent cross-group session access
+  // The SDK stores session transcripts in ~/.claude/projects/*/sessions/*.jsonl
   const groupSessionsDir = path.join(
     DATA_DIR,
     'sessions',
@@ -123,6 +124,12 @@ function buildVolumeMounts(
     '.claude',
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
+
+  // Create projects directory where SDK stores session transcripts
+  // Must be writable by the container's node user (uid 1000)
+  const projectsDir = path.join(groupSessionsDir, 'projects');
+  fs.mkdirSync(projectsDir, { recursive: true, mode: 0o777 });
+
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {
     fs.writeFileSync(

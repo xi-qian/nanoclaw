@@ -511,36 +511,49 @@ async function main(): Promise<void> {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
-      if (queryResult.newSessionId) {
-        sessionId = queryResult.newSessionId;
+      try {
+        const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+        if (queryResult.newSessionId) {
+          sessionId = queryResult.newSessionId;
+        }
+        if (queryResult.lastAssistantUuid) {
+          resumeAt = queryResult.lastAssistantUuid;
+        }
+
+        // If _close was consumed during the query, exit immediately.
+        // Don't emit a session-update marker (it would reset the host's
+        // idle timer and cause a 30-min delay before the next _close).
+        if (queryResult.closedDuringQuery) {
+          log('Close sentinel consumed during query, exiting');
+          break;
+        }
+
+        // Emit session update so host can track it
+        writeOutput({ status: 'success', result: null, newSessionId: sessionId });
+
+        log('Query ended, waiting for next IPC message...');
+
+        // Wait for the next message or _close sentinel
+        const nextMessage = await waitForIpcMessage();
+        if (nextMessage === null) {
+          log('Close sentinel received, exiting');
+          break;
+        }
+
+        log(`Got new message (${nextMessage.length} chars), starting new query`);
+        prompt = nextMessage;
+      } catch (queryError) {
+        // Handle session not found - clear session and retry as new
+        const errorMsg = queryError instanceof Error ? queryError.message : String(queryError);
+        if (errorMsg.toLowerCase().includes('session') && errorMsg.toLowerCase().includes('not found')) {
+          log(`Session not found, clearing and retrying as new session`);
+          sessionId = undefined;
+          resumeAt = undefined;
+          // Retry with new session (don't consume the prompt yet)
+          continue;
+        }
+        throw queryError;
       }
-      if (queryResult.lastAssistantUuid) {
-        resumeAt = queryResult.lastAssistantUuid;
-      }
-
-      // If _close was consumed during the query, exit immediately.
-      // Don't emit a session-update marker (it would reset the host's
-      // idle timer and cause a 30-min delay before the next _close).
-      if (queryResult.closedDuringQuery) {
-        log('Close sentinel consumed during query, exiting');
-        break;
-      }
-
-      // Emit session update so host can track it
-      writeOutput({ status: 'success', result: null, newSessionId: sessionId });
-
-      log('Query ended, waiting for next IPC message...');
-
-      // Wait for the next message or _close sentinel
-      const nextMessage = await waitForIpcMessage();
-      if (nextMessage === null) {
-        log('Close sentinel received, exiting');
-        break;
-      }
-
-      log(`Got new message (${nextMessage.length} chars), starting new query`);
-      prompt = nextMessage;
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);

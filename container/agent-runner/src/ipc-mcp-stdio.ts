@@ -250,6 +250,23 @@ server.tool(
 );
 
 server.tool(
+  'new_session',
+  'Start a new conversation session, clearing the previous context. Use this when the user wants to start fresh or when the conversation topic changes completely.',
+  {},
+  async () => {
+    const data = {
+      type: 'new_session',
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return { content: [{ type: 'text' as const, text: 'New session started. Previous conversation context has been cleared.' }] };
+  },
+);
+
+server.tool(
   'update_task',
   'Update an existing scheduled task. Only provided fields are changed; omitted fields stay the same.',
   {

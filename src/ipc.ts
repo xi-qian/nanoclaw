@@ -5,7 +5,7 @@ import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { createTask, deleteSession, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
@@ -24,6 +24,7 @@ export interface IpcDeps {
   ) => void;
   onTasksChanged: () => void;
   getFeishuChannel?: () => any; // 飞书 Channel 获取方法（可选）
+  clearSession?: (groupFolder: string) => void; // 清除内存中的 session
 }
 
 let ipcWatcherRunning = false;
@@ -580,6 +581,19 @@ export async function processTaskIpc(
           'Invalid register_group request - missing required fields',
         );
       }
+      break;
+
+    case 'new_session':
+      // Clear session ID for this group so next conversation starts fresh
+      deleteSession(sourceGroup);
+      // Also clear from memory if the callback is provided
+      if (deps.clearSession) {
+        deps.clearSession(sourceGroup);
+      }
+      logger.info(
+        { sourceGroup },
+        'New session started via IPC - session cleared',
+      );
       break;
 
     default:

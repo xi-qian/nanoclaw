@@ -3,6 +3,7 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  // CONTEXT_HISTORY_LIMIT, // TODO: disabled - SDK Session handles history
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
@@ -31,6 +32,7 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
+  // getMessagesBefore, // TODO: disabled - SDK Session handles history
   getMessagesSince,
   getNewMessages,
   getRegisteredGroup,
@@ -223,6 +225,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   const isMainGroup = group.isMain === true;
+  const hasExistingSession = !!sessions[group.folder];
 
   const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
   const missedMessages = getMessagesSince(
@@ -244,7 +247,36 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
+  // TODO: SDK Session 机制已可恢复对话历史，历史消息功能暂时禁用
+  // 待验证 SDK Session 稳定后再决定是否保留
+  // Include history messages for new sessions to provide context
+  // let prompt: string;
+  // if (!hasExistingSession && CONTEXT_HISTORY_LIMIT > 0) {
+  //   // New session: include recent history for context
+  //   const historyMessages = getMessagesBefore(
+  //     chatJid,
+  //     sinceTimestamp,
+  //     ASSISTANT_NAME,
+  //     CONTEXT_HISTORY_LIMIT,
+  //   );
+  //   prompt = formatMessagesWithHistory(missedMessages, historyMessages, TIMEZONE);
+  //   logger.info(
+  //     { group: group.name, messageCount: missedMessages.length, historyCount: historyMessages.length },
+  //     'Processing messages with history context (new session)',
+  //   );
+  // } else {
+  //   // Existing session: SDK maintains context, no need for extra history
+  //   prompt = formatMessages(missedMessages, TIMEZONE);
+  //   logger.info(
+  //     { group: group.name, messageCount: missedMessages.length },
+  //     'Processing messages',
+  //   );
+  // }
   const prompt = formatMessages(missedMessages, TIMEZONE);
+  logger.info(
+    { group: group.name, messageCount: missedMessages.length, hasExistingSession },
+    'Processing messages',
+  );
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -252,11 +284,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   lastAgentTimestamp[chatJid] =
     missedMessages[missedMessages.length - 1].timestamp;
   saveState();
-
-  logger.info(
-    { group: group.name, messageCount: missedMessages.length },
-    'Processing messages',
-  );
 
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -400,19 +427,6 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
-      // If the error is about a session not found, clear the session
-      // so the next request will start fresh (useful for APIs that don't
-      // support persistent sessions like Zhipu API)
-      if (output.error && output.error.toLowerCase().includes('session')) {
-        logger.info(
-          { group: group.name, sessionId: sessions[group.folder] },
-          'Session error detected, clearing session',
-        );
-        delete sessions[group.folder];
-        // Clear from database too
-        const { deleteSession } = await import('./db.js');
-        deleteSession(group.folder);
-      }
       return 'error';
     }
 
@@ -730,6 +744,10 @@ async function main(): Promise<void> {
       }
     },
     getFeishuChannel: () => channels.find((ch) => ch.name === 'feishu'),
+    clearSession: (groupFolder: string) => {
+      delete sessions[groupFolder];
+      logger.info({ groupFolder }, 'Session cleared from memory');
+    },
   });
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();

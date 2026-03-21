@@ -53,6 +53,15 @@ export const CREDENTIAL_PROXY_PORT = parseInt(
 );
 export const IPC_POLL_INTERVAL = 1000;
 export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
+
+// Context history configuration
+// Number of historical messages to include when starting a new session
+// This helps the agent understand context from previous conversations
+export const CONTEXT_HISTORY_LIMIT = parseInt(
+  process.env.CONTEXT_HISTORY_LIMIT || '20',
+  10,
+);
+
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
