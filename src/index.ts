@@ -274,7 +274,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // }
   const prompt = formatMessages(missedMessages, TIMEZONE);
   logger.info(
-    { group: group.name, messageCount: missedMessages.length, hasExistingSession },
+    {
+      group: group.name,
+      messageCount: missedMessages.length,
+      hasExistingSession,
+    },
     'Processing messages',
   );
 
