@@ -242,7 +242,6 @@ scope: group
 
 - 确保飞书凭证已配置
 - 报告模板存放在 /workspace/group/templates/
-```
 
 ### Frontmatter 字段
 
