@@ -29,43 +29,10 @@ import { detectAuthMode } from './credential-proxy.js';
 import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
-import { STORE_DIR } from './config.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
-
-// Feishu credentials file path
-const FEISHU_CREDENTIALS_FILE = path.join(
-  STORE_DIR,
-  'auth',
-  'feishu',
-  'credentials.json',
-);
-
-interface FeishuCredentials {
-  appId: string;
-  appSecret: string;
-}
-
-/**
- * Load Feishu credentials from store/auth/feishu/credentials.json
- */
-function loadFeishuCredentials(): FeishuCredentials | null {
-  try {
-    if (!fs.existsSync(FEISHU_CREDENTIALS_FILE)) {
-      return null;
-    }
-    const content = fs.readFileSync(FEISHU_CREDENTIALS_FILE, 'utf-8');
-    const credentials = JSON.parse(content) as FeishuCredentials;
-    if (credentials.appId && credentials.appSecret) {
-      return credentials;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 export interface ContainerInput {
   prompt: string;
@@ -292,13 +259,12 @@ function buildContainerArgs(
     }
   }
 
-  // Pass Feishu credentials to container (for feishu-doc skill)
-  const feishuCredentials = loadFeishuCredentials();
-  if (feishuCredentials) {
-    args.push('-e', `FEISHU_APP_ID=${feishuCredentials.appId}`);
-    args.push('-e', `FEISHU_APP_SECRET=${feishuCredentials.appSecret}`);
-    logger.debug('Feishu credentials passed to container');
-  }
+  // NOTE: Feishu credentials are NOT passed to the container.
+  // All Feishu operations are proxied through IPC to the host, where the
+  // actual API calls happen. This keeps credentials secure and prevents
+  // exposure to the agent.
+  //
+  // Flow: Container MCP tool → IPC file → Host IPC watcher → Feishu API
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());

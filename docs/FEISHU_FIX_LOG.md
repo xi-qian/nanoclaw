@@ -209,7 +209,7 @@ private buildDocUrl(docId: string, brand: LarkBrand): string {
 
 | 文件 | 修改内容 |
 |------|---------|
-| `src/container-runner.ts` | 添加飞书凭证加载和传递 |
+| `src/container-runner.ts` | ~~添加飞书凭证加载和传递~~ **已移除**（安全修复） |
 | `src/ipc.ts` | 修复 IPC 路径扫描，添加多维表格请求处理 |
 | `src/index.ts` | 添加 getFeishuChannel 参数 |
 | `src/channels/feishu.ts` | 添加多维表格操作方法 |
@@ -248,3 +248,48 @@ client.createDoc('测试文档', '# 测试\n内容');
 2. **更新 agent-runner-src**：修改源文件后需要同步到 `data/sessions/feishu-main/agent-runner-src/`
 3. **重启服务**：修改代码后需要 `systemctl --user restart nanoclaw-fork`
 4. **权限配置**：飞书应用需要开通文档和多维表格相关权限
+
+---
+
+## 安全修复 (2026-03-21)
+
+### 问题：凭证暴露风险
+
+**问题描述**：
+飞书凭证（`FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`）作为环境变量注入到容器，存在以下风险：
+- 大模型可通过 `printenv` 或读取 `/proc/self/environ` 获取凭证
+- 对话日志可能记录凭证，导致泄露
+- 恶意指令可能窃取凭证
+
+**原因分析**：
+凭证注入是早期设计遗留。实际上容器内的 MCP 工具通过 IPC 转发请求到 Host，所有 API 调用在 Host 端执行，容器内不需要凭证。
+
+```
+容器 MCP 工具 → IPC 文件 → Host IPC Watcher → 飞书 API
+                    │
+              凭证在此使用
+              容器不需要凭证
+```
+
+**修复方案**：
+移除 `src/container-runner.ts` 中的飞书凭证注入代码：
+
+```typescript
+// 移除前（不安全）
+const feishuCredentials = loadFeishuCredentials();
+if (feishuCredentials) {
+  args.push('-e', `FEISHU_APP_ID=${feishuCredentials.appId}`);
+  args.push('-e', `FEISHU_APP_SECRET=${feishuCredentials.appSecret}`);
+}
+
+// 移除后（安全）
+// Feishu operations are proxied through IPC to the host.
+// Credentials are never exposed to the container.
+```
+
+**同时移除**：
+- `FEISHU_CREDENTIALS_FILE` 常量
+- `FeishuCredentials` 接口（本地定义）
+- `loadFeishuCredentials()` 函数
+
+**验证**：`npm run build` 编译通过，功能不受影响
