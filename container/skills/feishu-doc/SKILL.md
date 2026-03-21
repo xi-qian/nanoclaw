@@ -28,7 +28,7 @@ description: |
 
 ### 操作方式
 - **文档操作**：使用 `feishu_create_doc`、`feishu_fetch_doc`、`feishu_update_doc`、`feishu_search_docs` 工具
-- **多维表格操作**：使用 `feishu_create_bitable`、`feishu_create_bitable_table`、`feishu_add_bitable_records` 工具
+- **多维表格操作**：使用 `feishu_create_bitable`、`feishu_create_bitable_table`、`feishu_list_bitable_fields`、`feishu_list_bitable_records`、`feishu_add_bitable_records`、`feishu_update_bitable_record`、`feishu_delete_bitable_record` 工具
 - **不要使用 Bash 命令**，使用对应的 MCP 工具
 
 ### 数据格式约束
@@ -50,7 +50,12 @@ description: |
 | 搜索文档 | `feishu_search_docs` | 搜索飞书文档 |
 | 创建多维表格 | `feishu_create_bitable` | 创建多维表格应用 |
 | 创建数据表 | `feishu_create_bitable_table` | 在多维表格中创建数据表 |
+| 列出数据表 | `feishu_list_bitable_tables` | 列出多维表格中的所有数据表 |
+| 查看字段 | `feishu_list_bitable_fields` | 获取数据表字段列表 |
+| 查询记录 | `feishu_list_bitable_records` | 查询表格记录 |
 | 添加记录 | `feishu_add_bitable_records` | 批量添加记录 |
+| 更新记录 | `feishu_update_bitable_record` | 更新指定记录 |
+| 删除记录 | `feishu_delete_bitable_record` | 删除指定记录 |
 
 ---
 
@@ -119,7 +124,14 @@ description: |
 ]
 ```
 
-### 3. 批量添加记录
+### 3. 列出数据表
+
+使用 `feishu_list_bitable_tables` 工具：
+- `app_token`: 多维表格 app_token
+
+**返回**：数据表列表，包含表名和 table_id
+
+### 4. 批量添加记录
 
 使用 `feishu_add_bitable_records` 工具：
 - `app_token`: 多维表格 app_token
@@ -137,6 +149,60 @@ description: |
   ]
 }
 ```
+
+### 5. 查询数据表字段
+
+使用 `feishu_list_bitable_fields` 工具：
+- `app_token`: 多维表格 app_token
+- `table_id`: 数据表 table_id
+
+**返回**：字段列表，包含字段名、类型和字段 ID
+
+### 6. 查询数据表记录
+
+使用 `feishu_list_bitable_records` 工具：
+- `app_token`: 多维表格 app_token
+- `table_id`: 数据表 table_id
+- `view_id`: 视图 ID（可选）
+- `filter`: 过滤条件（可选）
+- `sort`: 排序条件（可选）
+- `page_size`: 每页记录数（可选）
+- `page_token`: 分页 token（可选）
+
+**过滤条件示例**：
+```
+CurrentValue.[客户名称]="字节跳动"
+```
+
+**排序条件示例**：
+```json
+[{"field_name": "签约日期", "desc": true}]
+```
+
+### 7. 更新记录
+
+使用 `feishu_update_bitable_record` 工具：
+- `app_token`: 多维表格 app_token
+- `table_id`: 数据表 table_id
+- `record_id`: 要更新的记录 ID
+- `fields`: 要更新的字段值
+
+**示例**：
+```json
+{
+  "app_token": "appxxxxxxxxxxxx",
+  "table_id": "tblxxxxxxxxxxxx",
+  "record_id": "recxxxxxxxxxxxx",
+  "fields": {"状态": "已完成"}
+}
+```
+
+### 8. 删除记录
+
+使用 `feishu_delete_bitable_record` 工具：
+- `app_token`: 多维表格 app_token
+- `table_id`: 数据表 table_id
+- `record_id`: 要删除的记录 ID
 
 ---
 

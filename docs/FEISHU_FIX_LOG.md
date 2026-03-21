@@ -293,3 +293,118 @@ if (feishuCredentials) {
 - `loadFeishuCredentials()` 函数
 
 **验证**：`npm run build` 编译通过，功能不受影响
+
+---
+
+## 多维表格功能完善 (2026-03-21)
+
+### 问题：多维表格 MCP 工具不完整
+
+**问题描述**：
+多维表格只有创建和添加记录功能，缺少读取和更新操作：
+- 无法列出数据表
+- 无法查询记录
+- 无法获取字段列表
+- 无法更新/删除记录
+
+**修复方案**：
+
+1. **新增 MCP 工具** (`container/agent-runner/src/ipc-mcp-stdio.ts`)：
+   - `feishu_list_bitable_tables` - 列出多维表格中的所有数据表
+   - `feishu_list_bitable_fields` - 获取数据表字段列表
+   - `feishu_list_bitable_records` - 查询表格记录（支持过滤、排序、分页）
+   - `feishu_update_bitable_record` - 更新指定记录
+   - `feishu_delete_bitable_record` - 删除指定记录
+
+2. **新增 Client 方法** (`src/feishu/client.ts`)：
+   - `listBitableTables(appToken)` - 调用 `/open-apis/bitable/v1/apps/{app_token}/tables`
+   - `listBitableFields(appToken, tableId)` - 获取字段列表
+   - `updateBitableRecord(appToken, tableId, recordId, fields)` - 更新记录
+   - `deleteBitableRecord(appToken, tableId, recordId)` - 删除记录
+
+3. **新增 Channel 方法** (`src/channels/feishu.ts`)：
+   - 代理上述 Client 方法
+
+4. **新增 IPC 处理** (`src/ipc.ts`)：
+   - 处理 `list_bitable_tables`、`list_bitable_fields`、`list_bitable_records`、`update_bitable_record`、`delete_bitable_record` 请求
+
+5. **更新 SKILL.md** (`container/skills/feishu-doc/SKILL.md`)：
+   - 添加新工具的使用说明和示例
+
+**测试验证**：
+```
+用户: 查询员工信息表有多少条记录
+Agent: 成功列出 10 条记录，包含在职/离职状态
+
+用户: 把孙八的状态改为已离职
+Agent: 成功更新记录，状态从"在职"改为"已离职"
+```
+
+---
+
+### 问题：agent-runner-src 同步逻辑错误
+
+**问题描述**：
+`src/container-runner.ts` 中只有当目录不存在时才复制源代码：
+```typescript
+if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
+  fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+}
+```
+导致代码更新后不会同步到运行时目录。
+
+**修复方案**：
+移除目录存在检查，每次启动时都同步最新代码：
+```typescript
+// Always sync if source directory exists (updates on code changes)
+if (fs.existsSync(agentRunnerSrc)) {
+  fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+}
+```
+
+---
+
+### 问题：WebSocket 断开方法错误
+
+**问题描述**：
+服务停止时报错：`this.wsClient.stop is not a function`
+
+**原因分析**：
+Lark SDK 的 `WSClient` 类使用 `close()` 方法断开连接，不是 `stop()`。
+
+**修复方案** (`src/feishu/client.ts`)：
+```typescript
+// 修复前
+await this.wsClient.stop();
+
+// 修复后
+await this.wsClient.close();
+```
+
+---
+
+## 完整的多维表格 MCP 工具列表
+
+| 工具 | 功能 | 状态 |
+|------|------|------|
+| `feishu_create_bitable` | 创建多维表格应用 | ✅ |
+| `feishu_create_bitable_table` | 创建数据表 | ✅ |
+| `feishu_list_bitable_tables` | 列出所有数据表 | ✅ 新增 |
+| `feishu_list_bitable_fields` | 获取字段列表 | ✅ 新增 |
+| `feishu_list_bitable_records` | 查询表格记录 | ✅ 新增 |
+| `feishu_add_bitable_records` | 批量添加记录 | ✅ |
+| `feishu_update_bitable_record` | 更新指定记录 | ✅ 新增 |
+| `feishu_delete_bitable_record` | 删除指定记录 | ✅ 新增 |
+
+---
+
+## 文件修改清单（更新）
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/container-runner.ts` | 修复 agent-runner-src 同步逻辑 |
+| `src/feishu/client.ts` | 新增 listBitableTables 等方法，修复 WebSocket close 方法 |
+| `src/channels/feishu.ts` | 新增多维表格操作代理方法 |
+| `src/ipc.ts` | 新增多维表格 IPC 请求处理 |
+| `container/agent-runner/src/ipc-mcp-stdio.ts` | 新增 5 个多维表格 MCP 工具 |
+| `container/skills/feishu-doc/SKILL.md` | 更新工具列表和使用说明 |

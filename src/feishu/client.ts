@@ -508,7 +508,7 @@ export class FeishuClient {
   async disconnect(): Promise<void> {
     if (this.wsClient) {
       try {
-        await this.wsClient.stop();
+        await this.wsClient.close();
         this.wsClient = null;
         log.info('Feishu WebSocket client disconnected');
       } catch (error) {
@@ -799,6 +799,41 @@ export class FeishuClient {
           error: error instanceof Error ? error.message : String(error),
         },
         'Failed to create bitable table',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 列出多维表格中的所有数据表
+   */
+  async listBitableTables(appToken: string): Promise<any[]> {
+    try {
+      const response = await this.client.bitable.appTable.list({
+        path: {
+          app_token: appToken,
+        },
+      });
+
+      if (response.code !== 0) {
+        throw new Error(`Failed to list bitable tables: ${response.msg}`);
+      }
+
+      const tables = response.data?.items || [];
+
+      log.info(
+        { appToken, count: tables.length },
+        'Bitable tables listed successfully',
+      );
+
+      return tables;
+    } catch (error) {
+      log.error(
+        {
+          appToken,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to list bitable tables',
       );
       throw error;
     }

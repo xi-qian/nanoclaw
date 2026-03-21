@@ -227,12 +227,51 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       request.fields,
                     );
                     break;
+                  case 'list_bitable_tables':
+                    result = {
+                      tables: await feishuChannel.listBitableTables(
+                        request.app_token,
+                      ),
+                    };
+                    break;
                   case 'add_bitable_records':
                     result = await feishuChannel.batchAddBitableRecords(
                       request.app_token,
                       request.table_id,
                       request.records,
                     );
+                    break;
+                  case 'list_bitable_records':
+                    result = await feishuChannel.listBitableRecords(
+                      request.app_token,
+                      request.table_id,
+                      request.options,
+                    );
+                    break;
+                  case 'list_bitable_fields':
+                    result = {
+                      fields: await feishuChannel.listBitableFields(
+                        request.app_token,
+                        request.table_id,
+                      ),
+                    };
+                    break;
+                  case 'update_bitable_record':
+                    await feishuChannel.updateBitableRecord(
+                      request.app_token,
+                      request.table_id,
+                      request.record_id,
+                      request.fields,
+                    );
+                    result = { updated: true };
+                    break;
+                  case 'delete_bitable_record':
+                    await feishuChannel.deleteBitableRecord(
+                      request.app_token,
+                      request.table_id,
+                      request.record_id,
+                    );
+                    result = { deleted: true };
                     break;
                   default:
                     throw new Error(

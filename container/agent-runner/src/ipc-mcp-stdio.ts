@@ -627,6 +627,53 @@ server.tool(
 );
 
 server.tool(
+  'feishu_list_bitable_tables',
+  '列出多维表格中的所有数据表。',
+  {
+    app_token: z.string().describe('多维表格应用 token'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'list_bitable_tables',
+      app_token: args.app_token,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        const tables = result.tables || [];
+        if (tables.length === 0) {
+          return {
+            content: [{ type: 'text' as const, text: '多维表格中没有数据表。' }],
+          };
+        }
+
+        const formatted = tables
+          .map((t: any, i: number) => `${i + 1}. ${t.name} (ID: ${t.table_id})`)
+          .join('\n');
+
+        return {
+          content: [{ type: 'text' as const, text: `找到 ${tables.length} 个数据表:\n\n${formatted}` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `列出数据表失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `列出数据表超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
   'feishu_add_bitable_records',
   '向多维表格数据表中添加记录。支持单条或批量添加（最多 500 条）。',
   {
@@ -662,6 +709,216 @@ server.tool(
     } catch (error) {
       return {
         content: [{ type: 'text' as const, text: `添加记录超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_list_bitable_records',
+  '查询多维表格数据表中的记录。支持过滤、排序和分页。',
+  {
+    app_token: z.string().describe('多维表格应用 token'),
+    table_id: z.string().describe('数据表 ID'),
+    view_id: z.string().optional().describe('视图 ID（可选）'),
+    filter: z.string().optional().describe('过滤条件（可选），如：CurrentValue.[字段名]="值"'),
+    sort: z.array(z.object({
+      field_name: z.string().describe('排序字段名'),
+      desc: z.boolean().optional().describe('是否降序，默认 false'),
+    })).optional().describe('排序条件（可选）'),
+    page_size: z.number().optional().describe('每页记录数（默认 20，最大 500）'),
+    page_token: z.string().optional().describe('分页 token（用于获取下一页）'),
+  },
+  async (args) => {
+    const options: any = {};
+    if (args.view_id) options.view_id = args.view_id;
+    if (args.filter) options.filter = args.filter;
+    if (args.sort) options.sort = args.sort;
+    if (args.page_size) options.pageSize = args.page_size;
+    if (args.page_token) options.pageToken = args.page_token;
+
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'list_bitable_records',
+      app_token: args.app_token,
+      table_id: args.table_id,
+      options,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        const records = result.records || [];
+        if (records.length === 0) {
+          return {
+            content: [{ type: 'text' as const, text: '数据表中没有记录。' }],
+          };
+        }
+
+        const formatted = records
+          .map((r: any, i: number) => {
+            const fields = Object.entries(r.fields || {})
+              .map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`)
+              .join('\n');
+            return `${i + 1}. Record ID: ${r.record_id}\n${fields}`;
+          })
+          .join('\n\n');
+
+        const hasMore = result.has_more ? `\n\n还有更多记录，使用 page_token: ${result.page_token}` : '';
+        return {
+          content: [{ type: 'text' as const, text: `找到 ${records.length} 条记录:\n\n${formatted}${hasMore}` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `查询记录失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `查询记录超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_list_bitable_fields',
+  '获取多维表格数据表的字段列表。',
+  {
+    app_token: z.string().describe('多维表格应用 token'),
+    table_id: z.string().describe('数据表 ID'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'list_bitable_fields',
+      app_token: args.app_token,
+      table_id: args.table_id,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        const fields = result.fields || [];
+        if (!Array.isArray(fields) || fields.length === 0) {
+          return {
+            content: [{ type: 'text' as const, text: '数据表中没有字段。' }],
+          };
+        }
+
+        const typeNames: Record<number, string> = {
+          1: '文本', 2: '数字', 3: '单选', 4: '多选', 5: '日期',
+          7: '复选框', 11: '人员', 15: '超链接', 17: '附件',
+          18: '关联', 19: '公式', 20: '双向关联', 21: '位置',
+          22: '群组', 23: '条码', 1001: '创建时间', 1002: '修改时间',
+          1003: '创建人', 1004: '修改人', 1005: '自动编号'
+        };
+
+        const formatted = (fields as any[])
+          .map((f: any) => `- ${f.field_name} (${typeNames[f.type] || `类型${f.type}`})${f.field_id ? ` [${f.field_id}]` : ''}`)
+          .join('\n');
+
+        return {
+          content: [{ type: 'text' as const, text: `字段列表:\n\n${formatted}` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `获取字段失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `获取字段超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_update_bitable_record',
+  '更新多维表格数据表中的指定记录。',
+  {
+    app_token: z.string().describe('多维表格应用 token'),
+    table_id: z.string().describe('数据表 ID'),
+    record_id: z.string().describe('要更新的记录 ID'),
+    fields: z.record(z.string(), z.any()).describe('要更新的字段值，key 为字段名，value 为新值'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'update_bitable_record',
+      app_token: args.app_token,
+      table_id: args.table_id,
+      record_id: args.record_id,
+      fields: args.fields,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: `记录 ${args.record_id} 更新成功!` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `更新记录失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `更新记录超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_delete_bitable_record',
+  '删除多维表格数据表中的指定记录。',
+  {
+    app_token: z.string().describe('多维表格应用 token'),
+    table_id: z.string().describe('数据表 ID'),
+    record_id: z.string().describe('要删除的记录 ID'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'delete_bitable_record',
+      app_token: args.app_token,
+      table_id: args.table_id,
+      record_id: args.record_id,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: `记录 ${args.record_id} 删除成功!` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `删除记录失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `删除记录超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
         isError: true,
       };
     }

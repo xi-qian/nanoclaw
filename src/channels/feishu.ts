@@ -235,6 +235,13 @@ export class FeishuChannel implements Channel {
   }
 
   /**
+   * 列出多维表格中的所有数据表
+   */
+  async listBitableTables(appToken: string): Promise<any[]> {
+    return await this.client.listBitableTables(appToken);
+  }
+
+  /**
    * 添加多维表格记录
    */
   async addBitableRecord(
@@ -265,6 +272,41 @@ export class FeishuChannel implements Channel {
     options?: any,
   ): Promise<any> {
     return await this.client.listBitableRecords(appToken, tableId, options);
+  }
+
+  /**
+   * 获取多维表格字段列表
+   */
+  async listBitableFields(appToken: string, tableId: string): Promise<any[]> {
+    return await this.client.listBitableFields(appToken, tableId);
+  }
+
+  /**
+   * 更新多维表格记录
+   */
+  async updateBitableRecord(
+    appToken: string,
+    tableId: string,
+    recordId: string,
+    fields: Record<string, any>,
+  ): Promise<void> {
+    return await this.client.updateBitableRecord(
+      appToken,
+      tableId,
+      recordId,
+      fields,
+    );
+  }
+
+  /**
+   * 删除多维表格记录
+   */
+  async deleteBitableRecord(
+    appToken: string,
+    tableId: string,
+    recordId: string,
+  ): Promise<void> {
+    return await this.client.deleteBitableRecord(appToken, tableId, recordId);
   }
 
   /**
