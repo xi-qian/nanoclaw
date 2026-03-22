@@ -563,3 +563,93 @@ UPDATE router_state SET
 1. **飞书平台配置**：需要在开发者后台订阅 `card.action.trigger` 事件
 2. **时间戳格式**：所有时间戳必须使用毫秒格式，保持与飞书 API 一致
 3. **容器重建**：修改 `container/agent-runner/src/` 后需要运行 `./container/build.sh`
+
+---
+
+## 自动注册群组 (2026-03-22)
+
+### 问题：需要手动注册群组
+
+**问题描述**：
+每次添加新群组都需要手动执行注册命令，操作繁琐。
+
+**修复方案**：
+添加 `AUTO_REGISTER_GROUPS` 配置项，默认启用自动注册功能。
+
+**配置项** (`src/config.ts`)：
+```typescript
+export const AUTO_REGISTER_GROUPS = process.env.AUTO_REGISTER_GROUPS !== 'false';
+// 默认: true (启用自动注册)
+```
+
+**触发词规则**：
+| 聊天类型 | 需要触发词 |
+|---------|-----------|
+| 单聊 (p2p) | 否 |
+| 群聊 (非主群组) | 是 (`@Andy`) |
+| 群聊 (主群组) | 否 |
+
+**禁用方法**：
+在 `.env` 中设置 `AUTO_REGISTER_GROUPS=false`
+
+---
+
+## 获取用户名 (2026-03-22)
+
+### 问题：消息只显示用户 open_id
+
+**问题描述**：
+Agent 收到的消息中 `sender_name` 为空或显示为 open_id（如 `ou_xxxxx`），无法识别用户。
+
+**修复方案**：
+在 `FeishuClient` 中添加 `getUserName` 方法，调用飞书 API 获取用户信息。
+
+**实现** (`src/feishu/client.ts`)：
+```typescript
+async getUserName(openId: string): Promise<string> {
+  // 1. 检查缓存（1小时有效期）
+  // 2. 调用飞书 API: GET /open-apis/contact/v3/users/:user_id
+  // 3. 返回用户名称，失败时返回 open_id
+}
+```
+
+**所需权限**（任选其一）：
+- `contact:user.base:readonly` - 获取用户基本信息（推荐）
+- `contact:contact:readonly_as_app` - 以应用身份读取通讯录
+
+**权限配置步骤**：
+1. 打开飞书开发者后台
+2. 选择应用 → 权限管理 → API权限
+3. 开通 `contact:user.base:readonly` 权限
+4. 自建应用还需在数据权限中配置通讯录权限范围
+
+---
+
+## 文件修改清单（最新更新）
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/config.ts` | 添加 AUTO_REGISTER_GROUPS 配置项 |
+| `src/index.ts` | 自动注册逻辑，区分单聊/群聊触发词需求 |
+| `src/feishu/client.ts` | 添加 getUserName 方法（含缓存） |
+| `src/channels/feishu.ts` | 调用 getUserName 获取发送者名称 |
+
+---
+
+## 配置清单
+
+| 配置项 | 说明 | 默认值 |
+|-------|------|-------|
+| `AUTO_REGISTER_GROUPS` | 自动注册新群组 | `true` |
+| `AUTO_REGISTER_GROUPS=false` | 禁用自动注册 | - |
+
+## 飞书应用权限清单
+
+| 权限 | 用途 | 必须 |
+|-----|------|-----|
+| `im:message` | 发送消息 | ✅ |
+| `im:message:send_as_bot` | 以机器人身份发送 | ✅ |
+| `card.action.trigger` | 卡片回调事件 | 卡片功能需要 |
+| `contact:user.base:readonly` | 获取用户信息 | 用户名显示需要 |
+| `docx:document` | 文档操作 | 文档功能需要 |
+| `bitable:app` | 多维表格操作 | 表格功能需要 |

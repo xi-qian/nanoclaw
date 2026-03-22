@@ -126,7 +126,12 @@ export class FeishuChannel implements Channel {
         this.onMessage(jid, newMessage);
 
         log.debug(
-          { messageId: msg.message_id, chatId, senderName, contentLength: text.length },
+          {
+            messageId: msg.message_id,
+            chatId,
+            senderName,
+            contentLength: text.length,
+          },
           'Message received and processed',
         );
       }

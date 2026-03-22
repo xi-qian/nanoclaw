@@ -590,8 +590,7 @@ export class FeishuClient {
       }
     } catch (error) {
       // HTTP-level error (e.g., 400, 401, 403)
-      const errorMsg =
-        error instanceof Error ? error.message : String(error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
       log.warn(
         {
           openId,
