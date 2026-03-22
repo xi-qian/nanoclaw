@@ -950,3 +950,102 @@ File size: 1221880 bytes
       ↓
 10. Agent 使用 Read 工具读取文件内容
 ```
+
+---
+
+## PDF/DOCX 文件内容提取 (2026-03-22)
+
+### 问题：Agent 无法提取 PDF 和 DOCX 文件内容
+
+**问题描述**：
+用户发送 PDF 或 DOCX 文件后，虽然文件可以成功下载，但 Agent 无法提取文件内容进行分析。
+
+**原因分析**：
+1. Container 镜像缺少文档处理工具（`pdftotext`、`pandoc`）
+2. Agent 的 Bash 权限被 skill 的 `allowed-tools` 限制
+3. `.claude` 目录权限不足，导致 session 环境无法创建
+
+**修复方案**：
+
+1. **添加文档处理工具** (`container/Dockerfile`)：
+```dockerfile
+RUN apt-get update && apt-get install -y \
+    # ... 其他依赖
+    poppler-utils \    # pdftotext - PDF 文本提取
+    pandoc \           # 文档格式转换（支持 DOCX、EPUB、ODT 等）
+    && rm -rf /var/lib/apt/lists/*
+```
+
+2. **添加 file-reader skill** (`container/skills/file-reader/SKILL.md`)：
+   - 提供 PDF 文本提取说明
+   - 提供 DOCX/EPUB/ODT 转换说明
+   - 配置 `allowed-tools: Bash(pdftotext:*), Bash(pandoc:*)`
+
+3. **移除 agent-browser skill 的 Bash 限制**：
+```markdown
+# 修复前
+allowed-tools: Bash(agent-browser:*)  # 只允许执行 agent-browser 命令
+
+# 修复后
+# 移除 allowed-tools，使用全局 Bash 权限
+```
+
+4. **修复目录权限** (`src/container-runner.ts`)：
+```typescript
+// 修复前
+fs.mkdirSync(groupSessionsDir, { recursive: true });
+
+// 修复后
+fs.mkdirSync(groupSessionsDir, { recursive: true, mode: 0o777 });
+```
+
+**验证结果**：
+```
+用户发送 PDF 文件
+      ↓
+Agent 下载文件到 /workspace/ipc/downloads/xxx.pdf
+      ↓
+Agent 执行: pdftotext /workspace/ipc/downloads/xxx.pdf -
+      ↓
+成功提取 PDF 文本内容
+```
+
+---
+
+## 文件修改清单（本次更新）
+
+| 文件 | 修改内容 |
+|------|---------|
+| `container/Dockerfile` | 添加 poppler-utils 和 pandoc |
+| `container/skills/file-reader/SKILL.md` | 新增文件内容提取 skill |
+| `container/skills/agent-browser/SKILL.md` | 移除 allowed-tools 限制 |
+| `src/container-runner.ts` | 修复 .claude 目录权限 |
+
+---
+
+## 可用的文档处理命令
+
+| 命令 | 用途 | 示例 |
+|------|------|------|
+| `pdftotext` | PDF 转文本 | `pdftotext file.pdf -` |
+| `pandoc` | DOCX/EPUB/ODT 转文本 | `pandoc file.docx -t plain` |
+
+---
+
+## 完整的文件处理流程
+
+```
+1. 用户发送 PDF/DOCX 文件
+      ↓
+2. Agent 调用 feishu_download_resource 下载文件
+      ↓
+3. 文件保存到 /workspace/ipc/downloads/xxx.pdf
+      ↓
+4. Agent 执行 Bash 命令提取内容:
+   - PDF: pdftotext /workspace/ipc/downloads/xxx.pdf -
+   - DOCX: pandoc /workspace/ipc/downloads/xxx.docx -t plain
+      ↓
+5. Agent 分析提取的文本内容
+      ↓
+6. Agent 回复用户
+```

@@ -123,7 +123,7 @@ function buildVolumeMounts(
     group.folder,
     '.claude',
   );
-  fs.mkdirSync(groupSessionsDir, { recursive: true });
+  fs.mkdirSync(groupSessionsDir, { recursive: true, mode: 0o777 });
 
   // Create projects directory where SDK stores session transcripts
   // Must be writable by the container's node user (uid 1000)
