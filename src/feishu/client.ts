@@ -650,7 +650,13 @@ export class FeishuClient {
           // ignore
         }
         log.error(
-          { messageId, fileKey, type, status: response.status, statusText: response.statusText },
+          {
+            messageId,
+            fileKey,
+            type,
+            status: response.status,
+            statusText: response.statusText,
+          },
           'HTTP error downloading resource',
         );
         throw new Error(errorMsg);
@@ -661,7 +667,13 @@ export class FeishuClient {
       const buffer = Buffer.from(arrayBuffer);
 
       log.info(
-        { messageId, fileKey, type, size: buffer.length, contentType: response.headers.get('content-type') },
+        {
+          messageId,
+          fileKey,
+          type,
+          size: buffer.length,
+          contentType: response.headers.get('content-type'),
+        },
         'Resource downloaded successfully',
       );
 

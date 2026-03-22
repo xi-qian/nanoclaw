@@ -837,3 +837,116 @@ async downloadMessageResourceToFile(
 | `src/channels/feishu.ts` | downloadMessageResource 添加 groupFolder 参数 |
 | `src/ipc.ts` | 下载请求传递 groupFolder |
 | `container/skills/feishu-doc/SKILL.md` | 添加文件附件处理文档 |
+
+---
+
+## Lark SDK ArrayBuffer Bug 修复 (2026-03-22)
+
+### 问题：文件下载返回空数据
+
+**问题描述**：
+调用 `feishu_download_resource` 下载文件时，虽然 API 返回 200，但实际数据为空：
+- `response.data` 为 `undefined`
+- `response` 对象带有数字索引键（"0", "1", "2"...）
+
+**原因分析**：
+Lark SDK 的 `request` 方法在处理 `responseType: 'arraybuffer'` 时存在 bug。当 API 返回二进制数据时，SDK 将其错误地转换为一个带数字索引的对象，而不是正确的 ArrayBuffer。
+
+**调试日志**：
+```
+responseType: "object"
+hasData: false
+dataType: "undefined"
+isBuffer: false
+keys: ["0", "1", "2", "3", ...]  // 应该是二进制数据，不是数字索引
+```
+
+**修复方案**：
+使用原生 `fetch` API 绕过 Lark SDK 的 bug：
+
+```typescript
+async downloadMessageResource(
+  messageId: string,
+  fileKey: string,
+  type: 'image' | 'file' | 'audio' | 'video' | 'media' = 'file',
+): Promise<Buffer> {
+  // 获取 tenant_access_token
+  const token = await this.getTenantAccessToken();
+
+  // 使用原生 fetch API 下载文件
+  const url = `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=${type}`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+// 新增方法：获取 tenant_access_token
+private async getTenantAccessToken(): Promise<string> {
+  const response = await fetch(
+    'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        app_id: this.credentials.appId,
+        app_secret: this.credentials.appSecret,
+      }),
+    },
+  );
+  const data = await response.json();
+  return data.tenant_access_token;
+}
+```
+
+**额外修复**：
+- ES 模块兼容：用 `import.meta.url` 替代 `__dirname`
+
+**验证结果**：
+```
+Result: { "success": true, "file_path": "/workspace/ipc/downloads/test.pdf" }
+Downloaded file exists: data/ipc/feishu-main/downloads/test.pdf
+File size: 1221880 bytes
+```
+
+---
+
+## 文件修改清单（本次更新）
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/feishu/client.ts` | 使用原生 fetch 下载文件，添加 getTenantAccessToken 方法，修复 ES 模块兼容 |
+| `src/channels/feishu.ts` | downloadMessageResource 添加 type 参数 |
+| `src/ipc.ts` | 下载请求传递 resource_type |
+| `container/agent-runner/src/ipc-mcp-stdio.ts` | feishu_download_resource 添加 type 参数 |
+
+---
+
+## 完整的文件下载流程
+
+```
+1. 用户发送文件
+      ↓
+2. FeishuChannel 接收消息，提取 attachment 信息
+      ↓
+3. 消息格式化为 XML，包含 download_message_id 和 download_file_key
+      ↓
+4. Agent 看到消息，调用 feishu_download_resource 工具
+      ↓
+5. MCP 工具写入 IPC 请求文件
+      ↓
+6. Host IPC watcher 处理请求
+      ↓
+7. FeishuClient.downloadMessageResource() 下载文件
+   - 获取 tenant_access_token
+   - 使用 fetch API 下载二进制数据
+      ↓
+8. 文件保存到 data/ipc/{group}/downloads/
+      ↓
+9. 返回容器路径 /workspace/ipc/downloads/xxx
+      ↓
+10. Agent 使用 Read 工具读取文件内容
+```
