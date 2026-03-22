@@ -458,8 +458,16 @@ export class FeishuChannel implements Channel {
     actionKey: string = 'confirm_action',
   ): Promise<void> {
     return await this.sendButtonCard(chatId, title, content, [
-      { text: confirmText, value: { action: actionKey, confirmed: true }, style: 'primary' },
-      { text: cancelText, value: { action: actionKey, confirmed: false }, style: 'default' },
+      {
+        text: confirmText,
+        value: { action: actionKey, confirmed: true },
+        style: 'primary',
+      },
+      {
+        text: cancelText,
+        value: { action: actionKey, confirmed: false },
+        style: 'default',
+      },
     ]);
   }
 
