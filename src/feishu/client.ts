@@ -543,15 +543,21 @@ export class FeishuClient {
 
     try {
       // Call Feishu API to get user info
-      // https://open.feishu.cn/document/server-docs/contact-v3/user/find_by_id
+      // https://open.feishu.cn/document/server-docs/contact-v3/user/get
+      // Note: user_id goes in the URL path, not query params
+      // Required permissions: contact:user.base:readonly or contact:contact:readonly_as_app
       const response = await this.client.request({
-        url: '/open-apis/contact/v3/users/by_user_id',
+        url: `/open-apis/contact/v3/users/${openId}`,
         method: 'GET',
         params: {
           user_id_type: 'open_id',
-          user_id: openId,
         },
       });
+
+      log.debug(
+        { openId, code: response.code, msg: response.msg },
+        'User API response',
+      );
 
       if (response.code === 0 && response.data?.user) {
         const user = response.data.user;
@@ -564,19 +570,35 @@ export class FeishuClient {
           expireAt: Date.now() + this.USER_CACHE_TTL,
         });
 
-        log.debug({ openId, name }, 'User info fetched');
+        log.info({ openId, name }, 'User info fetched successfully');
         return name;
       } else {
+        // Log detailed error for debugging
+        // Common errors:
+        // - 41050: no user authority - need contact permission
+        // - 41012: user id invalid
         log.warn(
-          { openId, code: response.code, msg: response.msg },
-          'Failed to get user info',
+          {
+            openId,
+            code: response.code,
+            msg: response.msg,
+            hint: 'Ensure contact:user.base:readonly or contact:contact:readonly_as_app permission is granted',
+          },
+          'Failed to get user info from Feishu API',
         );
         return openId; // Return openId as fallback
       }
     } catch (error) {
-      log.error(
-        { openId, error: error instanceof Error ? error.message : String(error) },
-        'Error fetching user info',
+      // HTTP-level error (e.g., 400, 401, 403)
+      const errorMsg =
+        error instanceof Error ? error.message : String(error);
+      log.warn(
+        {
+          openId,
+          error: errorMsg,
+          hint: 'Check if contact permissions are granted in Feishu developer console',
+        },
+        'HTTP error fetching user info',
       );
       return openId; // Return openId as fallback
     }
