@@ -114,6 +114,14 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add message_type and attachment columns if they don't exist (migration for existing DBs)
+  try {
+    database.exec(`ALTER TABLE messages ADD COLUMN message_type TEXT`);
+    database.exec(`ALTER TABLE messages ADD COLUMN attachment TEXT`);
+  } catch {
+    /* columns already exist */
+  }
+
   // Add is_main column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(
@@ -270,7 +278,7 @@ export function setLastGroupSync(): void {
  */
 export function storeMessage(msg: NewMessage): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, card_action) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, card_action, message_type, attachment) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -281,6 +289,8 @@ export function storeMessage(msg: NewMessage): void {
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
     msg.card_action ? JSON.stringify(msg.card_action) : null,
+    msg.message_type || null,
+    msg.attachment ? JSON.stringify(msg.attachment) : null,
   );
 }
 
@@ -325,7 +335,7 @@ export function getNewMessages(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, card_action, message_type, attachment
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
         AND is_bot_message = 0 AND content NOT LIKE ?
@@ -337,14 +347,21 @@ export function getNewMessages(
 
   const rows = db
     .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as NewMessage[];
+    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as any[];
+
+  // Parse JSON fields
+  const messages: NewMessage[] = rows.map((row) => ({
+    ...row,
+    card_action: row.card_action ? JSON.parse(row.card_action) : undefined,
+    attachment: row.attachment ? JSON.parse(row.attachment) : undefined,
+  }));
 
   let newTimestamp = lastTimestamp;
-  for (const row of rows) {
+  for (const row of messages) {
     if (row.timestamp > newTimestamp) newTimestamp = row.timestamp;
   }
 
-  return { messages: rows, newTimestamp };
+  return { messages, newTimestamp };
 }
 
 export function getMessagesSince(
@@ -358,7 +375,7 @@ export function getMessagesSince(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, card_action, message_type, attachment
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
         AND is_bot_message = 0 AND content NOT LIKE ?
@@ -367,9 +384,16 @@ export function getMessagesSince(
       LIMIT ?
     ) ORDER BY timestamp
   `;
-  return db
+  const rows = db
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as any[];
+
+  // Parse JSON fields
+  return rows.map((row) => ({
+    ...row,
+    card_action: row.card_action ? JSON.parse(row.card_action) : undefined,
+    attachment: row.attachment ? JSON.parse(row.attachment) : undefined,
+  }));
 }
 
 /**
@@ -387,7 +411,7 @@ export function getMessagesBefore(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, card_action, message_type, attachment
       FROM messages
       WHERE chat_jid = ? AND timestamp <= ?
         AND is_bot_message = 0 AND content NOT LIKE ?
@@ -396,9 +420,16 @@ export function getMessagesBefore(
       LIMIT ?
     ) ORDER BY timestamp
   `;
-  return db
+  const rows = db
     .prepare(sql)
-    .all(chatJid, beforeTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+    .all(chatJid, beforeTimestamp, `${botPrefix}:%`, limit) as any[];
+
+  // Parse JSON fields
+  return rows.map((row) => ({
+    ...row,
+    card_action: row.card_action ? JSON.parse(row.card_action) : undefined,
+    attachment: row.attachment ? JSON.parse(row.attachment) : undefined,
+  }));
 }
 
 export function createTask(

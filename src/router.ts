@@ -40,7 +40,22 @@ export function formatMessages(messages: any[], timezone: string): string {
       });
       const sender = escapeXml(msg.sender_name || 'User');
       const content = escapeXml(msg.content);
-      return `    <message sender="${sender}" timestamp="${timestamp}">${content}</message>`;
+
+      // Include attachment info if present
+      let attachmentInfo = '';
+      if (msg.attachment && msg.message_type) {
+        const att = msg.attachment;
+        attachmentInfo = ` type="${msg.message_type}"`;
+        if (att.type === 'file') {
+          attachmentInfo += ` filename="${escapeXml(att.name || 'unknown')}"`;
+        }
+        // Include download parameters for feishu_download_resource tool
+        if (att.message_id && att.key) {
+          attachmentInfo += ` download_message_id="${att.message_id}" download_file_key="${att.key}"`;
+        }
+      }
+
+      return `    <message sender="${sender}" timestamp="${timestamp}"${attachmentInfo}>${content}</message>`;
     })
     .join('\n');
 
@@ -67,7 +82,22 @@ export function formatMessagesWithHistory(
     });
     const sender = escapeXml(msg.sender_name || 'User');
     const content = escapeXml(msg.content);
-    return `    <message sender="${sender}" timestamp="${timestamp}">${content}</message>`;
+
+    // Include attachment info if present
+    let attachmentInfo = '';
+    if (msg.attachment && msg.message_type) {
+      const att = msg.attachment;
+      attachmentInfo = ` type="${msg.message_type}"`;
+      if (att.type === 'file') {
+        attachmentInfo += ` filename="${escapeXml(att.name || 'unknown')}"`;
+      }
+      // Include download parameters for feishu_download_resource tool
+      if (att.message_id && att.key) {
+        attachmentInfo += ` download_message_id="${att.message_id}" download_file_key="${att.key}"`;
+      }
+    }
+
+    return `    <message sender="${sender}" timestamp="${timestamp}"${attachmentInfo}>${content}</message>`;
   };
 
   // If no history, use simple format

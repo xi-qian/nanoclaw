@@ -9,6 +9,7 @@ description: |
   (3) 需要在知识库中创建文档节点
   (4) 用户提到"飞书文档"、"表格"、"知识库"、"wiki"、"bitable"
   (5) 需要批量导入数据到飞书表格
+  (6) 用户发送了文件/图片/语音/视频，需要分析内容
 
   **重要说明**：
   - 此 Skill 使用 MCP 工具与飞书 API 交互
@@ -29,6 +30,7 @@ description: |
 ### 操作方式
 - **文档操作**：使用 `feishu_create_doc`、`feishu_fetch_doc`、`feishu_update_doc`、`feishu_search_docs` 工具
 - **多维表格操作**：使用 `feishu_create_bitable`、`feishu_create_bitable_table`、`feishu_list_bitable_fields`、`feishu_list_bitable_records`、`feishu_add_bitable_records`、`feishu_update_bitable_record`、`feishu_delete_bitable_record` 工具
+- **文件下载**：用户发送的图片/文件/语音/视频，使用 `feishu_download_resource` 工具下载后分析
 - **不要使用 Bash 命令**，使用对应的 MCP 工具
 
 ### 数据格式约束
@@ -56,6 +58,57 @@ description: |
 | 添加记录 | `feishu_add_bitable_records` | 批量添加记录 |
 | 更新记录 | `feishu_update_bitable_record` | 更新指定记录 |
 | 删除记录 | `feishu_delete_bitable_record` | 删除指定记录 |
+| **下载附件** | `feishu_download_resource` | 下载用户发送的图片/文件/语音/视频 |
+
+---
+
+## 📁 文件附件处理
+
+### 消息格式识别
+
+当用户发送文件时，消息会带有附件属性：
+```xml
+<message sender="用户名" timestamp="..." type="file" filename="文档.pdf" download_message_id="om_xxx" download_file_key="file_v3_xxx">[文件] 文档.pdf</message>
+```
+
+属性说明：
+- `type`: 消息类型（`image`、`file`、`audio`、`video`）
+- `filename`: 文件名（仅文件类型）
+- `download_message_id`: 用于调用下载工具的 message_id 参数
+- `download_file_key`: 用于调用下载工具的 file_key 参数
+
+### 下载并分析文件
+
+使用 `feishu_download_resource` 工具：
+```
+feishu_download_resource(
+  message_id="download_message_id的值",
+  file_key="download_file_key的值"
+)
+```
+
+**示例工作流**：
+```
+1. 用户发送文件 → 消息显示: [文件] 报告.pdf
+   消息属性: download_message_id="om_xxx" download_file_key="file_v3_xxx"
+
+2. Agent 调用: feishu_download_resource(message_id="om_xxx", file_key="file_v3_xxx")
+
+3. 工具返回: 资源下载成功! 临时文件路径: /tmp/xxx/报告.pdf
+
+4. Agent 使用 Read 工具读取: /tmp/xxx/报告.pdf
+
+5. Agent 分析内容并回复用户
+```
+
+### 支持的文件类型
+
+| 类型 | 说明 | 处理建议 |
+|------|------|----------|
+| `image` | 图片 | 下载后可直接查看或使用视觉模型分析 |
+| `file` | 文档/文件 | 下载后读取内容（PDF、Word、Excel 等） |
+| `audio` | 语音消息 | 下载后需要转录为文字 |
+| `video` | 视频 | 下载后分析内容 |
 
 ---
 

@@ -743,3 +743,97 @@ feishu_download_resource(message_id="om_xxx", file_key="img_v2_xxx")
 | `src/feishu/client.ts` | 添加下载资源文件方法 |
 | `src/ipc.ts` | 添加 download_resource IPC 处理 |
 | `container/agent-runner/src/ipc-mcp-stdio.ts` | 添加 feishu_download_resource 工具 |
+
+---
+
+## 文件下载路径修复 (2026-03-22)
+
+### 问题：下载的文件容器无法访问
+
+**问题描述**：
+`feishu_download_resource` 工具下载文件到主机 `/tmp` 目录，但容器无法访问该路径，导致 agent 无法读取下载的文件。
+
+**原因分析**：
+```
+Host: 下载文件到 /tmp/nanoclaw-feishu-downloads/xxx.pdf
+Container: 无法访问主机的 /tmp 目录
+```
+
+**修复方案**：
+将文件保存到 IPC 目录，该目录已挂载到容器：
+
+```
+Host 路径: data/ipc/{groupFolder}/downloads/xxx.pdf
+容器路径: /workspace/ipc/downloads/xxx.pdf
+```
+
+**代码修改** (`src/feishu/client.ts`)：
+```typescript
+async downloadMessageResourceToFile(
+  messageId: string,
+  fileKey: string,
+  fileName?: string,
+  groupFolder?: string,  // 新增参数
+): Promise<string> {
+  // 如果提供了 groupFolder，保存到 IPC 目录
+  if (groupFolder) {
+    const downloadsDir = path.join(
+      projectRoot,
+      'data',
+      'ipc',
+      groupFolder,
+      'downloads',
+    );
+    // 返回容器可访问的路径
+    return `/workspace/ipc/downloads/${safeFileName}`;
+  }
+  // 否则回退到临时目录
+}
+```
+
+---
+
+## 消息格式修复 (2026-03-22)
+
+### 问题：Agent 无法看到附件信息
+
+**问题描述**：
+用户发送文件后，agent 只能看到 `[文件] xxx.pdf` 这样的文本，不知道如何下载文件。
+
+**原因分析**：
+`formatMessages` 函数只输出消息内容，不包含 `message_type` 和 `attachment` 字段。
+
+**修复方案**：
+
+1. **更新消息格式** (`src/router.ts`)：
+```xml
+<message sender="用户名" timestamp="..."
+         type="file"
+         filename="文档.pdf"
+         download_message_id="om_xxx"
+         download_file_key="file_v3_xxx">
+  [文件] 文档.pdf
+</message>
+```
+
+2. **数据库字段** (`src/db.ts`)：
+   - 添加 `message_type` 和 `attachment` 列
+   - 更新 `storeMessage` 存储这些字段
+   - 更新 `getNewMessages`、`getMessagesSince`、`getMessagesBefore` 检索这些字段
+
+3. **更新 SKILL.md**：
+   - 添加文件附件处理文档
+   - 说明如何使用 `feishu_download_resource` 工具
+
+---
+
+## 文件修改清单（本次更新）
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/router.ts` | 消息格式添加附件属性 |
+| `src/db.ts` | 添加 message_type/attachment 列和存储/检索逻辑 |
+| `src/feishu/client.ts` | 下载文件保存到 IPC 目录 |
+| `src/channels/feishu.ts` | downloadMessageResource 添加 groupFolder 参数 |
+| `src/ipc.ts` | 下载请求传递 groupFolder |
+| `container/skills/feishu-doc/SKILL.md` | 添加文件附件处理文档 |

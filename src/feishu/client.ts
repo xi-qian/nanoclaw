@@ -648,36 +648,64 @@ export class FeishuClient {
   }
 
   /**
-   * 下载消息资源并保存到临时文件
+   * 下载消息资源并保存到文件
+   * 文件保存到 IPC 目录，以便容器内的 agent 可以访问
    * @param messageId 消息ID
    * @param fileKey 资源文件 key
    * @param fileName 保存的文件名
-   * @returns 临时文件路径
+   * @param groupFolder 群组文件夹名（用于确定保存路径）
+   * @returns 容器内可访问的文件路径
    */
   async downloadMessageResourceToFile(
     messageId: string,
     fileKey: string,
     fileName?: string,
+    groupFolder?: string,
   ): Promise<string> {
     const fs = await import('fs');
     const path = await import('path');
-    const os = await import('os');
 
     const buffer = await this.downloadMessageResource(messageId, fileKey);
 
-    // 创建临时目录
-    const tmpDir = path.join(os.tmpdir(), 'nanoclaw-feishu-downloads');
-    fs.mkdirSync(tmpDir, { recursive: true });
-
-    // 生成文件名
+    // 生成安全的文件名
     const safeFileName = fileName || `resource-${Date.now()}`;
-    const filePath = path.join(tmpDir, safeFileName);
 
-    fs.writeFileSync(filePath, buffer);
+    // 如果提供了 groupFolder，保存到 IPC 目录（容器可访问）
+    // 否则回退到临时目录（向后兼容）
+    let hostFilePath: string;
+    let containerPath: string;
 
-    log.info({ filePath, size: buffer.length }, 'Resource saved to file');
+    if (groupFolder) {
+      // 使用项目根目录下的 data/ipc/{groupFolder}/downloads/
+      // 这会被挂载到容器的 /workspace/ipc/downloads/
+      const projectRoot = path.resolve(__dirname, '..', '..');
+      const downloadsDir = path.join(
+        projectRoot,
+        'data',
+        'ipc',
+        groupFolder,
+        'downloads',
+      );
+      fs.mkdirSync(downloadsDir, { recursive: true });
+      hostFilePath = path.join(downloadsDir, safeFileName);
+      containerPath = `/workspace/ipc/downloads/${safeFileName}`;
+    } else {
+      // 回退到临时目录（向后兼容）
+      const os = await import('os');
+      const tmpDir = path.join(os.tmpdir(), 'nanoclaw-feishu-downloads');
+      fs.mkdirSync(tmpDir, { recursive: true });
+      hostFilePath = path.join(tmpDir, safeFileName);
+      containerPath = hostFilePath; // 如果没有 groupFolder，返回原路径
+    }
 
-    return filePath;
+    fs.writeFileSync(hostFilePath, buffer);
+
+    log.info(
+      { hostPath: hostFilePath, containerPath, size: buffer.length },
+      'Resource saved to file',
+    );
+
+    return containerPath;
   }
 
   /**

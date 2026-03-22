@@ -299,12 +299,14 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     break;
                   // 下载资源文件
                   case 'download_resource':
-                    const filePath = await feishuChannel.downloadMessageResource(
-                      request.message_id,
-                      request.file_key,
-                      request.file_name,
-                    );
-                    result = { file_path: filePath };
+                    const downloadPath =
+                      await feishuChannel.downloadMessageResource(
+                        request.message_id,
+                        request.file_key,
+                        request.file_name,
+                        request.groupFolder, // 传递 groupFolder 以便保存到容器可访问的路径
+                      );
+                    result = { file_path: downloadPath };
                     break;
                   default:
                     throw new Error(
