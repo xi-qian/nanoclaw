@@ -408,3 +408,158 @@ await this.wsClient.close();
 | `src/ipc.ts` | 新增多维表格 IPC 请求处理 |
 | `container/agent-runner/src/ipc-mcp-stdio.ts` | 新增 5 个多维表格 MCP 工具 |
 | `container/skills/feishu-doc/SKILL.md` | 更新工具列表和使用说明 |
+
+---
+
+## 卡片消息与 Markdown 渲染修复 (2026-03-22)
+
+### 问题 1：Markdown 消息显示原始格式
+
+**问题描述**：
+飞书消息使用 `text` 类型发送 Markdown 内容，导致飞书客户端显示原始 Markdown 文本，而不是渲染后的格式化文本。
+
+**原因分析**：
+飞书 API 的 `text` 消息类型不支持 Markdown 渲染。需要使用 `post` 类型并在内容中使用 `md` 标签才能实现 Markdown 格式化显示。
+
+**修复方案** (`src/channels/feishu.ts`)：
+
+```typescript
+// 修复前 - text 类型不支持 Markdown 渲染
+const response = await this.client.im.message.create({
+  params: { receive_id_type: 'chat_id' },
+  data: {
+    receive_id: chatId,
+    msg_type: 'text',
+    content: JSON.stringify({ text: text }),
+  },
+});
+
+// 修复后 - post 类型支持 Markdown 渲染
+const response = await this.client.im.message.create({
+  params: { receive_id_type: 'chat_id' },
+  data: {
+    receive_id: chatId,
+    msg_type: 'post',
+    content: JSON.stringify({
+      zh_cn: { content: [[{ tag: 'md', text: text }]] }
+    }),
+  },
+});
+```
+
+---
+
+### 问题 2：缺少交互式卡片支持
+
+**问题描述**：
+NanoClaw 无法发送飞书交互式卡片消息，也无法接收卡片按钮回调。
+
+**修复方案**：
+
+1. **添加卡片数据类型** (`src/types.ts`)：
+```typescript
+export interface CardActionData {
+  type: 'button_click' | 'select' | 'form_submit';
+  value: Record<string, any>;
+  source_message_id?: string;
+  option?: string;
+}
+```
+
+2. **添加 Channel 卡片方法** (`src/channels/feishu.ts`)：
+   - `sendCard()` - 发送自定义卡片
+   - `sendButtonCard()` - 发送带按钮的卡片
+   - `sendConfirmCard()` - 发送确认卡片
+
+3. **添加卡片回调处理**：
+   - 监听 `card.action.trigger` WebSocket 事件
+   - 将卡片动作转换为虚拟消息，注入到消息队列
+
+4. **添加卡片 IPC 处理** (`src/ipc.ts`)：
+   - `send_card` - 发送自定义卡片
+   - `send_button_card` - 发送带按钮卡片
+
+5. **添加卡片 MCP 工具** (`container/agent-runner/src/ipc-mcp-stdio.ts`)：
+   - `feishu_send_card` - Agent 发送卡片消息
+   - `feishu_send_confirm_card` - Agent 发送确认卡片
+
+**卡片回调流程**：
+```
+用户点击按钮 → 飞书 WebSocket 推送 card.action.trigger 事件
+                     │
+                     ▼
+         FeishuChannel.handleCardActionEvent()
+                     │
+                     ▼
+         创建虚拟消息 (Virtual Message)
+                     │
+                     ▼
+         存储到 SQLite + 加入消息队列
+                     │
+                     ▼
+         Agent 处理虚拟消息，根据 value 执行操作
+```
+
+**平台配置要求**：
+需要在飞书开发者后台订阅 `card.action.trigger` 事件，否则卡片按钮点击会返回错误码 200340。
+
+---
+
+### 问题 3：时间戳格式不一致
+
+**问题描述**：
+卡片回调生成的虚拟消息使用 ISO 格式时间戳（如 `2026-03-21T16:23:23.254Z`），而飞书消息使用毫秒格式（如 `1774110483868`），导致消息过滤逻辑异常。
+
+**原因分析**：
+`getNewMessages()` 通过比较时间戳字符串来过滤消息。ISO 格式字符串与毫秒格式字符串的比较结果不正确（ISO 字符串在字典序上更大），导致新消息被错误过滤。
+
+**修复方案** (`src/index.ts`)：
+```typescript
+// 修复前 - 使用 ISO 格式
+timestamp: new Date().toISOString(),
+
+// 修复后 - 使用毫秒格式
+timestamp: Date.now().toString(),
+```
+
+**数据清理**：
+```sql
+-- 删除错误时间格式的消息
+DELETE FROM messages WHERE timestamp LIKE '2026-%';
+
+-- 重置 router_state 的时间戳
+UPDATE router_state SET
+  last_timestamp = '1774112352056',
+  last_agent_timestamp = '{"feishu:oc_xxx":"1774112352056"}';
+```
+
+---
+
+## 文件修改清单（本次更新）
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/channels/feishu.ts` | Markdown 渲染修复，添加卡片发送和回调处理 |
+| `src/types.ts` | 添加 CardActionData 接口 |
+| `src/channels/registry.ts` | 添加 onCardAction 回调参数 |
+| `src/index.ts` | 添加卡片回调处理逻辑，修复时间戳格式 |
+| `src/ipc.ts` | 添加卡片发送 IPC 处理 |
+| `src/db.ts` | 添加 card_action 列 |
+| `container/agent-runner/src/ipc-mcp-stdio.ts` | 添加卡片发送 MCP 工具 |
+
+---
+
+## 新增 MCP 工具
+
+| 工具 | 功能 | 状态 |
+|------|------|------|
+| `feishu_send_card` | 发送交互式卡片 | ✅ 新增 |
+| `feishu_send_confirm_card` | 发送确认卡片（带确认/取消按钮） | ✅ 新增 |
+
+---
+
+## 注意事项
+
+1. **飞书平台配置**：需要在开发者后台订阅 `card.action.trigger` 事件
+2. **时间戳格式**：所有时间戳必须使用毫秒格式，保持与飞书 API 一致
+3. **容器重建**：修改 `container/agent-runner/src/` 后需要运行 `./container/build.sh`

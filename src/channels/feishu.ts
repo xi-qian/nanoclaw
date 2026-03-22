@@ -5,7 +5,12 @@
  */
 
 import { registerChannel, ChannelOpts, type Channel } from './registry.js';
-import type { OnInboundMessage, OnChatMetadata, NewMessage } from '../types.js';
+import type {
+  OnInboundMessage,
+  OnChatMetadata,
+  NewMessage,
+  CardActionData,
+} from '../types.js';
 import { FeishuClient } from '../feishu/client.js';
 import {
   loadCredentials,
@@ -25,6 +30,11 @@ export class FeishuChannel implements Channel {
   private client: FeishuClient;
   private onMessage: OnInboundMessage;
   private onChatMetadata: OnChatMetadata;
+  private onCardAction?: (
+    chatJid: string,
+    action: CardActionData,
+    sender: string,
+  ) => void;
   private credentials: FeishuCredentials;
 
   constructor(opts: ChannelOpts, credentials: FeishuCredentials) {
@@ -32,6 +42,7 @@ export class FeishuChannel implements Channel {
     this.client = new FeishuClient(credentials);
     this.onMessage = opts.onMessage;
     this.onChatMetadata = opts.onChatMetadata;
+    this.onCardAction = opts.onCardAction;
 
     // 注册 WebSocket 事件处理
     this.setupEventHandlers();
@@ -60,6 +71,11 @@ export class FeishuChannel implements Channel {
         { reaction: event.event?.reaction?.emoji },
         'Reaction created event',
       );
+    });
+
+    // 监听卡片回调事件
+    this.client.on('card.action.trigger', (event: FeishuEvent) => {
+      this.handleCardActionEvent(event);
     });
 
     log.info('WebSocket event handlers registered');
@@ -113,6 +129,62 @@ export class FeishuChannel implements Channel {
       log.error(
         { error: error instanceof Error ? error.message : String(error) },
         'Failed to handle message event',
+      );
+    }
+  }
+
+  /**
+   * 处理卡片回调事件
+   */
+  private handleCardActionEvent(event: FeishuEvent): void {
+    try {
+      if (event.type === 'card.action.trigger' && event.event) {
+        const action = event.event.action;
+        const context = event.event.context;
+
+        if (!action || !context) {
+          log.warn('Card action event missing action or context');
+          return;
+        }
+
+        const operatorOpenId = action.open_id;
+        const chatId = context.open_chat_id;
+        const messageId = context.open_message_id;
+        const actionValue = action.value || {};
+        const actionOption = action.option;
+
+        log.info(
+          {
+            operatorOpenId,
+            chatId,
+            messageId,
+            actionValue,
+            actionOption,
+          },
+          'Card action triggered',
+        );
+
+        // 通过回调将卡片动作传递给上层处理
+        if (this.onCardAction) {
+          const jid = `feishu:${chatId}`;
+          const cardAction: CardActionData = {
+            type: 'button_click',
+            value: actionValue,
+            source_message_id: messageId,
+            option: actionOption,
+          };
+          this.onCardAction(jid, cardAction, operatorOpenId);
+        } else {
+          log.warn(
+            { chatId, actionValue },
+            'Card action received but no handler registered',
+          );
+        }
+      }
+    } catch (error) {
+      log.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Failed to handle card action event',
       );
     }
   }
@@ -321,6 +393,74 @@ export class FeishuChannel implements Channel {
    */
   async sendCard(chatId: string, cardContent: any): Promise<void> {
     return await this.client.sendCard(chatId, cardContent);
+  }
+
+  /**
+   * 发送带按钮的交互式卡片
+   * @param chatId 聊天ID
+   * @param title 卡片标题
+   * @param content 卡片内容（支持 Markdown）
+   * @param buttons 按钮列表
+   */
+  async sendButtonCard(
+    chatId: string,
+    title: string,
+    content: string,
+    buttons: Array<{
+      text: string;
+      value: Record<string, any>;
+      style?: 'default' | 'primary' | 'danger';
+    }>,
+  ): Promise<void> {
+    const cardContent = {
+      config: {
+        wide_screen_mode: true,
+      },
+      header: {
+        title: {
+          tag: 'plain_text',
+          content: title,
+        },
+        template: 'blue',
+      },
+      elements: [
+        {
+          tag: 'markdown',
+          content: content,
+        },
+        {
+          tag: 'action',
+          actions: buttons.map((btn) => ({
+            tag: 'button',
+            text: {
+              tag: 'plain_text',
+              content: btn.text,
+            },
+            type: btn.style || 'default',
+            value: btn.value,
+          })),
+        },
+      ],
+    };
+
+    return await this.sendCard(chatId, cardContent);
+  }
+
+  /**
+   * 发送确认卡片（带确认/取消按钮）
+   */
+  async sendConfirmCard(
+    chatId: string,
+    title: string,
+    content: string,
+    confirmText: string = '确认',
+    cancelText: string = '取消',
+    actionKey: string = 'confirm_action',
+  ): Promise<void> {
+    return await this.sendButtonCard(chatId, title, content, [
+      { text: confirmText, value: { action: actionKey, confirmed: true }, style: 'primary' },
+      { text: cancelText, value: { action: actionKey, confirmed: false }, style: 'default' },
+    ]);
   }
 
   /**

@@ -51,6 +51,22 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  // 卡片动作相关字段
+  card_action?: CardActionData;
+}
+
+/**
+ * 卡片动作数据（嵌入到 NewMessage 中）
+ */
+export interface CardActionData {
+  /** 动作类型，如 button_click, select 等 */
+  type: 'button_click' | 'select' | 'form_submit';
+  /** 按钮或动作的自定义值 */
+  value: Record<string, any>;
+  /** 原始消息ID（卡片所在的消息） */
+  source_message_id?: string;
+  /** 静态列表选项值（如果有） */
+  option?: string;
 }
 
 export interface ScheduledTask {

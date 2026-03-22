@@ -84,8 +84,21 @@ export class FeishuClient {
             event: data,
           });
         },
+        // 卡片回调事件
+        'card.action.trigger': async (data: any) => {
+          log.info(
+            { data: JSON.stringify(data) },
+            'Card action event received from EventDispatcher',
+          );
+          self.emit('card.action.trigger', {
+            type: 'card.action.trigger',
+            event: data,
+          });
+        },
       });
-      log.info('EventDispatcher registered for im.message.receive_v1');
+      log.info(
+        'EventDispatcher registered for im.message.receive_v1 and card.action.trigger',
+      );
 
       // 启动 WebSocket 连接
       const startParams = { eventDispatcher };
@@ -148,25 +161,37 @@ export class FeishuClient {
   }
 
   /**
-   * 发送消息
+   * 发送消息（自动转换为飞书富文本格式，支持 Markdown 渲染）
    */
   async sendMessage(chatId: string, text: string): Promise<void> {
     try {
+      // 使用富文本消息的 md 标签来支持 Markdown 渲染
       const response = await this.client.im.message.create({
         params: {
           receive_id_type: 'chat_id',
         },
         data: {
           receive_id: chatId,
-          msg_type: 'text',
-          content: JSON.stringify({ text }),
+          msg_type: 'post',
+          content: JSON.stringify({
+            zh_cn: {
+              content: [
+                [
+                  {
+                    tag: 'md',
+                    text: text,
+                  },
+                ],
+              ],
+            },
+          }),
         },
       });
 
       if (response.code === 0) {
         log.debug(
           { chatId, messageId: response.data?.message_id },
-          'Message sent',
+          'Message sent with markdown support',
         );
       } else {
         throw new Error(`Failed to send message: ${response.msg}`);

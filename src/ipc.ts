@@ -273,6 +273,30 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                     result = { deleted: true };
                     break;
+                  // 卡片消息发送
+                  case 'send_card':
+                    await feishuChannel.sendCard(
+                      request.chat_id,
+                      request.card_content,
+                    );
+                    result = { sent: true };
+                    break;
+                  case 'send_button_card':
+                    await feishuChannel.sendButtonCard(
+                      request.chat_id,
+                      request.title,
+                      request.content,
+                      request.buttons,
+                    );
+                    result = { sent: true };
+                    break;
+                  case 'send_rich_text':
+                    await feishuChannel.sendRichText(
+                      request.chat_id,
+                      request.elements,
+                    );
+                    result = { sent: true };
+                    break;
                   default:
                     throw new Error(
                       `Unknown feishu request type: ${request.type}`,

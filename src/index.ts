@@ -60,11 +60,33 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { Channel, NewMessage, RegisteredGroup, CardActionData } from './types.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
+
+/**
+ * 将卡片动作转换为可读的消息内容
+ * 这会被发送给 agent 作为用户的"输入"
+ */
+function formatCardActionContent(action: CardActionData): string {
+  const valueStr = Object.entries(action.value)
+    .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+    .join(', ');
+
+  let content = `[卡片操作] 用户点击了按钮`;
+  if (valueStr) {
+    content += `\n参数: { ${valueStr} }`;
+  }
+  if (action.option) {
+    content += `\n选项: ${action.option}`;
+  }
+  if (action.source_message_id) {
+    content += `\n来源消息: ${action.source_message_id}`;
+  }
+  return content;
+}
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -674,6 +696,50 @@ async function main(): Promise<void> {
       maybeAutoRegisterMainGroup(chatJid, name);
     },
     registeredGroups: () => registeredGroups,
+    // 卡片动作回调：当用户点击卡片按钮时触发
+    onCardAction: (
+      chatJid: string,
+      action: import('./types.js').CardActionData,
+      sender: string,
+    ) => {
+      logger.info(
+        { chatJid, actionType: action.type, actionValue: action.value, sender },
+        'Card action received',
+      );
+
+      // 检查群组是否已注册
+      const group = registeredGroups[chatJid];
+      if (!group) {
+        logger.warn(
+          { chatJid },
+          'Card action from unregistered chat, ignoring',
+        );
+        return;
+      }
+
+      // 创建虚拟消息表示用户的卡片操作
+      const actionMessage: NewMessage = {
+        id: `card-action-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        chat_jid: chatJid,
+        sender: sender,
+        sender_name: 'User',
+        content: formatCardActionContent(action),
+        timestamp: Date.now().toString(), // 使用毫秒时间戳，与飞书消息格式一致
+        is_from_me: false,
+        card_action: action,
+      };
+
+      // 存储消息
+      storeMessage(actionMessage);
+
+      // 触发 agent 处理（卡片动作总是立即触发，不需要 trigger）
+      queue.enqueueMessageCheck(chatJid);
+
+      logger.debug(
+        { chatJid, messageId: actionMessage.id },
+        'Card action message stored and agent triggered',
+      );
+    },
   };
 
   // Create and connect all registered channels.

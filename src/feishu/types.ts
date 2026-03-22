@@ -63,6 +63,19 @@ export interface FeishuEvent {
         open_id: string;
       };
     };
+    // 卡片回调事件
+    action?: {
+      open_id: string;
+      token: string;
+      action_time: string;
+      value?: Record<string, any>; // 按钮自定义值
+      option?: string; // 静态列表选择值
+    };
+    // 卡片上下文信息
+    context?: {
+      open_message_id: string;
+      open_chat_id: string;
+    };
   };
 }
 

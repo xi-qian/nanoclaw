@@ -925,6 +925,174 @@ server.tool(
   },
 );
 
+// ==================== 卡片消息工具 ====================
+
+server.tool(
+  'feishu_send_card',
+  '发送飞书交互式卡片消息。卡片支持富文本、按钮等交互元素。',
+  {
+    chat_id: z.string().optional().describe('目标聊天 ID（可选，默认发送到当前会话）'),
+    title: z.string().describe('卡片标题'),
+    content: z.string().describe('卡片内容（支持 Markdown 格式）'),
+    buttons: z.array(z.object({
+      text: z.string().describe('按钮文字'),
+      value: z.record(z.string(), z.any()).describe('按钮点击时返回的值'),
+      style: z.enum(['default', 'primary', 'danger']).optional().describe('按钮样式：default=默认, primary=主要(蓝色), danger=危险(红色)'),
+    })).optional().describe('按钮列表（可选，最多4个）'),
+  },
+  async (args) => {
+    // 构建卡片内容
+    const cardContent: any = {
+      config: {
+        wide_screen_mode: true,
+      },
+      header: {
+        title: {
+          tag: 'plain_text',
+          content: args.title,
+        },
+        template: 'blue',
+      },
+      elements: [
+        {
+          tag: 'markdown',
+          content: args.content,
+        },
+      ],
+    };
+
+    // 添加按钮
+    if (args.buttons && args.buttons.length > 0) {
+      cardContent.elements.push({
+        tag: 'action',
+        actions: args.buttons.map((btn) => ({
+          tag: 'button',
+          text: {
+            tag: 'plain_text',
+            content: btn.text,
+          },
+          type: btn.style || 'default',
+          value: btn.value,
+        })),
+      });
+    }
+
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'send_card',
+      chat_id: args.chat_id || chatJid.replace('feishu:', ''),
+      card_content: cardContent,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: '卡片消息发送成功!' }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `发送卡片失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `发送卡片超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_send_confirm_card',
+  '发送确认卡片，包含确认和取消按钮。用户点击按钮后会触发回调，agent 可以根据用户选择执行相应操作。',
+  {
+    chat_id: z.string().optional().describe('目标聊天 ID（可选，默认发送到当前会话）'),
+    title: z.string().describe('卡片标题'),
+    content: z.string().describe('卡片内容（支持 Markdown 格式）'),
+    confirm_text: z.string().optional().default('确认').describe('确认按钮文字（默认"确认"）'),
+    cancel_text: z.string().optional().default('取消').describe('取消按钮文字（默认"取消"）'),
+    action_key: z.string().optional().describe('动作标识（可选，用于区分不同的确认操作）'),
+  },
+  async (args) => {
+    const actionKey = args.action_key || `confirm_${Date.now()}`;
+
+    const cardContent: any = {
+      config: {
+        wide_screen_mode: true,
+      },
+      header: {
+        title: {
+          tag: 'plain_text',
+          content: args.title,
+        },
+        template: 'blue',
+      },
+      elements: [
+        {
+          tag: 'markdown',
+          content: args.content,
+        },
+        {
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: {
+                tag: 'plain_text',
+                content: args.confirm_text || '确认',
+              },
+              type: 'primary',
+              value: { action: actionKey, confirmed: true },
+            },
+            {
+              tag: 'button',
+              text: {
+                tag: 'plain_text',
+                content: args.cancel_text || '取消',
+              },
+              type: 'default',
+              value: { action: actionKey, confirmed: false },
+            },
+          ],
+        },
+      ],
+    };
+
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'send_card',
+      chat_id: args.chat_id || chatJid.replace('feishu:', ''),
+      card_content: cardContent,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: '确认卡片发送成功! 等待用户选择...' }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `发送确认卡片失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `发送确认卡片超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);
