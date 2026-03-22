@@ -1436,4 +1436,151 @@ export class FeishuClient {
       throw error;
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // File Upload and Send Operations
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 上传文件到飞书并获取 file_key
+   * @param filePath 文件路径（主机路径）
+   * @param fileType 文件类型：file, image, audio, video, media
+   * @returns file_key 用于发送文件消息
+   */
+  async uploadFile(
+    filePath: string,
+    fileType: 'file' | 'image' | 'audio' | 'video' | 'media' = 'file',
+  ): Promise<string> {
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+
+      // 检查文件是否存在
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`File not found: ${filePath}`);
+      }
+
+      // 读取文件
+      const fileBuffer = fs.readFileSync(filePath);
+      const fileName = path.basename(filePath);
+
+      // 获取 tenant_access_token
+      const token = await this.getTenantAccessToken();
+
+      // 使用 FormData 上传文件
+      const FormData = (await import('form-data')).default;
+      const form = new FormData();
+      form.append('file', fileBuffer, fileName);
+      form.append('file_type', fileType);
+      form.append('file_name', fileName);
+
+      const url = 'https://open.feishu.cn/open-apis/im/v1/files';
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...form.getHeaders(),
+        },
+        body: form,
+      });
+
+      const result = (await response.json()) as any;
+
+      if (result.code !== 0) {
+        throw new Error(`Failed to upload file: ${result.msg}`);
+      }
+
+      const fileKey = result.data?.file_key;
+      if (!fileKey) {
+        throw new Error('No file_key returned from upload API');
+      }
+
+      log.info(
+        { filePath, fileName, fileType, fileKey, size: fileBuffer.length },
+        'File uploaded successfully',
+      );
+
+      return fileKey;
+    } catch (error) {
+      log.error(
+        {
+          filePath,
+          fileType,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to upload file',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 发送文件消息
+   * @param chatId 聊天 ID
+   * @param fileKey 文件 key（通过 uploadFile 获取）
+   * @param fileName 文件名（可选）
+   */
+  async sendFileMessage(
+    chatId: string,
+    fileKey: string,
+    fileName?: string,
+  ): Promise<string> {
+    try {
+      const response = await this.client.im.message.create({
+        params: {
+          receive_id_type: 'chat_id',
+        },
+        data: {
+          receive_id: chatId,
+          msg_type: 'file',
+          content: JSON.stringify({
+            file_key: fileKey,
+          }),
+        },
+      });
+
+      if (response.code !== 0) {
+        throw new Error(`Failed to send file message: ${response.msg}`);
+      }
+
+      const messageId = response.data?.message_id;
+      log.info(
+        { chatId, fileKey, fileName, messageId },
+        'File message sent successfully',
+      );
+
+      return messageId || '';
+    } catch (error) {
+      log.error(
+        {
+          chatId,
+          fileKey,
+          fileName,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to send file message',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 上传并发送文件（组合方法）
+   * @param chatId 聊天 ID
+   * @param filePath 文件路径（主机路径）
+   * @param fileType 文件类型
+   */
+  async uploadAndSendFile(
+    chatId: string,
+    filePath: string,
+    fileType: 'file' | 'image' | 'audio' | 'video' | 'media' = 'file',
+  ): Promise<{ file_key: string; message_id: string }> {
+    const fileKey = await this.uploadFile(filePath, fileType);
+    const messageId = await this.sendFileMessage(
+      chatId,
+      fileKey,
+      filePath.split('/').pop(),
+    );
+    return { file_key: fileKey, message_id: messageId };
+  }
 }

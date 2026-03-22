@@ -1195,3 +1195,137 @@ throw new Error(`Timeout waiting for feishu IPC result after ${timeoutMs / 1000}
 1. **大文档**：现在可以处理大型文档，但创建时间会较长
 2. **超时设置**：3 分钟足够处理大多数文档，如有需要可调整 `DOC_CREATE_TIMEOUT_MS`
 3. **容器重建**：修改 `container/agent-runner/src/` 后需要运行 `./container/build.sh`
+
+---
+
+## Agent 发送文件功能 (2026-03-22)
+
+### 问题：Agent 无法发送文件给用户
+
+**问题描述**：
+Agent 生成的文件（如 PDF、图片等）无法发送给用户，只能发送文本消息。
+
+**解决方案**：
+
+添加文件上传和发送功能，流程如下：
+
+```
+Agent 调用 feishu_send_file 工具
+        ↓
+MCP Server 写入 IPC 请求
+        ↓
+Host IPC Watcher 处理请求
+        ↓
+FeishuChannel.sendFile()
+        ↓
+FeishuClient.uploadAndSendFile()
+        ├─► 上传文件到飞书 → file_key
+        └─► 发送文件消息 → 用户收到文件
+```
+
+### 实现细节
+
+1. **FeishuClient 新增方法** (`src/feishu/client.ts`)：
+
+```typescript
+// 上传文件到飞书，返回 file_key
+async uploadFile(filePath: string, fileType: string): Promise<string>
+
+// 发送文件消息
+async sendFileMessage(chatId: string, fileKey: string, fileName?: string): Promise<string>
+
+// 组合方法：上传并发送
+async uploadAndSendFile(chatId: string, filePath: string, fileType: string): Promise<{file_key, message_id}>
+```
+
+2. **FeishuChannel 新增方法** (`src/channels/feishu.ts`)：
+
+```typescript
+async sendFile(jid: string, filePath: string, fileType: string): Promise<{file_key, message_id}>
+```
+
+3. **IPC 处理** (`src/ipc.ts`)：
+
+```typescript
+case 'send_file':
+  const result = await feishuChannel.sendFile(
+    request.chat_id,
+    request.file_path,
+    request.file_type
+  );
+  break;
+```
+
+4. **MCP 工具** (`container/agent-runner/src/ipc-mcp-stdio.ts`)：
+
+```typescript
+server.tool('feishu_send_file', '发送文件给飞书用户', {
+  chat_id: z.string().optional(),
+  file_path: z.string(),
+  file_type: z.enum(['file', 'image', 'audio', 'video', 'media'])
+})
+```
+
+### 使用方法
+
+Agent 可以使用 `feishu_send_file` 工具发送文件：
+
+```
+feishu_send_file(
+  file_path: "/workspace/ipc/downloads/report.pdf",
+  file_type: "file"  // 可选：file, image, audio, video, media
+)
+```
+
+### 文件类型说明
+
+| 类型 | 说明 | 示例 |
+|------|------|------|
+| `file` | 通用文件 | PDF、Word、Excel 等 |
+| `image` | 图片 | PNG、JPG、GIF 等 |
+| `audio` | 音频 | MP3、WAV 等 |
+| `video` | 视频 | MP4、MOV 等 |
+| `media` | 其他媒体 | 其他格式文件 |
+
+### 文件路径要求
+
+- 文件必须在 `/workspace/` 目录下
+- 推荐使用 `/workspace/ipc/downloads/` 目录
+- 这是容器内可访问的路径
+
+### 权限修复
+
+**问题**：downloads 目录权限不足，容器内 node 用户无法写入。
+
+**修复**：
+1. `container-runner.ts` 中添加创建 downloads 目录，设置 `mode: 0o777`
+2. `Dockerfile` 中添加 `/workspace/ipc/downloads` 目录创建
+3. 手动修复现有目录权限：`chmod 777 data/ipc/{group}/downloads/`
+
+### 单元测试
+
+添加了 `src/feishu/client.test.ts` 测试文件，覆盖：
+- `uploadFile()` 正常上传
+- `uploadFile()` 上传失败处理
+- `sendFileMessage()` 发送消息
+- `uploadAndSendFile()` 组合方法
+
+---
+
+## 文件修改清单（本次更新）
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/feishu/client.ts` | 添加 uploadFile、sendFileMessage、uploadAndSendFile 方法 |
+| `src/channels/feishu.ts` | 添加 sendFile 方法 |
+| `src/ipc.ts` | 添加 send_file IPC 请求处理 |
+| `container/agent-runner/src/ipc-mcp-stdio.ts` | 添加 feishu_send_file MCP 工具 |
+| `src/feishu/client.test.ts` | 新增单元测试文件 |
+
+---
+
+## 飞书应用权限要求
+
+发送文件需要以下权限：
+- `im:file` - 发送文件消息
+- `im:file:send_as_bot` - 以机器人身份发送文件

@@ -1169,6 +1169,94 @@ server.tool(
   },
 );
 
+server.tool(
+  'feishu_send_file',
+  `发送文件给飞书用户。
+
+使用场景：
+- 生成了报告文件（PDF、Word 等）需要发送给用户
+- 创建了图片需要发送给用户
+- 录制了音频需要发送给用户
+- 生成了视频需要发送给用户
+
+文件路径说明：
+- 文件必须在 /workspace/ipc/downloads/ 目录下
+- 如果文件在其他位置，需要先复制到该目录
+
+文件类型说明：
+- file: 通用文件（PDF、Word、Excel 等）
+- image: 图片（PNG、JPG、GIF 等）
+- audio: 音频（MP3、WAV 等）
+- video: 视频（MP4、MOV 等）
+- media: 其他媒体文件`,
+  {
+    chat_id: z.string().optional().describe('目标聊天 ID（可选，默认发送到当前聊天）'),
+    file_path: z.string().describe('文件路径（必须是容器内可访问的路径，如 /workspace/ipc/downloads/xxx.pdf）'),
+    file_type: z.enum(['file', 'image', 'audio', 'video', 'media']).default('file').describe('文件类型'),
+  },
+  async (args) => {
+    // 如果没有指定 chat_id，使用当前聊天
+    const targetChatId = args.chat_id || chatJid;
+
+    // 验证文件路径（必须是容器内可访问的路径）
+    if (!args.file_path.startsWith('/workspace/')) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `文件路径必须在 /workspace/ 目录下。当前路径: ${args.file_path}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'send_file',
+      chat_id: targetChatId,
+      file_path: args.file_path,
+      file_type: args.file_type,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId, DOC_CREATE_TIMEOUT_MS);
+
+      if (result.success) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `文件发送成功!\n\n文件类型: ${args.file_type}\n文件路径: ${args.file_path}`,
+            },
+          ],
+        };
+      } else {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `发送文件失败: ${result.error || '未知错误'}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `发送文件超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
 // Start the stdio server transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

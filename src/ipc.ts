@@ -314,6 +314,20 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       );
                     result = { file_path: downloadPath };
                     break;
+                  // 发送文件给用户
+                  case 'send_file':
+                    const sendResult = await feishuChannel.sendFile(
+                      request.chat_id,
+                      request.file_path,
+                      (request.file_type || 'file') as
+                        | 'file'
+                        | 'image'
+                        | 'audio'
+                        | 'video'
+                        | 'media',
+                    );
+                    result = sendResult;
+                    break;
                   default:
                     throw new Error(
                       `Unknown feishu request type: ${request.type}`,

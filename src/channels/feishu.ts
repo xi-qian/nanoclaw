@@ -367,6 +367,43 @@ export class FeishuChannel implements Channel {
   }
 
   /**
+   * 发送文件给用户
+   * @param jid 聊天 JID（格式：feishu:oc_xxx）
+   * @param filePath 文件路径（主机路径，通常是 IPC downloads 目录）
+   * @param fileType 文件类型：file, image, audio, video, media
+   */
+  async sendFile(
+    jid: string,
+    filePath: string,
+    fileType: 'file' | 'image' | 'audio' | 'video' | 'media' = 'file',
+  ): Promise<{ file_key: string; message_id: string }> {
+    try {
+      const chatId = jid.replace(/^feishu:/, '');
+      const result = await this.client.uploadAndSendFile(
+        chatId,
+        filePath,
+        fileType,
+      );
+      log.info(
+        { jid, filePath, fileType, ...result },
+        'File sent successfully',
+      );
+      return result;
+    } catch (error) {
+      log.error(
+        {
+          jid,
+          filePath,
+          fileType,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to send file',
+      );
+      throw error;
+    }
+  }
+
+  /**
    * 检查连接状态
    */
   isConnected(): boolean {

@@ -10,6 +10,7 @@ description: |
   (4) 用户提到"飞书文档"、"表格"、"知识库"、"wiki"、"bitable"
   (5) 需要批量导入数据到飞书表格
   (6) 用户发送了文件/图片/语音/视频，需要分析内容
+  (7) **需要发送文件给用户**
 
   **重要说明**：
   - 此 Skill 使用 MCP 工具与飞书 API 交互
@@ -21,6 +22,39 @@ description: |
 
 ## 🚨 执行前必读
 
+### ⚠️ 发送文件给用户（重要）
+
+**如果你想发送文件给用户，必须遵循以下规则**：
+
+1. **文件路径必须在 `/workspace/ipc/downloads/` 目录下**
+   - ✅ 正确：`/workspace/ipc/downloads/report.pdf`
+   - ❌ 错误：`/tmp/report.pdf`（主机无法访问）
+   - ❌ 错误：`/home/user/report.pdf`（主机无法访问）
+
+2. **创建文件的正确方式**：
+   ```
+   使用 Write 工具，路径设为：/workspace/ipc/downloads/文件名.扩展名
+   ```
+
+3. **发送文件的完整流程**：
+   ```
+   步骤1：创建文件
+   使用 Write 工具创建文件到 /workspace/ipc/downloads/
+
+   步骤2：发送文件
+   使用 feishu_send_file 工具发送：
+   - file_path: "/workspace/ipc/downloads/文件名.扩展名"
+   - file_type: "file" (PDF/Word/Excel等) 或 "image" (图片)
+   ```
+
+4. **文件类型对照表**：
+   | file_type | 文件类型 | 示例 |
+   |-----------|---------|------|
+   | `file` | 通用文件 | PDF、Word、Excel、ZIP 等 |
+   | `image` | 图片 | PNG、JPG、GIF 等 |
+   | `audio` | 音频 | MP3、WAV 等 |
+   | `video` | 视频 | MP4、MOV 等 |
+
 ### 链接格式（重要）
 - ⚠️ **飞书文档链接必须使用 `/docx/` 而不是 `/docs/`**
 - 正确格式：`https://feishu.cn/docx/xxxxxxxxxx`
@@ -31,6 +65,7 @@ description: |
 - **文档操作**：使用 `feishu_create_doc`、`feishu_fetch_doc`、`feishu_update_doc`、`feishu_search_docs` 工具
 - **多维表格操作**：使用 `feishu_create_bitable`、`feishu_create_bitable_table`、`feishu_list_bitable_fields`、`feishu_list_bitable_records`、`feishu_add_bitable_records`、`feishu_update_bitable_record`、`feishu_delete_bitable_record` 工具
 - **文件下载**：用户发送的图片/文件/语音/视频，使用 `feishu_download_resource` 工具下载后分析
+- **文件发送**：向用户发送文件，使用 `feishu_send_file` 工具
 - **不要使用 Bash 命令**，使用对应的 MCP 工具
 
 ### 数据格式约束
@@ -59,6 +94,7 @@ description: |
 | 更新记录 | `feishu_update_bitable_record` | 更新指定记录 |
 | 删除记录 | `feishu_delete_bitable_record` | 删除指定记录 |
 | **下载附件** | `feishu_download_resource` | 下载用户发送的图片/文件/语音/视频 |
+| **发送文件** | `feishu_send_file` | 发送文件给用户（文件必须在 /workspace/ipc/downloads/） |
 
 ---
 
@@ -109,6 +145,69 @@ feishu_download_resource(
 | `file` | 文档/文件 | 下载后读取内容（PDF、Word、Excel 等） |
 | `audio` | 语音消息 | 下载后需要转录为文字 |
 | `video` | 视频 | 下载后分析内容 |
+
+---
+
+## 📤 发送文件给用户
+
+### 重要：文件路径要求
+
+⚠️ **发送文件时，文件路径必须在 `/workspace/ipc/downloads/` 目录下**，否则主机无法访问文件进行上传。
+
+### 发送文件的完整流程
+
+**步骤 1：创建文件到正确目录**
+
+使用 Write 工具创建文件：
+```
+Write 工具参数：
+- file_path: "/workspace/ipc/downloads/report.md"
+- content: "# 报告标题\n\n报告内容..."
+```
+
+**步骤 2：使用 feishu_send_file 发送**
+
+```
+feishu_send_file(
+  file_path: "/workspace/ipc/downloads/report.md",
+  file_type: "file"  # 或 "image" 用于图片
+)
+```
+
+### 文件类型对照表
+
+| file_type | 说明 | 示例文件扩展名 |
+|-----------|------|---------------|
+| `file` | 通用文件 | `.pdf`, `.docx`, `.xlsx`, `.zip`, `.txt`, `.md` |
+| `image` | 图片 | `.png`, `.jpg`, `.gif`, `.webp` |
+| `audio` | 音频 | `.mp3`, `.wav`, `.m4a` |
+| `video` | 视频 | `.mp4`, `.mov`, `.avi` |
+| `media` | 其他媒体 | 其他格式 |
+
+### 完整示例
+
+**场景：生成并发送 PDF 报告**
+
+```
+# 步骤1：生成报告内容
+使用 Write 工具：
+- file_path: "/workspace/ipc/downloads/销售报告_2024Q1.md"
+- content: "# 销售报告 2024 Q1\n\n## 概要\n..."
+
+# 步骤2：发送给用户
+使用 feishu_send_file 工具：
+- file_path: "/workspace/ipc/downloads/销售报告_2024Q1.md"
+- file_type: "file"
+
+# 用户收到文件后可以直接下载
+```
+
+### 常见错误
+
+| 错误 | 原因 | 解决方案 |
+|------|------|----------|
+| `File not found` | 文件路径不在 `/workspace/ipc/downloads/` | 确保文件创建在正确目录 |
+| `文件发送失败` | 文件太大或格式不支持 | 检查文件大小（<30MB）和格式 |
 
 ---
 

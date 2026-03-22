@@ -186,6 +186,11 @@ function buildVolumeMounts(
     recursive: true,
     mode: 0o777,
   });
+  // Downloads directory for files to send to users
+  fs.mkdirSync(path.join(groupIpcDir, 'downloads'), {
+    recursive: true,
+    mode: 0o777,
+  });
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
