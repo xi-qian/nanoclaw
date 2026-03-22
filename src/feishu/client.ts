@@ -607,11 +607,13 @@ export class FeishuClient {
    * 下载消息中的资源文件（用户发送的图片、文件、音频、视频等）
    * @param messageId 消息ID
    * @param fileKey 资源文件 key
+   * @param type 资源类型：image, file, audio, video, media
    * @returns 文件内容（Buffer）
    */
   async downloadMessageResource(
     messageId: string,
     fileKey: string,
+    type: 'image' | 'file' | 'audio' | 'video' | 'media' = 'file',
   ): Promise<Buffer> {
     try {
       // 使用飞书 API 获取消息中的资源文件
@@ -619,6 +621,7 @@ export class FeishuClient {
       const response = await this.client.request({
         url: `/open-apis/im/v1/messages/${messageId}/resources/${fileKey}`,
         method: 'GET',
+        params: { type },
         responseType: 'arraybuffer',
       });
 
@@ -629,7 +632,7 @@ export class FeishuClient {
       }
 
       log.info(
-        { messageId, fileKey, size: response.data?.length },
+        { messageId, fileKey, type, size: response.data?.length },
         'Resource downloaded',
       );
 
@@ -639,6 +642,7 @@ export class FeishuClient {
         {
           messageId,
           fileKey,
+          type,
           error: error instanceof Error ? error.message : String(error),
         },
         'Failed to download message resource',
@@ -654,6 +658,7 @@ export class FeishuClient {
    * @param fileKey 资源文件 key
    * @param fileName 保存的文件名
    * @param groupFolder 群组文件夹名（用于确定保存路径）
+   * @param type 资源类型：image, file, audio, video, media
    * @returns 容器内可访问的文件路径
    */
   async downloadMessageResourceToFile(
@@ -661,11 +666,12 @@ export class FeishuClient {
     fileKey: string,
     fileName?: string,
     groupFolder?: string,
+    type: 'image' | 'file' | 'audio' | 'video' | 'media' = 'file',
   ): Promise<string> {
     const fs = await import('fs');
     const path = await import('path');
 
-    const buffer = await this.downloadMessageResource(messageId, fileKey);
+    const buffer = await this.downloadMessageResource(messageId, fileKey, type);
 
     // 生成安全的文件名
     const safeFileName = fileName || `resource-${Date.now()}`;

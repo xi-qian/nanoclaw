@@ -347,6 +347,7 @@ export class FeishuChannel implements Channel {
    * @param fileKey 资源文件 key
    * @param fileName 可选的文件名
    * @param groupFolder 群组文件夹名（用于确定保存路径）
+   * @param type 资源类型：image, file, audio, video, media
    * @returns 容器内可访问的文件路径
    */
   async downloadMessageResource(
@@ -354,12 +355,14 @@ export class FeishuChannel implements Channel {
     fileKey: string,
     fileName?: string,
     groupFolder?: string,
+    type: 'image' | 'file' | 'audio' | 'video' | 'media' = 'file',
   ): Promise<string> {
     return await this.client.downloadMessageResourceToFile(
       messageId,
       fileKey,
       fileName,
       groupFolder,
+      type,
     );
   }
 

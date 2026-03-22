@@ -54,7 +54,14 @@ export interface NewMessage {
   // 卡片动作相关字段
   card_action?: CardActionData;
   // 消息类型（用于区分文本、图片、文件等）
-  message_type?: 'text' | 'image' | 'file' | 'audio' | 'media' | 'post' | 'interactive';
+  message_type?:
+    | 'text'
+    | 'image'
+    | 'file'
+    | 'audio'
+    | 'media'
+    | 'post'
+    | 'interactive';
   // 附件信息（图片、文件、音频、视频等）
   attachment?: MessageAttachment;
 }

@@ -1103,11 +1103,19 @@ server.tool(
 - 用户发送了语音消息，需要转录文字
 - 用户发送了视频，需要处理视频
 
-返回值：临时文件路径，可以直接读取文件内容。`,
+返回值：临时文件路径，可以直接读取文件内容。
+
+重要：type 参数必须与消息的 type 属性一致！
+- image: 图片消息
+- file: 文件消息
+- audio: 语音消息
+- video: 视频消息
+- media: 媒体消息`,
   {
-    message_id: z.string().describe('消息 ID（从消息上下文中获取）'),
-    file_key: z.string().describe('资源文件 key（从消息的 attachment 字段获取）'),
+    message_id: z.string().describe('消息 ID（从消息的 download_message_id 属性获取）'),
+    file_key: z.string().describe('资源文件 key（从消息的 download_file_key 属性获取）'),
     file_name: z.string().optional().describe('保存的文件名（可选，默认自动生成）'),
+    type: z.enum(['image', 'file', 'audio', 'video', 'media']).default('file').describe('资源类型，必须与消息的 type 属性一致'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -1115,6 +1123,7 @@ server.tool(
       message_id: args.message_id,
       file_key: args.file_key,
       file_name: args.file_name,
+      resource_type: args.type,
       groupFolder,
       timestamp: new Date().toISOString(),
     });

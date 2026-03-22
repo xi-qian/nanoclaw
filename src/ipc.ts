@@ -305,6 +305,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
                         request.file_key,
                         request.file_name,
                         request.groupFolder, // 传递 groupFolder 以便保存到容器可访问的路径
+                        (request.resource_type || request.type || 'file') as
+                          | 'image'
+                          | 'file'
+                          | 'audio'
+                          | 'video'
+                          | 'media', // 资源类型
                       );
                     result = { file_path: downloadPath };
                     break;
