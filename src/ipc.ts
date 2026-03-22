@@ -316,9 +316,22 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     break;
                   // 发送文件给用户
                   case 'send_file':
+                    // 将容器路径转换为主机路径
+                    // 容器路径: /workspace/ipc/downloads/xxx
+                    // 主机路径: {DATA_DIR}/ipc/{sourceGroup}/downloads/xxx
+                    let hostFilePath = request.file_path;
+                    if (request.file_path.startsWith('/workspace/ipc/')) {
+                      // 转换为相对于 /workspace/ipc 的路径
+                      const relativePath = request.file_path.replace('/workspace/ipc/', '');
+                      hostFilePath = path.join(DATA_DIR, 'ipc', sourceGroup, relativePath);
+                    }
+                    logger.debug(
+                      { containerPath: request.file_path, hostPath: hostFilePath },
+                      'Converting container path to host path for file send',
+                    );
                     const sendResult = await feishuChannel.sendFile(
                       request.chat_id,
-                      request.file_path,
+                      hostFilePath,
                       (request.file_type || 'file') as
                         | 'file'
                         | 'image'
