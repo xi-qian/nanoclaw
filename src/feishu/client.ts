@@ -6,6 +6,8 @@
  */
 
 import * as Lark from '@larksuiteoapi/node-sdk';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 import type {
   FeishuCredentials,
   FeishuDocInfo,
@@ -17,6 +19,10 @@ import type { FeishuEvent } from './types.js';
 import { larkLogger } from './logger.js';
 
 const log = larkLogger('client');
+
+// ES 模块中 __dirname 的替代
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 /**
  * 品牌到 SDK domain 的映射
@@ -605,6 +611,7 @@ export class FeishuClient {
 
   /**
    * 下载消息中的资源文件（用户发送的图片、文件、音频、视频等）
+   * 使用原生 fetch API 绕过 Lark SDK 的 arraybuffer 处理问题
    * @param messageId 消息ID
    * @param fileKey 资源文件 key
    * @param type 资源类型：image, file, audio, video, media
@@ -616,28 +623,50 @@ export class FeishuClient {
     type: 'image' | 'file' | 'audio' | 'video' | 'media' = 'file',
   ): Promise<Buffer> {
     try {
-      // 使用飞书 API 获取消息中的资源文件
-      // https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/get-2
-      const response = await this.client.request({
-        url: `/open-apis/im/v1/messages/${messageId}/resources/${fileKey}`,
+      // 获取 tenant_access_token
+      // Lark SDK 内部会自动管理 token，我们通过一个简单的 API 调用来触发 token 刷新
+      // 或者直接使用 appId 和 appSecret 获取 token
+      const token = await this.getTenantAccessToken();
+
+      // 使用原生 fetch API 下载文件
+      // Lark SDK 的 request 方法在处理 arraybuffer 时有 bug
+      const url = `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=${type}`;
+
+      const response = await fetch(url, {
         method: 'GET',
-        params: { type },
-        responseType: 'arraybuffer',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       });
 
-      if (response.code !== 0) {
-        throw new Error(
-          `Failed to download resource: ${response.msg || 'Unknown error'}`,
+      if (!response.ok) {
+        // 尝试解析错误信息
+        let errorMsg = `HTTP ${response.status}: ${response.statusText}`;
+        try {
+          const errorText = await response.text();
+          const errorJson = JSON.parse(errorText);
+          errorMsg = `Feishu API error: ${errorJson.msg || errorJson.message || errorText}`;
+        } catch {
+          // ignore
+        }
+        log.error(
+          { messageId, fileKey, type, status: response.status, statusText: response.statusText },
+          'HTTP error downloading resource',
         );
+        throw new Error(errorMsg);
       }
 
+      // 读取为 ArrayBuffer
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
       log.info(
-        { messageId, fileKey, type, size: response.data?.length },
-        'Resource downloaded',
+        { messageId, fileKey, type, size: buffer.length, contentType: response.headers.get('content-type') },
+        'Resource downloaded successfully',
       );
 
-      return Buffer.from(response.data);
-    } catch (error) {
+      return buffer;
+    } catch (error: any) {
       log.error(
         {
           messageId,
@@ -646,6 +675,50 @@ export class FeishuClient {
           error: error instanceof Error ? error.message : String(error),
         },
         'Failed to download message resource',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 获取 tenant_access_token
+   * @returns tenant_access_token
+   */
+  private async getTenantAccessToken(): Promise<string> {
+    try {
+      const response = await fetch(
+        'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            app_id: this.credentials.appId,
+            app_secret: this.credentials.appSecret,
+          }),
+        },
+      );
+
+      const data = (await response.json()) as {
+        code: number;
+        msg?: string;
+        tenant_access_token?: string;
+      };
+
+      if (data.code !== 0) {
+        throw new Error(
+          `Failed to get tenant_access_token: ${data.msg || 'Unknown error'}`,
+        );
+      }
+
+      if (!data.tenant_access_token) {
+        throw new Error('tenant_access_token not returned');
+      }
+
+      return data.tenant_access_token;
+    } catch (error) {
+      log.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Failed to get tenant_access_token',
       );
       throw error;
     }
