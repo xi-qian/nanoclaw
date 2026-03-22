@@ -1134,3 +1134,64 @@ if (i < blocks.length - 1) {
 1. **速率限制**：飞书文档 API 每秒最多 5 次请求，当前设置 250ms 延迟（4 次/秒）
 2. **大文档**：如果文档内容很多（几十个块），创建时间会较长，但能确保内容完整
 3. **错误处理**：单个块添加失败不会影响其他块，文档仍会创建成功
+
+---
+
+## 文档创建超时修复 (2026-03-22)
+
+### 问题：文档操作一直超时
+
+**问题描述**：
+Agent 反馈"飞书文档创建服务一直超时"，导致创建的文档内容不完整或创建失败。
+
+**原因分析**：
+IPC 请求默认超时是 30 秒，但添加速率限制延迟后，大型文档创建时间会超过这个限制。
+
+计算：
+- 每个块约需 300ms（250ms 延迟 + 50ms API 请求）
+- 30 秒 ÷ 0.3 秒 = 约 100 个块
+- 超过 100 个块的文档会超时
+
+**修复方案** (`container/agent-runner/src/ipc-mcp-stdio.ts`)：
+
+1. **增加超时常量**：
+```typescript
+// 文档创建超时时间：由于速率限制（250ms/块），大文档需要更长时间
+const DOC_CREATE_TIMEOUT_MS = 180000; // 3 分钟
+const DOC_UPDATE_TIMEOUT_MS = 180000; // 3 分钟
+```
+
+2. **修改工具使用新超时**：
+```typescript
+// 修复前
+const result = await waitForFeishuResult(requestId); // 默认 30 秒
+
+// 修复后
+const result = await waitForFeishuResult(requestId, DOC_CREATE_TIMEOUT_MS); // 3 分钟
+```
+
+3. **改进错误消息**：
+```typescript
+throw new Error(`Timeout waiting for feishu IPC result after ${timeoutMs / 1000}s`);
+```
+
+**修复效果**：
+- 文档创建/更新超时从 30 秒增加到 3 分钟
+- 可以处理约 600 个块的文档（足够大）
+- 避免因超时导致文档创建失败
+
+---
+
+## 文件修改清单（本次更新）
+
+| 文件 | 修改内容 |
+|------|---------|
+| `container/agent-runner/src/ipc-mcp-stdio.ts` | 增加文档创建/更新超时到 3 分钟 |
+
+---
+
+## 注意事项
+
+1. **大文档**：现在可以处理大型文档，但创建时间会较长
+2. **超时设置**：3 分钟足够处理大多数文档，如有需要可调整 `DOC_CREATE_TIMEOUT_MS`
+3. **容器重建**：修改 `container/agent-runner/src/` 后需要运行 `./container/build.sh`

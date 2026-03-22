@@ -374,8 +374,12 @@ async function waitForFeishuResult(requestId: string, timeoutMs: number = 30000)
     await new Promise(resolve => setTimeout(resolve, 100));
   }
 
-  throw new Error('Timeout waiting for feishu IPC result');
+  throw new Error(`Timeout waiting for feishu IPC result after ${timeoutMs / 1000}s`);
 }
+
+// 文档创建超时时间：由于速率限制（250ms/块），大文档需要更长时间
+const DOC_CREATE_TIMEOUT_MS = 180000; // 3 分钟
+const DOC_UPDATE_TIMEOUT_MS = 180000; // 3 分钟
 
 server.tool(
   'feishu_fetch_doc',
@@ -439,7 +443,7 @@ server.tool(
     });
 
     try {
-      const result = await waitForFeishuResult(requestId);
+      const result = await waitForFeishuResult(requestId, DOC_CREATE_TIMEOUT_MS);
 
       if (result.success) {
         return {
@@ -477,7 +481,7 @@ server.tool(
     });
 
     try {
-      const result = await waitForFeishuResult(requestId);
+      const result = await waitForFeishuResult(requestId, DOC_UPDATE_TIMEOUT_MS);
 
       if (result.success) {
         return {
