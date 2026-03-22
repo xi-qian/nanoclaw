@@ -521,6 +521,68 @@ export class FeishuClient {
   }
 
   /**
+   * 用户信息缓存
+   */
+  private userInfoCache: Map<string, { name: string; expireAt: number }> =
+    new Map();
+  private readonly USER_CACHE_TTL = 3600000; // 1 hour in ms
+
+  /**
+   * 获取用户信息
+   * @param openId 用户的 open_id
+   * @returns 用户名称，获取失败时返回 openId
+   */
+  async getUserName(openId: string): Promise<string> {
+    if (!openId) return '';
+
+    // Check cache first
+    const cached = this.userInfoCache.get(openId);
+    if (cached && cached.expireAt > Date.now()) {
+      return cached.name;
+    }
+
+    try {
+      // Call Feishu API to get user info
+      // https://open.feishu.cn/document/server-docs/contact-v3/user/find_by_id
+      const response = await this.client.request({
+        url: '/open-apis/contact/v3/users/by_user_id',
+        method: 'GET',
+        params: {
+          user_id_type: 'open_id',
+          user_id: openId,
+        },
+      });
+
+      if (response.code === 0 && response.data?.user) {
+        const user = response.data.user;
+        // 优先使用 name，其次 en_name，最后 open_id
+        const name = user.name || user.en_name || openId;
+
+        // Cache the result
+        this.userInfoCache.set(openId, {
+          name,
+          expireAt: Date.now() + this.USER_CACHE_TTL,
+        });
+
+        log.debug({ openId, name }, 'User info fetched');
+        return name;
+      } else {
+        log.warn(
+          { openId, code: response.code, msg: response.msg },
+          'Failed to get user info',
+        );
+        return openId; // Return openId as fallback
+      }
+    } catch (error) {
+      log.error(
+        { openId, error: error instanceof Error ? error.message : String(error) },
+        'Error fetching user info',
+      );
+      return openId; // Return openId as fallback
+    }
+  }
+
+  /**
    * 检查连接状态
    */
   isConnected(): boolean {

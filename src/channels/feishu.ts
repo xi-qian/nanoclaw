@@ -54,7 +54,9 @@ export class FeishuChannel implements Channel {
   private setupEventHandlers(): void {
     // 监听消息接收事件
     this.client.on('im.message.receive_v1', (event: FeishuEvent) => {
-      this.handleMessageEvent(event);
+      this.handleMessageEvent(event).catch((err) => {
+        log.error({ err }, 'Error in message event handler');
+      });
     });
 
     // 监听消息已读事件
@@ -84,7 +86,7 @@ export class FeishuChannel implements Channel {
   /**
    * 处理消息接收事件
    */
-  private handleMessageEvent(event: FeishuEvent): void {
+  private async handleMessageEvent(event: FeishuEvent): Promise<void> {
     try {
       if (event.type === 'im.message.receive_v1' && event.event?.message) {
         const msg = event.event.message;
@@ -102,6 +104,9 @@ export class FeishuChannel implements Channel {
 
         const jid = `feishu:${chatId}`;
 
+        // 获取用户名称（异步）
+        const senderName = await this.client.getUserName(senderOpenId);
+
         // 先存储 chat 元数据（避免外键约束错误）
         const isGroup = chatType === 'group';
         this.onChatMetadata(jid, msg.create_time, chatId, 'feishu', isGroup);
@@ -111,7 +116,7 @@ export class FeishuChannel implements Channel {
           id: msg.message_id,
           chat_jid: jid,
           sender: senderOpenId,
-          sender_name: '', // TODO: 需要额外查询用户名
+          sender_name: senderName,
           content: text,
           timestamp: msg.create_time,
           is_from_me: false,
@@ -121,7 +126,7 @@ export class FeishuChannel implements Channel {
         this.onMessage(jid, newMessage);
 
         log.debug(
-          { messageId: msg.message_id, chatId, contentLength: text.length },
+          { messageId: msg.message_id, chatId, senderName, contentLength: text.length },
           'Message received and processed',
         );
       }
