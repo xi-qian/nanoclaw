@@ -20,6 +20,12 @@ vi.mock('form-data', () => ({
     getHeaders() {
       return { 'Content-Type': 'multipart/form-data' };
     }
+    getLengthSync() {
+      return 100; // Mock length
+    }
+    getBuffer() {
+      return Buffer.from('mock form data');
+    }
   },
 }));
 
@@ -79,6 +85,14 @@ describe('FeishuClient', () => {
               code: 0,
               tenant_access_token: 'test_tenant_token',
             }),
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({
+                code: 0,
+                tenant_access_token: 'test_tenant_token',
+              }),
+            ),
+          status: 200,
         })
         // Mock file upload response
         .mockResolvedValueOnce({
@@ -87,6 +101,14 @@ describe('FeishuClient', () => {
               code: 0,
               data: { file_key: 'test_file_key' },
             }),
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({
+                code: 0,
+                data: { file_key: 'test_file_key' },
+              }),
+            ),
+          status: 200,
         });
 
       const fileKey = await client.uploadFile('/test/path/file.pdf', 'file');
@@ -103,6 +125,14 @@ describe('FeishuClient', () => {
             code: 0,
             tenant_access_token: 'test_tenant_token',
           }),
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              code: 0,
+              tenant_access_token: 'test_tenant_token',
+            }),
+          ),
+        status: 200,
       });
 
       // Mock failed upload response
@@ -112,6 +142,14 @@ describe('FeishuClient', () => {
             code: 99991663,
             msg: 'file size exceeds limit',
           }),
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              code: 99991663,
+              msg: 'file size exceeds limit',
+            }),
+          ),
+        status: 200,
       });
 
       await expect(
@@ -142,6 +180,14 @@ describe('FeishuClient', () => {
               code: 0,
               tenant_access_token: 'test_tenant_token',
             }),
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({
+                code: 0,
+                tenant_access_token: 'test_tenant_token',
+              }),
+            ),
+          status: 200,
         })
         // Mock file upload response
         .mockResolvedValueOnce({
@@ -150,6 +196,14 @@ describe('FeishuClient', () => {
               code: 0,
               data: { file_key: 'test_file_key' },
             }),
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({
+                code: 0,
+                data: { file_key: 'test_file_key' },
+              }),
+            ),
+          status: 200,
         });
 
       const result = await client.uploadAndSendFile(

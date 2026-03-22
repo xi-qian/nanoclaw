@@ -1442,9 +1442,43 @@ export class FeishuClient {
   // ---------------------------------------------------------------------------
 
   /**
+   * 映射文件扩展名到飞书支持的 file_type
+   * 飞书 API 支持的 file_type 值: opus, mp4, pdf, doc, xls, ppt, stream
+   * @param ext 文件扩展名（不含点）
+   * @returns 飞书支持的 file_type
+   */
+  private mapFileType(ext: string): string {
+    const typeMap: Record<string, string> = {
+      // 音频
+      opus: 'opus',
+      // 视频
+      mp4: 'mp4',
+      mov: 'mp4',
+      avi: 'mp4',
+      mkv: 'mp4',
+      // 文档
+      pdf: 'pdf',
+      doc: 'doc',
+      docx: 'doc',
+      xls: 'xls',
+      xlsx: 'xls',
+      ppt: 'ppt',
+      pptx: 'ppt',
+    };
+
+    // 如果扩展名在映射表中，返回对应的飞书类型
+    if (typeMap[ext]) {
+      return typeMap[ext];
+    }
+
+    // 其他所有类型使用 stream
+    return 'stream';
+  }
+
+  /**
    * 上传文件到飞书并获取 file_key
    * @param filePath 文件路径（主机路径）
-   * @param fileType 文件类型：file, image, audio, video, media
+   * @param fileType 文件类型：file, image, audio, video, media（仅作为参考，实际会从扩展名推断）
    * @returns file_key 用于发送文件消息
    */
   async uploadFile(
@@ -1464,15 +1498,20 @@ export class FeishuClient {
       const fileBuffer = fs.readFileSync(filePath);
       const fileName = path.basename(filePath);
 
+      // 从文件名提取扩展名并映射到飞书支持的 file_type
+      // 飞书 API 支持的 file_type 值: opus, mp4, pdf, doc, xls, ppt, stream
+      const ext = path.extname(fileName).toLowerCase().replace(/^\./, '');
+      const feishuFileType = this.mapFileType(ext);
+
       // 获取 tenant_access_token
       const token = await this.getTenantAccessToken();
 
-      // 使用 FormData 上传文件
+      // 使用 FormData 上传文件（按照飞书 API 文档示例格式）
       const FormData = (await import('form-data')).default;
       const form = new FormData();
-      form.append('file', fileBuffer, fileName);
-      form.append('file_type', fileType);
+      form.append('file_type', feishuFileType);
       form.append('file_name', fileName);
+      form.append('file', fileBuffer, { filename: fileName });
 
       const url = 'https://open.feishu.cn/open-apis/im/v1/files';
       const response = await fetch(url, {
@@ -1480,14 +1519,37 @@ export class FeishuClient {
         headers: {
           Authorization: `Bearer ${token}`,
           ...form.getHeaders(),
+          'Content-Length': form.getLengthSync().toString(),
         },
-        body: form,
+        body: form.getBuffer(),
       });
 
-      const result = (await response.json()) as any;
+      // 先获取文本响应，再尝试解析 JSON
+      const responseText = await response.text();
+      let result: any;
+      try {
+        result = JSON.parse(responseText);
+      } catch {
+        // 如果不是 JSON，说明 API 返回了错误文本
+        log.error(
+          {
+            filePath,
+            fileName,
+            feishuFileType,
+            status: response.status,
+            responseText,
+          },
+          'Feishu API returned non-JSON response',
+        );
+        throw new Error(
+          `Feishu API error (${response.status}): ${responseText}`,
+        );
+      }
 
       if (result.code !== 0) {
-        throw new Error(`Failed to upload file: ${result.msg}`);
+        throw new Error(
+          `Failed to upload file: ${result.msg} (code: ${result.code})`,
+        );
       }
 
       const fileKey = result.data?.file_key;
@@ -1496,7 +1558,13 @@ export class FeishuClient {
       }
 
       log.info(
-        { filePath, fileName, fileType, fileKey, size: fileBuffer.length },
+        {
+          filePath,
+          fileName,
+          feishuFileType,
+          fileKey,
+          size: fileBuffer.length,
+        },
         'File uploaded successfully',
       );
 

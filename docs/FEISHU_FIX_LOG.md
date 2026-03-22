@@ -1329,3 +1329,92 @@ feishu_send_file(
 发送文件需要以下权限：
 - `im:file` - 发送文件消息
 - `im:file:send_as_bot` - 以机器人身份发送文件
+
+---
+
+## 文件上传 API 参数修复 (2026-03-22)
+
+### 问题：文件上传返回 400 错误
+
+**问题描述**：
+调用飞书 `/open-apis/im/v1/files` API 上传文件时，一直返回 HTTP 400 错误。
+
+**原因分析**：
+
+1. **`file_type` 参数值错误**：
+   - 代码使用 `file_type: "txt"` 等文件扩展名
+   - 飞书 API 要求使用预定义类型：`opus`, `mp4`, `pdf`, `doc`, `xls`, `ppt`, `stream`
+   - 对于不在列表中的文件类型，应使用 `stream`
+
+2. **Node.js fetch 不支持 FormData stream**：
+   - 直接将 `form-data` 对象作为 `body` 传递给 `fetch` 会失败
+   - 需要使用 `form.getBuffer()` 转换为 Buffer
+
+**修复方案**：
+
+1. **添加 file_type 映射** (`src/feishu/client.ts`)：
+```typescript
+private mapFileType(ext: string): string {
+  const typeMap: Record<string, string> = {
+    opus: 'opus',
+    mp4: 'mp4', mov: 'mp4', avi: 'mp4', mkv: 'mp4',
+    pdf: 'pdf',
+    doc: 'doc', docx: 'doc',
+    xls: 'xls', xlsx: 'xls',
+    ppt: 'ppt', pptx: 'ppt',
+  };
+  return typeMap[ext] || 'stream';
+}
+```
+
+2. **修复 fetch 请求**：
+```typescript
+// 修复前 - 直接传递 form 对象
+body: form,
+
+// 修复后 - 使用 Buffer
+body: form.getBuffer(),
+headers: {
+  ...form.getHeaders(),
+  'Content-Length': form.getLengthSync().toString(),
+},
+```
+
+**验证结果**：
+```
+✅ txt 文件上传成功：file_key=file_v3_00101_95ccb1e1-0440-4ed1-b02e-fe988c3ebd3g
+✅ pdf 文件上传成功：file_key=file_v3_00101_83ca753a-0442-4a93-ac24-19761d9d970g
+✅ docx 文件上传成功：file_key=file_v3_00101_5ae66652-5bf1-4c59-9f21-a6ae28fae68g
+```
+
+---
+
+## 飞书文件上传 API 参数说明
+
+### file_type 可选值
+
+| 值 | 说明 |
+|----|------|
+| `opus` | OPUS 音频文件 |
+| `mp4` | MP4 视频文件 |
+| `pdf` | PDF 文档 |
+| `doc` | Word 文档（.doc, .docx） |
+| `xls` | Excel 文档（.xls, .xlsx） |
+| `ppt` | PowerPoint 文档（.ppt, .pptx） |
+| `stream` | 其他所有格式（默认值） |
+
+### 请求格式
+
+```bash
+curl -X POST 'https://open.feishu.cn/open-apis/im/v1/files' \
+  -H 'Authorization: Bearer t-xxx' \
+  -F 'file_type=stream' \
+  -F 'file_name=test.txt' \
+  -F 'file=@/path/to/file'
+```
+
+### 注意事项
+
+1. 文件大小限制 30MB
+2. 不允许上传空文件
+3. 需要开通 `im:resource` 或 `im:resource:upload` 权限
