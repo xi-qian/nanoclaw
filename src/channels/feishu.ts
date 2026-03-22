@@ -10,6 +10,7 @@ import type {
   OnChatMetadata,
   NewMessage,
   CardActionData,
+  MessageAttachment,
 } from '../types.js';
 import { FeishuClient } from '../feishu/client.js';
 import {
@@ -92,10 +93,10 @@ export class FeishuChannel implements Channel {
         const msg = event.event.message;
         const chatId = msg.chat_id;
         const chatType = msg.chat_type || 'p2p';
+        const messageType = msg.message_type || 'text';
 
         // 解析消息内容
         const content = JSON.parse(msg.content);
-        const text = content.text || '';
         // sender 在事件级别，不在 msg 里
         const senderOpenId =
           event.event?.sender?.sender_id?.open_id ||
@@ -111,6 +112,13 @@ export class FeishuChannel implements Channel {
         const isGroup = chatType === 'group';
         this.onChatMetadata(jid, msg.create_time, chatId, 'feishu', isGroup);
 
+        // 根据消息类型提取内容和附件
+        const { text, attachment } = this.parseMessageContent(
+          messageType,
+          content,
+          msg.message_id,
+        );
+
         // 转换为 NanoClaw 消息格式
         const newMessage: NewMessage = {
           id: msg.message_id,
@@ -120,6 +128,8 @@ export class FeishuChannel implements Channel {
           content: text,
           timestamp: msg.create_time,
           is_from_me: false,
+          message_type: messageType as NewMessage['message_type'],
+          attachment: attachment,
         };
 
         // 通知消息处理器（会被存储到 SQLite）
@@ -130,7 +140,8 @@ export class FeishuChannel implements Channel {
             messageId: msg.message_id,
             chatId,
             senderName,
-            contentLength: text.length,
+            messageType,
+            hasAttachment: !!attachment,
           },
           'Message received and processed',
         );
@@ -140,6 +151,103 @@ export class FeishuChannel implements Channel {
         { error: error instanceof Error ? error.message : String(error) },
         'Failed to handle message event',
       );
+    }
+  }
+
+  /**
+   * 根据消息类型解析内容和附件
+   */
+  private parseMessageContent(
+    messageType: string,
+    content: any,
+    messageId: string,
+  ): { text: string; attachment?: MessageAttachment } {
+    switch (messageType) {
+      case 'text':
+        return { text: content.text || '' };
+
+      case 'post':
+        // 富文本消息，提取文本内容
+        const postText = this.extractPostText(content);
+        return { text: postText };
+
+      case 'image':
+        return {
+          text: '[图片]',
+          attachment: {
+            type: 'image',
+            key: content.image_key,
+            message_id: messageId,
+          },
+        };
+
+      case 'file':
+        return {
+          text: `[文件] ${content.name || '未知文件'}`,
+          attachment: {
+            type: 'file',
+            key: content.file_key,
+            name: content.name,
+            size: content.size,
+            message_id: messageId,
+          },
+        };
+
+      case 'audio':
+        return {
+          text: '[语音消息]',
+          attachment: {
+            type: 'audio',
+            key: content.file_key,
+            message_id: messageId,
+          },
+        };
+
+      case 'media':
+        return {
+          text: '[视频]',
+          attachment: {
+            type: 'video',
+            key: content.file_key,
+            message_id: messageId,
+          },
+        };
+
+      case 'interactive':
+        return { text: '[卡片消息]' };
+
+      default:
+        return { text: `[${messageType}消息]` };
+    }
+  }
+
+  /**
+   * 从富文本消息中提取文本内容
+   */
+  private extractPostText(content: any): string {
+    try {
+      const zhContent = content.zh_cn || content.en_us || {};
+      const postContent = zhContent.content || [];
+      const texts: string[] = [];
+
+      for (const paragraph of postContent) {
+        for (const element of paragraph) {
+          if (element.tag === 'text' && element.text) {
+            texts.push(element.text);
+          } else if (element.tag === 'md' && element.text) {
+            texts.push(element.text);
+          } else if (element.tag === 'a' && element.text) {
+            texts.push(`[${element.text}](${element.href})`);
+          } else if (element.tag === 'at' && element.user_name) {
+            texts.push(`@${element.user_name}`);
+          }
+        }
+        texts.push('\n');
+      }
+
+      return texts.join('').trim();
+    } catch {
+      return '';
     }
   }
 
@@ -231,6 +339,25 @@ export class FeishuChannel implements Channel {
       );
       throw error;
     }
+  }
+
+  /**
+   * 下载消息中的资源文件
+   * @param messageId 消息ID
+   * @param fileKey 资源文件 key
+   * @param fileName 可选的文件名
+   * @returns 临时文件路径
+   */
+  async downloadMessageResource(
+    messageId: string,
+    fileKey: string,
+    fileName?: string,
+  ): Promise<string> {
+    return await this.client.downloadMessageResourceToFile(
+      messageId,
+      fileKey,
+      fileName,
+    );
   }
 
   /**

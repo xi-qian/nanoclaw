@@ -604,6 +604,83 @@ export class FeishuClient {
   }
 
   /**
+   * 下载消息中的资源文件（用户发送的图片、文件、音频、视频等）
+   * @param messageId 消息ID
+   * @param fileKey 资源文件 key
+   * @returns 文件内容（Buffer）
+   */
+  async downloadMessageResource(
+    messageId: string,
+    fileKey: string,
+  ): Promise<Buffer> {
+    try {
+      // 使用飞书 API 获取消息中的资源文件
+      // https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/get-2
+      const response = await this.client.request({
+        url: `/open-apis/im/v1/messages/${messageId}/resources/${fileKey}`,
+        method: 'GET',
+        responseType: 'arraybuffer',
+      });
+
+      if (response.code !== 0) {
+        throw new Error(
+          `Failed to download resource: ${response.msg || 'Unknown error'}`,
+        );
+      }
+
+      log.info(
+        { messageId, fileKey, size: response.data?.length },
+        'Resource downloaded',
+      );
+
+      return Buffer.from(response.data);
+    } catch (error) {
+      log.error(
+        {
+          messageId,
+          fileKey,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to download message resource',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 下载消息资源并保存到临时文件
+   * @param messageId 消息ID
+   * @param fileKey 资源文件 key
+   * @param fileName 保存的文件名
+   * @returns 临时文件路径
+   */
+  async downloadMessageResourceToFile(
+    messageId: string,
+    fileKey: string,
+    fileName?: string,
+  ): Promise<string> {
+    const fs = await import('fs');
+    const path = await import('path');
+    const os = await import('os');
+
+    const buffer = await this.downloadMessageResource(messageId, fileKey);
+
+    // 创建临时目录
+    const tmpDir = path.join(os.tmpdir(), 'nanoclaw-feishu-downloads');
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    // 生成文件名
+    const safeFileName = fileName || `resource-${Date.now()}`;
+    const filePath = path.join(tmpDir, safeFileName);
+
+    fs.writeFileSync(filePath, buffer);
+
+    log.info({ filePath, size: buffer.length }, 'Resource saved to file');
+
+    return filePath;
+  }
+
+  /**
    * 检查连接状态
    */
   isConnected(): boolean {

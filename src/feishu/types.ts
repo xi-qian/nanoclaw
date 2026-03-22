@@ -43,6 +43,7 @@ export interface FeishuEvent {
       message_id: string;
       chat_id: string;
       chat_type: string;
+      message_type?: string; // 消息类型：text, image, file, audio, media, post, interactive 等
       content: string; // JSON 字符串
       create_time: string;
       updated_time?: string;

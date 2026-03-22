@@ -653,3 +653,93 @@ async getUserName(openId: string): Promise<string> {
 | `contact:user.base:readonly` | 获取用户信息 | 用户名显示需要 |
 | `docx:document` | 文档操作 | 文档功能需要 |
 | `bitable:app` | 多维表格操作 | 表格功能需要 |
+
+---
+
+## 文件消息支持 (2026-03-22)
+
+### 问题：不支持用户发送的文件/图片/语音
+
+**问题描述**：
+用户发送的图片、文件、语音等消息类型，Agent 只能看到占位符文本（如 `[图片]`），无法获取实际内容进行分析处理。
+
+**修复方案**：
+
+1. **扩展消息数据结构** (`src/types.ts`)：
+```typescript
+export interface NewMessage {
+  // ... 其他字段
+  message_type?: 'text' | 'image' | 'file' | 'audio' | 'media' | 'post' | 'interactive';
+  attachment?: MessageAttachment;
+}
+
+export interface MessageAttachment {
+  type: 'image' | 'file' | 'audio' | 'video';
+  key: string;           // 资源 key（用于下载）
+  name?: string;         // 文件名
+  size?: number;         // 文件大小
+  message_id?: string;   // 消息ID（用于下载用户发送的资源）
+}
+```
+
+2. **处理不同消息类型** (`src/channels/feishu.ts`)：
+   - `text`: 普通文本
+   - `post`: 富文本，提取文本内容
+   - `image`: 图片，提取 image_key
+   - `file`: 文件，提取 file_key 和文件名
+   - `audio`: 语音，提取 file_key
+   - `media`: 视频，提取 file_key
+
+3. **添加资源下载能力** (`src/feishu/client.ts`)：
+   - `downloadMessageResource()`: 下载资源到 Buffer
+   - `downloadMessageResourceToFile()`: 下载资源到临时文件
+
+4. **添加 IPC 处理** (`src/ipc.ts`)：
+   - `download_resource`: 下载消息中的资源文件
+
+5. **添加 MCP 工具** (`container/agent-runner/src/ipc-mcp-stdio.ts`)：
+   - `feishu_download_resource`: Agent 下载资源文件
+
+**使用示例**：
+
+用户发送图片后，消息结构如下：
+```json
+{
+  "id": "om_xxx",
+  "content": "[图片]",
+  "message_type": "image",
+  "attachment": {
+    "type": "image",
+    "key": "img_v2_xxx",
+    "message_id": "om_xxx"
+  }
+}
+```
+
+Agent 可以调用工具下载图片：
+```
+feishu_download_resource(message_id="om_xxx", file_key="img_v2_xxx")
+```
+
+返回临时文件路径，Agent 可以使用 Read 工具读取或进行其他处理。
+
+---
+
+## 新增 MCP 工具（更新）
+
+| 工具 | 功能 | 状态 |
+|------|------|------|
+| `feishu_download_resource` | 下载消息中的资源文件（图片/文件/语音/视频） | ✅ 新增 |
+
+---
+
+## 文件修改清单（本次更新）
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/types.ts` | 添加 MessageAttachment 接口，扩展 NewMessage |
+| `src/feishu/types.ts` | 添加 message_type 字段 |
+| `src/channels/feishu.ts` | 处理不同消息类型，提取附件信息 |
+| `src/feishu/client.ts` | 添加下载资源文件方法 |
+| `src/ipc.ts` | 添加 download_resource IPC 处理 |
+| `container/agent-runner/src/ipc-mcp-stdio.ts` | 添加 feishu_download_resource 工具 |

@@ -53,6 +53,28 @@ export interface NewMessage {
   is_bot_message?: boolean;
   // 卡片动作相关字段
   card_action?: CardActionData;
+  // 消息类型（用于区分文本、图片、文件等）
+  message_type?: 'text' | 'image' | 'file' | 'audio' | 'media' | 'post' | 'interactive';
+  // 附件信息（图片、文件、音频、视频等）
+  attachment?: MessageAttachment;
+}
+
+/**
+ * 消息附件信息
+ */
+export interface MessageAttachment {
+  /** 资源类型 */
+  type: 'image' | 'file' | 'audio' | 'video';
+  /** 资源 key（用于下载） */
+  key: string;
+  /** 文件名（如果有） */
+  name?: string;
+  /** 文件大小（字节） */
+  size?: number;
+  /** MIME 类型 */
+  mime_type?: string;
+  /** 消息ID（用于下载用户发送的资源） */
+  message_id?: string;
 }
 
 /**

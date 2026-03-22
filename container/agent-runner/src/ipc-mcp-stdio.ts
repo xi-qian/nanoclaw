@@ -1093,6 +1093,69 @@ server.tool(
   },
 );
 
-// Start the stdio transport
+server.tool(
+  'feishu_download_resource',
+  `下载飞书消息中的资源文件（用户发送的图片、文件、音频、视频等）。
+
+使用场景：
+- 用户发送了图片，需要分析图片内容
+- 用户发送了文件，需要读取文件内容
+- 用户发送了语音消息，需要转录文字
+- 用户发送了视频，需要处理视频
+
+返回值：临时文件路径，可以直接读取文件内容。`,
+  {
+    message_id: z.string().describe('消息 ID（从消息上下文中获取）'),
+    file_key: z.string().describe('资源文件 key（从消息的 attachment 字段获取）'),
+    file_name: z.string().optional().describe('保存的文件名（可选，默认自动生成）'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'download_resource',
+      message_id: args.message_id,
+      file_key: args.file_key,
+      file_name: args.file_name,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success && result.file_path) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `资源下载成功!\n\n临时文件路径: ${result.file_path}\n\n你可以使用 Read 工具读取文件内容，或者使用其他工具处理该文件。`,
+            },
+          ],
+        };
+      } else {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `下载资源失败: ${result.error || '未知错误'}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `下载资源超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+// Start the stdio server transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

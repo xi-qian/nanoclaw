@@ -297,6 +297,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                     result = { sent: true };
                     break;
+                  // 下载资源文件
+                  case 'download_resource':
+                    const filePath = await feishuChannel.downloadMessageResource(
+                      request.message_id,
+                      request.file_key,
+                      request.file_name,
+                    );
+                    result = { file_path: filePath };
+                    break;
                   default:
                     throw new Error(
                       `Unknown feishu request type: ${request.type}`,
