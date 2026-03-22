@@ -47,6 +47,9 @@ export class FeishuClient {
   private credentials: FeishuCredentials;
   private eventHandlers: Map<string, EventHandler[]> = new Map();
 
+  // 速率限制延迟（毫秒）- 飞书文档 API 每秒最多 5 次请求
+  private readonly RATE_LIMIT_DELAY = 250;
+
   constructor(credentials: FeishuCredentials, brand: LarkBrand = 'feishu') {
     this.credentials = credentials;
     this.brand = brand;
@@ -58,6 +61,13 @@ export class FeishuClient {
     });
 
     log.info({ brand, appId: credentials.appId }, 'Feishu client created');
+  }
+
+  /**
+   * 延迟函数
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -387,6 +397,10 @@ export class FeishuClient {
                 'Failed to add block',
               );
             }
+            // 添加延迟避免速率限制 (429 Too Many Requests)
+            if (i < blocks.length - 1) {
+              await this.sleep(this.RATE_LIMIT_DELAY);
+            }
           }
         } catch (blockError) {
           log.warn(
@@ -425,29 +439,42 @@ export class FeishuClient {
   }
 
   /**
-   * 更新文档
+   * 更新文档（追加内容）
    */
   async updateDoc(docId: string, markdown: string): Promise<void> {
     try {
       const actualDocId = this.extractDocId(docId);
 
-      // 简化实现：将 markdown 转换为文档块并追加
+      // 将 markdown 转换为文档块并逐个追加
       const blocks = this.markdownToBlocks(markdown);
 
-      // 使用批量创建块 API
-      await this.client.request({
-        url: `/open-apis/docx/v1/documents/${actualDocId}/blocks/${actualDocId}/children/batch_create`,
-        method: 'POST',
-        data: {
-          requests: blocks.map((block) => ({
-            create_block: {
-              block,
-              position: actualDocId,
+      // 使用逐个创建块的方式（batch_create 端点不存在）
+      for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i];
+        const blockResponse = await this.client.request({
+          url: `/open-apis/docx/v1/documents/${actualDocId}/blocks/${actualDocId}/children`,
+          method: 'POST',
+          data: {
+            index: -1, // 追加到末尾
+            children: [block],
+          },
+        });
+        if (blockResponse.code !== 0) {
+          log.warn(
+            {
+              docId: actualDocId,
+              index: i,
+              code: blockResponse.code,
+              msg: blockResponse.msg,
             },
-          })),
-          index: -1,
-        },
-      });
+            'Failed to add block during update',
+          );
+        }
+        // 添加延迟避免速率限制
+        if (i < blocks.length - 1) {
+          await this.sleep(this.RATE_LIMIT_DELAY);
+        }
+      }
 
       log.info(
         { docId: actualDocId, blocksCount: blocks.length },

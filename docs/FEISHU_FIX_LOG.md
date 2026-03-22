@@ -1049,3 +1049,88 @@ Agent 执行: pdftotext /workspace/ipc/downloads/xxx.pdf -
       ↓
 6. Agent 回复用户
 ```
+
+---
+
+## 文档创建速率限制修复 (2026-03-22)
+
+### 问题：文档内容不完整
+
+**问题描述**：
+最近生成的两个飞书文档都不完整，日志显示大量错误：
+1. **404 错误**：`batch_create` API 端点不存在
+2. **429 错误**：速率限制导致内容添加失败
+
+**原因分析**：
+
+1. **`batch_create` API 不存在**：
+   - `updateDoc` 方法使用了 `/children/batch_create` 端点
+   - 飞书 API 没有这个端点，返回 404 Not Found
+   - 日志：`statusCode: 404, data: '404 page not found'`
+
+2. **速率限制触发**：
+   - `createDoc` 方法逐个创建块（每个块一个 API 请求）
+   - 当文档内容很多时，请求过快触发 429 Too Many Requests
+   - 日志：`status: 429, statusText: 'Too Many Requests'`
+
+**修复方案**：
+
+1. **移除不存在的 `batch_create` 调用** (`src/feishu/client.ts`)：
+```typescript
+// 修复前 - 使用不存在的 batch_create 端点
+await this.client.request({
+  url: `/open-apis/docx/v1/documents/${actualDocId}/blocks/${actualDocId}/children/batch_create`,
+  // ... 返回 404
+});
+
+// 修复后 - 逐个创建块
+for (let i = 0; i < blocks.length; i++) {
+  const block = blocks[i];
+  await this.client.request({
+    url: `/open-apis/docx/v1/documents/${actualDocId}/blocks/${actualDocId}/children`,
+    method: 'POST',
+    data: { index: -1, children: [block] },
+  });
+  // 添加延迟避免速率限制
+  if (i < blocks.length - 1) {
+    await this.sleep(this.RATE_LIMIT_DELAY);
+  }
+}
+```
+
+2. **添加速率限制延迟**：
+```typescript
+// 添加常量
+private readonly RATE_LIMIT_DELAY = 250; // 250ms = 4次/秒
+
+// 添加延迟方法
+private sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// 在循环中添加延迟
+if (i < blocks.length - 1) {
+  await this.sleep(this.RATE_LIMIT_DELAY);
+}
+```
+
+**修复效果**：
+- 文档创建时逐块添加，每次请求间隔 250ms
+- 避免触发飞书 API 速率限制（每秒最多 5 次请求）
+- 文档内容完整添加
+
+---
+
+## 文件修改清单（本次更新）
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/feishu/client.ts` | 修复 updateDoc 使用正确的 API，添加速率限制延迟 |
+
+---
+
+## 注意事项
+
+1. **速率限制**：飞书文档 API 每秒最多 5 次请求，当前设置 250ms 延迟（4 次/秒）
+2. **大文档**：如果文档内容很多（几十个块），创建时间会较长，但能确保内容完整
+3. **错误处理**：单个块添加失败不会影响其他块，文档仍会创建成功
