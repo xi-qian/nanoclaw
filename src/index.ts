@@ -151,9 +151,14 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
 
 /**
  * Auto-register a group when AUTO_REGISTER_GROUPS is enabled.
- * The first group becomes the main group; subsequent groups require trigger.
+ * - Single chats (p2p) don't require trigger
+ * - Group chats require trigger (unless it's the first registered group, which becomes main)
  */
-function maybeAutoRegisterGroup(jid: string, chatName?: string): boolean {
+function maybeAutoRegisterGroup(
+  jid: string,
+  chatName?: string,
+  isGroup?: boolean,
+): boolean {
   // Check if auto-register is disabled
   if (!AUTO_REGISTER_GROUPS) {
     return false;
@@ -206,8 +211,12 @@ function maybeAutoRegisterGroup(jid: string, chatName?: string): boolean {
   const registeredCount = Object.keys(registeredGroups).length;
   const isMain = registeredCount === 0;
 
+  // Single chats don't require trigger; group chats do (unless main)
+  // If isGroup is undefined, treat as single chat (safer default)
+  const requiresTrigger = isGroup === true && !isMain;
+
   logger.info(
-    { jid, chatName, folder, isMain },
+    { jid, chatName, folder, isMain, isGroup, requiresTrigger },
     'Auto-registering group',
   );
 
@@ -217,7 +226,7 @@ function maybeAutoRegisterGroup(jid: string, chatName?: string): boolean {
     trigger: `@${ASSISTANT_NAME}\\b`,
     added_at: new Date().toISOString(),
     isMain: isMain,
-    requiresTrigger: !isMain, // Main group doesn't require trigger
+    requiresTrigger: requiresTrigger,
   });
 
   return true;
@@ -708,8 +717,8 @@ async function main(): Promise<void> {
     ) => {
       storeChatMetadata(chatJid, timestamp, name, channel, isGroup);
 
-      // Auto-register first group as main group to solve "chicken-and-egg" problem
-      maybeAutoRegisterGroup(chatJid, name);
+      // Auto-register groups when AUTO_REGISTER_GROUPS is enabled
+      maybeAutoRegisterGroup(chatJid, name, isGroup);
     },
     registeredGroups: () => registeredGroups,
     // 卡片动作回调：当用户点击卡片按钮时触发
