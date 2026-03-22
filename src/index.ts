@@ -4,6 +4,7 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   // CONTEXT_HISTORY_LIMIT, // TODO: disabled - SDK Session handles history
+  AUTO_REGISTER_GROUPS,
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
@@ -149,27 +150,27 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
 }
 
 /**
- * Auto-register a group as main group if no groups are registered yet.
- * This solves the "chicken-and-egg" problem where the first group
- * cannot be registered without being able to send commands.
+ * Auto-register a group when AUTO_REGISTER_GROUPS is enabled.
+ * The first group becomes the main group; subsequent groups require trigger.
  */
-function maybeAutoRegisterMainGroup(jid: string, chatName?: string): boolean {
-  // Check if this JID is already registered in the database
-  const existingGroup = getRegisteredGroup(jid);
-  if (existingGroup) {
-    // Group already exists in database, load it into memory
-    logger.info(
-      { jid, folder: existingGroup.folder },
-      'Group already registered, loading into memory',
-    );
-    registeredGroups[jid] = existingGroup;
+function maybeAutoRegisterGroup(jid: string, chatName?: string): boolean {
+  // Check if auto-register is disabled
+  if (!AUTO_REGISTER_GROUPS) {
     return false;
   }
 
-  // Check if any groups are already registered
-  const registeredCount = Object.keys(registeredGroups).length;
-  if (registeredCount > 0) {
-    return false; // Already have registered groups
+  // Check if this JID is already registered in the database
+  const existingGroup = getRegisteredGroup(jid);
+  if (existingGroup) {
+    // Group already exists in database, load it into memory if not already
+    if (!registeredGroups[jid]) {
+      logger.info(
+        { jid, folder: existingGroup.folder },
+        'Group already registered in DB, loading into memory',
+      );
+      registeredGroups[jid] = existingGroup;
+    }
+    return false;
   }
 
   // Extract folder name from JID for auto-registration
@@ -178,6 +179,12 @@ function maybeAutoRegisterMainGroup(jid: string, chatName?: string): boolean {
   if (jid.startsWith('feishu:')) {
     const uniqueId = jid.replace('feishu:', '');
     folder = `feishu-${uniqueId}`;
+  } else if (jid.startsWith('tg:')) {
+    const uniqueId = jid.replace('tg:', '');
+    folder = `tg-${uniqueId}`;
+  } else if (jid.startsWith('dc:')) {
+    const uniqueId = jid.replace('dc:', '');
+    folder = `dc-${uniqueId}`;
   } else {
     // Fallback: generate a safe folder name from chat name
     const safeName = (chatName || 'chat')
@@ -195,18 +202,22 @@ function maybeAutoRegisterMainGroup(jid: string, chatName?: string): boolean {
     return false;
   }
 
-  // Register as main group
+  // First group becomes main group
+  const registeredCount = Object.keys(registeredGroups).length;
+  const isMain = registeredCount === 0;
+
   logger.info(
-    { jid, chatName, folder },
-    'Auto-registering first group as main group',
+    { jid, chatName, folder, isMain },
+    'Auto-registering group',
   );
 
   registerGroup(jid, {
-    name: chatName || 'Main',
+    name: chatName || 'Chat',
     folder: folder,
     trigger: `@${ASSISTANT_NAME}\\b`,
     added_at: new Date().toISOString(),
-    isMain: true, // First group becomes main group
+    isMain: isMain,
+    requiresTrigger: !isMain, // Main group doesn't require trigger
   });
 
   return true;
@@ -698,7 +709,7 @@ async function main(): Promise<void> {
       storeChatMetadata(chatJid, timestamp, name, channel, isGroup);
 
       // Auto-register first group as main group to solve "chicken-and-egg" problem
-      maybeAutoRegisterMainGroup(chatJid, name);
+      maybeAutoRegisterGroup(chatJid, name);
     },
     registeredGroups: () => registeredGroups,
     // 卡片动作回调：当用户点击卡片按钮时触发

@@ -67,6 +67,12 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
 );
 
+// Auto-register groups when they receive messages.
+// When enabled, any chat that sends a message will be automatically registered.
+// Set to 'false' to require manual registration via /register command.
+export const AUTO_REGISTER_GROUPS =
+  process.env.AUTO_REGISTER_GROUPS !== 'false'; // Default: true
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
