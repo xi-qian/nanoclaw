@@ -19,6 +19,64 @@ import path from 'path';
 import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
+// ==================== 性能计时工具 ====================
+
+/**
+ * 计时器类 - 用于跟踪各阶段耗时
+ */
+class Timer {
+  private startTime: number;
+  private lastMarkTime: number;
+  private marks: Map<string, number> = new Map();
+
+  constructor() {
+    this.startTime = Date.now();
+    this.lastMarkTime = this.startTime;
+  }
+
+  /**
+   * 获取从启动到现在的总耗时（毫秒）
+   */
+  elapsed(): number {
+    return Date.now() - this.startTime;
+  }
+
+  /**
+   * 标记一个时间点，返回距上一个标记的时间
+   */
+  mark(name: string): number {
+    const now = Date.now();
+    const delta = now - this.lastMarkTime;
+    this.marks.set(name, delta);
+    this.lastMarkTime = now;
+    return delta;
+  }
+
+  /**
+   * 获取格式化的时间戳字符串 [HH:MM:SS.mmm]
+   */
+  timestamp(): string {
+    const now = new Date();
+    const h = now.getHours().toString().padStart(2, '0');
+    const m = now.getMinutes().toString().padStart(2, '0');
+    const s = now.getSeconds().toString().padStart(2, '0');
+    const ms = now.getMilliseconds().toString().padStart(3, '0');
+    return `${h}:${m}:${s}.${ms}`;
+  }
+
+  /**
+   * 重置计时器
+   */
+  reset(): void {
+    this.startTime = Date.now();
+    this.lastMarkTime = this.startTime;
+    this.marks.clear();
+  }
+}
+
+// 全局计时器
+const timer = new Timer();
+
 interface ContainerInput {
   prompt: string;
   sessionId?: string;
@@ -113,8 +171,22 @@ function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_END_MARKER);
 }
 
+/**
+ * 带时间戳的日志函数
+ * 格式: [HH:MM:SS.mmm] [+Xms] [agent-runner] message
+ */
 function log(message: string): void {
-  console.error(`[agent-runner] ${message}`);
+  const delta = timer.elapsed();
+  console.error(`[${timer.timestamp()}] [+${delta}ms] [agent-runner] ${message}`);
+}
+
+/**
+ * 性能日志 - 记录带耗时的事件
+ */
+function logPerf(event: string, durationMs?: number): void {
+  const delta = timer.elapsed();
+  const duration = durationMs !== undefined ? ` (${durationMs}ms)` : '';
+  console.error(`[${timer.timestamp()}] [+${delta}ms] [perf] ${event}${duration}`);
 }
 
 function getSessionSummary(sessionId: string, transcriptPath: string): string | null {
@@ -337,8 +409,12 @@ async function runQuery(
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+  const queryStartTime = Date.now();
+  logPerf('runQuery: start');
+
   const stream = new MessageStream();
   stream.push(prompt);
+  logPerf('runQuery: prompt pushed to stream');
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
@@ -365,12 +441,15 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  let sdkInitTime: number | undefined;
+  let firstAssistantTime: number | undefined;
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
   let globalClaudeMd: string | undefined;
   if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
+    logPerf('runQuery: global CLAUDE.md loaded');
   }
 
   // Discover additional directories mounted at /workspace/extra/*
@@ -388,6 +467,9 @@ async function runQuery(
   if (extraDirs.length > 0) {
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
+
+  logPerf('runQuery: calling SDK query()');
+  const sdkCallStartTime = Date.now();
 
   for await (const message of query({
     prompt: stream,
@@ -430,15 +512,23 @@ async function runQuery(
     }
   })) {
     messageCount++;
+    const msgTime = Date.now() - sdkCallStartTime;
+
     const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
-    log(`[msg #${messageCount}] type=${msgType}`);
+    log(`[msg #${messageCount}] type=${msgType} (+${msgTime}ms from SDK start)`);
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+      if (firstAssistantTime === undefined) {
+        firstAssistantTime = msgTime;
+        logPerf(`SDK: first assistant message (TTFB: ${msgTime}ms)`);
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
+      sdkInitTime = msgTime;
+      logPerf(`SDK: init complete (${msgTime}ms)`);
       log(`Session initialized: ${newSessionId}`);
     }
 
@@ -450,6 +540,7 @@ async function runQuery(
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
+      logPerf(`SDK: result #${resultCount} (total: ${msgTime}ms)`);
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
       writeOutput({
         status: 'success',
@@ -459,19 +550,33 @@ async function runQuery(
     }
   }
 
+  const totalQueryTime = Date.now() - queryStartTime;
   ipcPolling = false;
-  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
+
+  // 性能总结
+  logPerf(`runQuery: complete`, totalQueryTime);
+  log(`  - SDK init time: ${sdkInitTime !== undefined ? sdkInitTime + 'ms' : 'N/A'}`);
+  log(`  - First assistant (TTFB): ${firstAssistantTime !== undefined ? firstAssistantTime + 'ms' : 'N/A'}`);
+  log(`  - Total query time: ${totalQueryTime}ms`);
+  log(`  - Messages: ${messageCount}, results: ${resultCount}, closedDuringQuery: ${closedDuringQuery}`);
+
   return { newSessionId, lastAssistantUuid, closedDuringQuery };
 }
 
 async function main(): Promise<void> {
+  logPerf('main: container started');
+
   let containerInput: ContainerInput;
 
   try {
+    const stdinStartTime = Date.now();
     const stdinData = await readStdin();
+    logPerf('main: stdin read', Date.now() - stdinStartTime);
+
     containerInput = JSON.parse(stdinData);
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
     log(`Received input for group: ${containerInput.groupFolder}`);
+    logPerf('main: input parsed');
   } catch (err) {
     writeOutput({
       status: 'error',
@@ -505,14 +610,21 @@ async function main(): Promise<void> {
     prompt += '\n' + pending.join('\n');
   }
 
+  logPerf('main: ready to start query loop');
+
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
+  let queryCount = 0;
   try {
     while (true) {
-      log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
+      queryCount++;
+      log(`Starting query #${queryCount} (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
       try {
+        const queryStartTime = Date.now();
         const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+        logPerf(`main: query #${queryCount} complete`, Date.now() - queryStartTime);
+
         if (queryResult.newSessionId) {
           sessionId = queryResult.newSessionId;
         }
@@ -534,7 +646,10 @@ async function main(): Promise<void> {
         log('Query ended, waiting for next IPC message...');
 
         // Wait for the next message or _close sentinel
+        const ipcStartTime = Date.now();
         const nextMessage = await waitForIpcMessage();
+        logPerf('main: waited for IPC', Date.now() - ipcStartTime);
+
         if (nextMessage === null) {
           log('Close sentinel received, exiting');
           break;
@@ -566,6 +681,8 @@ async function main(): Promise<void> {
     });
     process.exit(1);
   }
+
+  logPerf('main: container exiting');
 }
 
 main();
