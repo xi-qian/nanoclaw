@@ -35,6 +35,11 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code
 
+# Create Claude SDK config directory and add onboarding flag
+RUN mkdir -p /home/node/.config && \
+    echo '{"hasCompletedOnboarding": true}' > /home/node/.claude.json && \
+    chmod 644 /home/node/.claude.json
+
 # Create app directory
 WORKDIR /app
 

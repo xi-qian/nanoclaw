@@ -695,10 +695,12 @@ registerChannel('feishu', (opts: ChannelOpts) => {
 
   const channel = new FeishuChannel(opts, credentials);
 
-  // 如果没有 access_token，提示用户进行认证
+  // 注意：accessToken 是 user_access_token，仅某些需要用户授权的操作需要
+  // 大部分功能（接收/发送消息、创建文档等）使用 SDK 自动管理的 app_access_token
   if (!credentials.accessToken) {
-    log.warn('No access_token found. Please run authentication first.');
-    // 注意：这里不阻止通道创建，允许稍后手动认证
+    log.debug(
+      'No user_access_token found. App functions will use app_access_token.',
+    );
   }
 
   return channel;

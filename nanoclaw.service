@@ -1,0 +1,16 @@
+[Unit]
+Description=NanoClaw AI Assistant
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/data/user/qianxi/nanoclaw
+ExecStart=/usr/bin/node /data/user/qianxi/nanoclaw/dist/index.js
+Restart=always
+RestartSec=10
+Environment="PATH=/home/qianx/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=/home/qianx"
+Environment="ASSISTANT_NAME=Andy"
+
+[Install]
+WantedBy=default.target

@@ -261,9 +261,13 @@ function buildContainerArgs(
   args.push('-e', `ANTHROPIC_BASE_URL=${apiBaseUrl}`);
 
   // Pass the actual API credentials directly to the container
-  if (authMode === 'api-key' && secrets.ANTHROPIC_API_KEY) {
+  if (authMode === 'api-key') {
     // Use actual API key for direct connection
-    args.push('-e', `ANTHROPIC_API_KEY=${secrets.ANTHROPIC_API_KEY}`);
+    // Support both ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN (for Zhipu API compatibility)
+    const apiKey = secrets.ANTHROPIC_API_KEY || secrets.ANTHROPIC_AUTH_TOKEN;
+    if (apiKey) {
+      args.push('-e', `ANTHROPIC_API_KEY=${apiKey}`);
+    }
   } else if (authMode === 'oauth') {
     // Use actual OAuth token for direct connection
     const oauthToken =
