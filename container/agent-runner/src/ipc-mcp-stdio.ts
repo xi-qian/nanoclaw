@@ -726,7 +726,14 @@ server.tool(
     app_token: z.string().describe('多维表格应用 token'),
     table_id: z.string().describe('数据表 ID'),
     view_id: z.string().optional().describe('视图 ID（可选）'),
-    filter: z.string().optional().describe('过滤条件（可选），如：CurrentValue.[字段名]="值"'),
+    filter: z.object({
+      conjunction: z.enum(['and', 'or']).optional().describe('条件之间的逻辑关系，默认为 and'),
+      conditions: z.array(z.object({
+        field_name: z.string().describe('字段名称'),
+        operator: z.enum(['is', 'isNot', 'contains', 'doesNotContain', 'isEmpty', 'isNotEmpty', 'greater', 'greaterEqual', 'less', 'lessEqual', 'isAnyOf', 'isNoneOf']).describe('操作符'),
+        value: z.any().optional().describe('字段值（根据操作符类型可以是字符串、数字、数组等）'),
+      })).describe('过滤条件数组'),
+    }).optional().describe('过滤条件（可选）'),
     sort: z.array(z.object({
       field_name: z.string().describe('排序字段名'),
       desc: z.boolean().optional().describe('是否降序，默认 false'),
