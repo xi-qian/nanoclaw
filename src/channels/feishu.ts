@@ -117,6 +117,7 @@ export class FeishuChannel implements Channel {
           messageType,
           content,
           msg.message_id,
+          msg.mentions,
         );
 
         // 转换为 NanoClaw 消息格式
@@ -161,10 +162,19 @@ export class FeishuChannel implements Channel {
     messageType: string,
     content: any,
     messageId: string,
+    mentions?: Array<{ key: string; name: string }>,
   ): { text: string; attachment?: MessageAttachment } {
     switch (messageType) {
-      case 'text':
-        return { text: content.text || '' };
+      case 'text': {
+        let text = content.text || '';
+        // 替换 @提及 占位符为实际用户名
+        if (mentions && mentions.length > 0) {
+          for (const mention of mentions) {
+            text = text.replace(new RegExp(mention.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), `@${mention.name}`);
+          }
+        }
+        return { text };
+      }
 
       case 'post':
         // 富文本消息，提取文本内容

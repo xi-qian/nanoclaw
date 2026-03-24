@@ -47,6 +47,7 @@ export interface FeishuEvent {
       content: string; // JSON 字符串
       create_time: string;
       updated_time?: string;
+      mentions?: FeishuMention[];
       sender?: {
         sender_id: {
           open_id: string;
@@ -105,6 +106,20 @@ export interface FeishuPostElement {
   text?: string;
   href?: string;
   [key: string]: any;
+}
+
+/**
+ * 飞书 @提及
+ */
+export interface FeishuMention {
+  id: {
+    open_id: string;
+    union_id?: string;
+    user_id?: string | null;
+  };
+  key: string; // 如 @_user_1
+  name: string; // 实际用户名，如 "Andy"
+  tenant_key: string;
 }
 
 /**
