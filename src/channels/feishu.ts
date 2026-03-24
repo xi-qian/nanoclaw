@@ -170,7 +170,13 @@ export class FeishuChannel implements Channel {
         // 替换 @提及 占位符为实际用户名
         if (mentions && mentions.length > 0) {
           for (const mention of mentions) {
-            text = text.replace(new RegExp(mention.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), `@${mention.name}`);
+            text = text.replace(
+              new RegExp(
+                mention.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+                'g',
+              ),
+              `@${mention.name}`,
+            );
           }
         }
         return { text };
