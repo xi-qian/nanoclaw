@@ -1,0 +1,448 @@
+# 飞书消息发送人验证设计
+
+## 背景
+
+当前 NanoClaw 的飞书通道中，任何 IPC 操作（发送消息、创建文档、操作多维表格等）都无法追溯到触发该操作的用户。这意味着：
+
+1. **无法进行权限控制**：无法验证操作者是否有权限访问目标资源
+2. **无法审计追踪**：无法记录哪个用户执行了哪个操作
+3. **安全隐患**：恶意用户可能通过 agent 执行未授权操作
+
+## 目标
+
+实现端到端的消息 ID 传递机制，确保每个 IPC 操作都能追溯到原始触发消息的发送人，并基于此进行权限验证。
+
+### 非目标
+
+- 不依赖 LLM 进行验证（纯机制保障）
+- 不修改现有的 IPC 文件通信协议（仅扩展）
+
+## 需求
+
+| 方面 | 决定 |
+|------|------|
+| 验证范围 | 所有 IPC 操作 |
+| 验证逻辑 | 根据操作类型和目标资源验证发送人权限 |
+| 权限来源 | 飞书 API 实时查询 |
+| 失败处理 | 拒绝操作并抛出错误给容器 agent |
+| 功能开关 | 环境变量 `FEISHU_VERIFY_SENDER=true` |
+
+## 架构概览
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              Host (NanoClaw)                                 │
+│                                                                              │
+│  ┌──────────────┐    ┌──────────────────┐    ┌─────────────────────────┐   │
+│  │ Feishu       │───>│ generateRequestId│───>│ request_contexts table  │   │
+│  │ Channel      │    │ store mapping    │    │ {requestId: {           │   │
+│  │              │    │                  │    │   messageId,            │   │
+│  └──────────────┘    └──────────────────┘    │   sender,               │   │
+│                                               │   chatJid,              │   │
+│                                               │   timestamp             │   │
+│                                               │ }}                      │   │
+│                                               └─────────────────────────┘   │
+│                                                              │               │
+│  ┌──────────────────────────────────────────────────────────┼─────────────┐ │
+│  │                      IPC Flow                             │             │ │
+│  │                                                           ▼             │ │
+│  │  writeIpcInput({type: "message", text: "...", sourceRequestId})        │ │
+│  │                           │                                             │ │
+│  │                           ▼                                             │ │
+│  │  write current_context.json: {sourceRequestId, messageId, ...}         │ │
+│  │                           │                                             │ │
+│  └───────────────────────────┼─────────────────────────────────────────────┘ │
+│                              │                                                │
+└──────────────────────────────┼────────────────────────────────────────────────┘
+                               │
+                               ▼ volume mount
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              Container                                        │
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │ agent-runner                                                             │ │
+│  │   read IPC input → extract sourceRequestId                              │ │
+│  │   update current_context.json                                            │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│                               │                                               │
+│                               ▼                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │ MCP Server (ipc-mcp-stdio)                                               │ │
+│  │   read current_context.json                                              │ │
+│  │   inject sourceRequestId into every IPC request                          │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│                               │                                               │
+│                               ▼ write IPC request with sourceRequestId       │
+└───────────────────────────────┼───────────────────────────────────────────────┘
+                                │
+                                ▼ volume mount
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                              Host (NanoClaw)                                  │
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │ IPC Watcher (ipc.ts)                                                     │ │
+│  │   1. read IPC request with sourceRequestId                               │ │
+│  │   2. lookup sender from request_contexts table                           │ │
+│  │   3. call Feishu API to verify sender permissions                        │ │
+│  │   4. if authorized: execute operation                                    │ │
+│  │      if denied: write error result                                       │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│                                                                               │
+└───────────────────────────────────────────────────────────────────────────────┘
+```
+
+## 数据模型
+
+### 新增数据库表：request_contexts
+
+```sql
+CREATE TABLE request_contexts (
+  request_id TEXT PRIMARY KEY,           -- UUID 格式
+  message_id TEXT NOT NULL,              -- 飞书原始消息 ID
+  chat_jid TEXT NOT NULL,                -- 聊天 JID（feishu:oc_xxx）
+  sender_open_id TEXT NOT NULL,          -- 发送人 open_id
+  sender_name TEXT,                      -- 发送人名称（缓存）
+  trigger_message TEXT,                  -- 触发消息内容（审计用）
+  created_at TEXT NOT NULL,              -- 创建时间
+  expires_at TEXT NOT NULL               -- 过期时间（默认 24 小时）
+);
+
+CREATE INDEX idx_request_contexts_created ON request_contexts(created_at);
+CREATE INDEX idx_request_contexts_expires ON request_contexts(expires_at);
+```
+
+### 新增类型定义
+
+```typescript
+// src/types.ts
+
+export interface RequestContext {
+  requestId: string;           // UUID
+  messageId: string;           // 飞书消息 ID
+  chatJid: string;             // 聊天 JID
+  senderOpenId: string;        // 发送人 open_id
+  senderName?: string;         // 发送人名称
+  triggerMessage?: string;     // 触发消息内容
+  createdAt: string;           // ISO 时间戳
+  expiresAt: string;           // ISO 时间戳
+}
+
+export interface IpcRequestWithSource {
+  // ... existing IPC fields
+  sourceRequestId?: string;    // 来源请求 ID
+}
+
+export interface CurrentContext {
+  sourceRequestId: string;
+  messageId?: string;
+  senderOpenId?: string;
+  senderName?: string;
+  chatJid: string;
+  groupFolder: string;
+  timestamp: string;
+}
+```
+
+## 组件修改
+
+### 1. 数据库层 (src/db.ts)
+
+新增函数：
+
+```typescript
+// 创建请求上下文
+export function createRequestContext(ctx: RequestContext): void;
+
+// 获取请求上下文
+export function getRequestContext(requestId: string): RequestContext | undefined;
+
+// 删除请求上下文
+export function deleteRequestContext(requestId: string): void;
+
+// 清理过期上下文
+export function cleanupExpiredRequestContexts(): number;
+```
+
+### 2. 飞书通道 (src/channels/feishu.ts)
+
+在 `handleMessageEvent` 中，生成 requestId 并存储：
+
+```typescript
+private async handleMessageEvent(event: FeishuEvent): Promise<void> {
+  // ... existing parsing logic ...
+
+  const requestId = crypto.randomUUID();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours
+
+  createRequestContext({
+    requestId,
+    messageId: msg.message_id,
+    chatJid: jid,
+    senderOpenId,
+    senderName,
+    triggerMessage: text.slice(0, 500), // 截断存储
+    createdAt: now.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+  });
+
+  // 将 requestId 传递给 onMessage 回调
+  const newMessage: NewMessage = {
+    // ... existing fields ...
+    requestId, // 新增字段
+  };
+
+  this.onMessage(jid, newMessage);
+}
+```
+
+### 3. 主消息处理 (src/index.ts)
+
+修改 `NewMessage` 类型和消息处理逻辑：
+
+```typescript
+// 在 formatMessages 时携带 requestId
+// 在 runAgent 时传递 sourceRequestId
+```
+
+### 4. GroupQueue (src/group-queue.ts)
+
+修改 `sendMessage` 方法，携带 sourceRequestId：
+
+```typescript
+sendMessage(groupJid: string, text: string, sourceRequestId?: string): boolean {
+  // ... existing logic ...
+
+  const payload: IpcInputMessage = {
+    type: 'message',
+    text,
+    sourceRequestId, // 新增字段
+  };
+
+  fs.writeFileSync(tempPath, JSON.stringify(payload));
+  // ...
+}
+```
+
+### 5. 容器运行器 (src/container-runner.ts)
+
+在 `ContainerInput` 中添加 `sourceRequestId`：
+
+```typescript
+export interface ContainerInput {
+  // ... existing fields ...
+  sourceRequestId?: string;  // 触发消息的 request ID
+}
+```
+
+同时更新 `current_context.json` 的写入逻辑。
+
+### 6. Agent Runner (container/agent-runner/src/index.ts)
+
+处理 IPC 消息时，更新 `current_context.json`：
+
+```typescript
+function drainIpcInput(): { messages: string[]; sourceRequestId?: string } {
+  // ... existing logic ...
+
+  let sourceRequestId: string | undefined;
+  for (const file of files) {
+    const data = JSON.parse(content);
+    if (data.sourceRequestId) {
+      sourceRequestId = data.sourceRequestId;
+    }
+    if (data.type === 'message' && data.text) {
+      messages.push(data.text);
+    }
+  }
+
+  // 更新 current_context.json
+  if (sourceRequestId) {
+    updateCurrentContext({ sourceRequestId, ... });
+  }
+
+  return { messages, sourceRequestId };
+}
+```
+
+### 7. MCP Server (container/agent-runner/src/ipc-mcp-stdio.ts)
+
+在每个工具调用中注入 sourceRequestId：
+
+```typescript
+function getCurrentContext(): CurrentContext | null {
+  const contextPath = '/workspace/ipc/current_context.json';
+  try {
+    if (fs.existsSync(contextPath)) {
+      return JSON.parse(fs.readFileSync(contextPath, 'utf-8'));
+    }
+  } catch {}
+  return null;
+}
+
+// 在每个工具中使用
+server.tool('feishu_fetch_doc', ..., async (args) => {
+  const context = getCurrentContext();
+  const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    type: 'fetch_doc',
+    doc_id: args.doc_id,
+    sourceRequestId: context?.sourceRequestId,  // 注入
+    // ... other fields ...
+  });
+  // ...
+});
+```
+
+### 8. IPC Watcher (src/ipc.ts)
+
+添加权限验证逻辑：
+
+```typescript
+async function verifySenderPermission(
+  request: IpcRequestWithSource,
+  feishuChannel: FeishuChannel,
+): Promise<{ authorized: boolean; reason?: string }> {
+  // 功能关闭时直接通过
+  if (process.env.FEISHU_VERIFY_SENDER !== 'true') {
+    return { authorized: true };
+  }
+
+  // 没有 sourceRequestId 时拒绝（非飞书消息触发的 IPC）
+  if (!request.sourceRequestId) {
+    return { authorized: false, reason: 'No sourceRequestId provided' };
+  }
+
+  // 查询请求上下文
+  const ctx = getRequestContext(request.sourceRequestId);
+  if (!ctx) {
+    return { authorized: false, reason: 'Request context not found or expired' };
+  }
+
+  // 根据操作类型验证权限
+  switch (request.type) {
+    case 'send_message':
+    case 'send_card':
+    case 'send_file':
+      return await verifyChatAccess(feishuChannel, ctx.senderOpenId, request.chat_id);
+
+    case 'fetch_doc':
+    case 'update_doc':
+      return await verifyDocAccess(feishuChannel, ctx.senderOpenId, request.doc_id, 'read');
+
+    case 'create_doc':
+      // 创建文档需要验证目标文件夹权限
+      return { authorized: true }; // 或更严格的验证
+
+    // ... other cases ...
+
+    default:
+      return { authorized: true }; // 未知类型默认通过
+  }
+}
+```
+
+### 9. 飞书客户端 (src/feishu/client.ts)
+
+新增权限验证方法：
+
+```typescript
+async function verifyChatAccess(
+  client: FeishuClient,
+  senderOpenId: string,
+  chatId: string,
+): Promise<{ authorized: boolean; reason?: string }> {
+  // 调用飞书 API 检查用户是否在群组中
+  // GET /im/v1/chats/:chatId/members?member_id_type=open_id
+  // 检查 senderOpenId 是否在成员列表中
+}
+
+async function verifyDocAccess(
+  client: FeishuClient,
+  senderOpenId: string,
+  docId: string,
+  permission: 'read' | 'edit',
+): Promise<{ authorized: boolean; reason?: string }> {
+  // 调用飞书 API 检查文档权限
+  // GET /drive/v1/permissions/:token/members
+  // 或使用 docx/v1/documents/:documentId 检查访问权限
+}
+```
+
+## 环境变量
+
+| 变量名 | 默认值 | 说明 |
+|--------|--------|------|
+| `FEISHU_VERIFY_SENDER` | `false` | 是否启用发送人权限验证 |
+| `REQUEST_CONTEXT_TTL_HOURS` | `24` | 请求上下文过期时间（小时） |
+
+## 错误处理
+
+当权限验证失败时，IPC 处理器返回错误：
+
+```json
+{
+  "success": false,
+  "error": "Permission denied: User ou_xxx does not have access to chat oc_xxx",
+  "errorType": "PERMISSION_DENIED",
+  "sourceRequestId": "req_xxx"
+}
+```
+
+容器内的 agent 可以根据 `errorType` 决定如何处理（重试、通知用户等）。
+
+## 安全考虑
+
+1. **requestId 不可伪造**：在 Host 端生成，容器无法修改
+2. **时效性**：requestContext 有过期时间，防止历史请求被滥用
+3. **最小权限**：每个操作类型独立验证权限
+4. **审计日志**：记录所有验证失败的请求
+
+## 测试计划
+
+1. **单元测试**
+   - request_contexts 表 CRUD 操作
+   - 权限验证函数
+   - context 文件读写
+
+2. **集成测试**
+   - 端到端消息流：飞书消息 → IPC 请求 → 验证 → 执行
+   - 权限拒绝场景
+   - 过期上下文清理
+
+3. **手动测试**
+   - 启用/禁用功能开关
+   - 不同操作类型的权限验证
+   - 长时间运行后上下文清理
+
+## 实施步骤
+
+1. **Phase 1: 基础设施**
+   - 添加 request_contexts 表
+   - 添加类型定义
+   - 实现 DB CRUD 函数
+
+2. **Phase 2: 上下文传递**
+   - 修改 Feishu Channel 生成 requestId
+   - 修改消息处理流程传递 requestId
+   - 实现 current_context.json 读写
+
+3. **Phase 3: MCP 集成**
+   - 修改 MCP Server 读取并注入 sourceRequestId
+   - 所有 IPC 请求携带 sourceRequestId
+
+4. **Phase 4: 权限验证**
+   - 实现飞书 API 权限查询
+   - 在 IPC Watcher 中集成验证逻辑
+   - 添加环境变量开关
+
+5. **Phase 5: 清理与优化**
+   - 实现过期上下文清理
+   - 添加审计日志
+   - 性能优化
+
+## 后续扩展
+
+1. **细粒度权限**：支持更复杂的权限规则（如：只能读取，不能写入）
+2. **权限缓存**：减少飞书 API 调用频率
+3. **审计面板**：提供 Web UI 查看权限验证历史
+4. **其他通道**：将类似机制扩展到 WhatsApp、Telegram 等通道
