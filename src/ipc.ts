@@ -11,6 +11,7 @@ import {
 } from './config.js';
 import { AvailableGroup } from './container-runner.js';
 import {
+  cleanupExpiredRequestContexts,
   createTask,
   deleteSession,
   deleteTask,
@@ -517,6 +518,14 @@ export function startIpcWatcher(deps: IpcDeps): void {
           { err, sourceGroup },
           'Error reading feishu IPC directory',
         );
+      }
+    }
+
+    // Clean up expired request contexts periodically (every 100 cycles)
+    if (Date.now() % (IPC_POLL_INTERVAL * 100) < IPC_POLL_INTERVAL) {
+      const removed = cleanupExpiredRequestContexts();
+      if (removed > 0) {
+        logger.debug({ removed }, 'Cleaned up expired request contexts');
       }
     }
 
