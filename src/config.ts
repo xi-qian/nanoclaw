@@ -73,6 +73,18 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
 export const AUTO_REGISTER_GROUPS =
   process.env.AUTO_REGISTER_GROUPS !== 'false'; // Default: true
 
+// Feishu sender verification
+// When enabled, IPC operations from Feishu messages will verify sender permissions
+export const FEISHU_VERIFY_SENDER =
+  process.env.FEISHU_VERIFY_SENDER === 'true'; // Default: false
+
+// Request context time-to-live in hours
+// After this time, request contexts are cleaned up
+export const REQUEST_CONTEXT_TTL_HOURS = parseInt(
+  process.env.REQUEST_CONTEXT_TTL_HOURS || '24',
+  10,
+);
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
