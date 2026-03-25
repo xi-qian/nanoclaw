@@ -132,27 +132,27 @@ export interface TaskRunLog {
  * Request context for tracking message origins
  */
 export interface RequestContext {
-  requestId: string;           // UUID
-  messageId: string;           // Feishu message ID
-  chatJid: string;             // Chat JID (feishu:oc_xxx)
-  senderOpenId: string;        // Sender's open_id
-  senderName?: string;         // Sender's display name (cached)
-  triggerMessage?: string;     // Trigger message content (for audit)
-  createdAt: string;           // ISO timestamp
-  expiresAt: string;           // ISO timestamp
+  request_id: string;           // UUID
+  message_id: string;           // Feishu message ID
+  chat_jid: string;             // Chat JID (feishu:oc_xxx)
+  sender_open_id: string;      // Sender's open_id
+  sender_name?: string;         // Sender's display name (cached)
+  trigger_message?: string;     // Trigger message content (for audit)
+  created_at: string;           // ISO timestamp
+  expires_at: string;           // ISO timestamp
 }
 
 /**
  * Current context shared with container via file
  */
 export interface CurrentContext {
-  sourceRequestId: string;
-  messageId?: string;
-  senderOpenId?: string;
-  senderName?: string;
-  chatJid: string;
-  groupFolder: string;
-  timestamp: string;
+  source_request_id: string;
+  message_id?: string;
+  sender_open_id?: string;
+  sender_name?: string;
+  chat_jid: string;
+  group_folder: string;
+  timestamp: string;            // ISO timestamp
 }
 
 // --- Channel abstraction ---
