@@ -3,17 +3,28 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import {
+  DATA_DIR,
+  FEISHU_VERIFY_SENDER,
+  IPC_POLL_INTERVAL,
+  TIMEZONE,
+} from './config.js';
 import { AvailableGroup } from './container-runner.js';
 import {
   createTask,
   deleteSession,
   deleteTask,
+  getRequestContext,
   getTaskById,
   updateTask,
 } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import {
+  verifyChatAccess,
+  verifyDocAccess,
+  verifyFolderAccess,
+} from './feishu/permission.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -34,6 +45,93 @@ export interface IpcDeps {
 }
 
 let ipcWatcherRunning = false;
+
+async function verifySenderPermission(
+  request: any,
+  feishuChannel: any,
+): Promise<{ authorized: boolean; reason?: string }> {
+  // Feature disabled - allow all
+  if (!FEISHU_VERIFY_SENDER) {
+    return { authorized: true };
+  }
+
+  // No sourceRequestId - allow (non-Feishu channels or scheduled tasks without creator)
+  if (!request.sourceRequestId) {
+    return { authorized: true };
+  }
+
+  // Get request context
+  const ctx = getRequestContext(request.sourceRequestId);
+  if (!ctx) {
+    return {
+      authorized: false,
+      reason: 'Request context not found or expired',
+    };
+  }
+
+  // Verify based on operation type
+  switch (request.type) {
+    case 'send_message':
+    case 'send_card':
+    case 'send_file':
+      return await verifyChatAccess(
+        feishuChannel,
+        ctx.sender_open_id,
+        request.chat_id,
+      );
+
+    case 'fetch_doc':
+      return await verifyDocAccess(
+        feishuChannel,
+        ctx.sender_open_id,
+        request.doc_id,
+        'read',
+      );
+
+    case 'update_doc':
+      return await verifyDocAccess(
+        feishuChannel,
+        ctx.sender_open_id,
+        request.doc_id,
+        'edit',
+      );
+
+    case 'create_doc':
+      if (request.folder_token) {
+        return await verifyFolderAccess(
+          feishuChannel,
+          ctx.sender_open_id,
+          request.folder_token,
+          'edit',
+        );
+      }
+      return { authorized: true };
+
+    case 'download_resource':
+      // Resource access is tied to the chat
+      return await verifyChatAccess(
+        feishuChannel,
+        ctx.sender_open_id,
+        request.chat_id || ctx.chat_jid.replace('feishu:', ''),
+      );
+
+    // Bitable operations - treat as document access
+    case 'list_bitable_records':
+    case 'list_bitable_fields':
+      // These are read operations on bitables
+      return { authorized: true }; // Bitable permission is complex, allow for now
+
+    case 'add_bitable_records':
+    case 'update_bitable_record':
+    case 'delete_bitable_record':
+      // These are write operations
+      return { authorized: true }; // Bitable permission is complex, allow for now
+
+    default:
+      // Unknown types - allow by default
+      return { authorized: true };
+  }
+}
 
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
@@ -184,6 +282,29 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 }
 
                 let result;
+
+                // Verify sender permission
+                const verification = await verifySenderPermission(
+                  request,
+                  feishuChannel,
+                );
+                if (!verification.authorized) {
+                  logger.warn(
+                    { request, reason: verification.reason },
+                    'IPC request denied - permission verification failed',
+                  );
+                  const resultFile = path.join(resultsDir, file);
+                  fs.writeFileSync(
+                    resultFile,
+                    JSON.stringify({
+                      success: false,
+                      error: verification.reason || 'Permission denied',
+                      errorType: 'PERMISSION_DENIED',
+                    }),
+                  );
+                  fs.unlinkSync(filePath);
+                  return;
+                }
 
                 // 根据请求类型调用相应方法
                 switch (request.type) {

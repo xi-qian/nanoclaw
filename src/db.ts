@@ -170,17 +170,23 @@ function createSchema(database: Database.Database): void {
 
   // Add created_by columns for scheduled tasks (sender verification)
   try {
-    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN created_by_sender_id TEXT`);
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN created_by_sender_id TEXT`,
+    );
   } catch {
     /* column already exists */
   }
   try {
-    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN created_by_sender_name TEXT`);
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN created_by_sender_name TEXT`,
+    );
   } catch {
     /* column already exists */
   }
   try {
-    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN created_by_request_id TEXT`);
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN created_by_request_id TEXT`,
+    );
   } catch {
     /* column already exists */
   }
@@ -493,28 +499,34 @@ export function createTask(
   );
 }
 
-export function getTaskById(id: string): (ScheduledTask & {
-  created_by_sender_id?: string;
-  created_by_sender_name?: string;
-  created_by_request_id?: string;
-}) | undefined {
-  const row = db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as {
-    id: string;
-    group_folder: string;
-    chat_jid: string;
-    prompt: string;
-    schedule_type: string;
-    schedule_value: string;
-    context_mode: string;
-    next_run: string | null;
-    last_run: string | null;
-    last_result: string | null;
-    status: string;
-    created_at: string;
-    created_by_sender_id: string | null;
-    created_by_sender_name: string | null;
-    created_by_request_id: string | null;
-  } | undefined;
+export function getTaskById(id: string):
+  | (ScheduledTask & {
+      created_by_sender_id?: string;
+      created_by_sender_name?: string;
+      created_by_request_id?: string;
+    })
+  | undefined {
+  const row = db
+    .prepare('SELECT * FROM scheduled_tasks WHERE id = ?')
+    .get(id) as
+    | {
+        id: string;
+        group_folder: string;
+        chat_jid: string;
+        prompt: string;
+        schedule_type: string;
+        schedule_value: string;
+        context_mode: string;
+        next_run: string | null;
+        last_run: string | null;
+        last_result: string | null;
+        status: string;
+        created_at: string;
+        created_by_sender_id: string | null;
+        created_by_sender_name: string | null;
+        created_by_request_id: string | null;
+      }
+    | undefined;
 
   if (!row) return undefined;
 
