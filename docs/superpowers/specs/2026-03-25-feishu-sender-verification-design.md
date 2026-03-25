@@ -111,6 +111,22 @@ CREATE INDEX idx_request_contexts_created ON request_contexts(created_at);
 CREATE INDEX idx_request_contexts_expires ON request_contexts(expires_at);
 ```
 
+### 修改现有表：scheduled_tasks
+
+添加创建者信息字段，用于定时任务执行时的权限验证：
+
+```sql
+-- 新增字段
+ALTER TABLE scheduled_tasks ADD COLUMN created_by_sender_id TEXT;
+ALTER TABLE scheduled_tasks ADD COLUMN created_by_sender_name TEXT;
+ALTER TABLE scheduled_tasks ADD COLUMN created_by_request_id TEXT;
+```
+
+**字段说明：**
+- `created_by_sender_id`：创建者的 open_id，用于权限验证
+- `created_by_sender_name`：创建者名称，用于日志和错误消息
+- `created_by_request_id`：创建时的 requestId，用于审计追溯
+
 ### 新增类型定义
 
 ```typescript
@@ -167,6 +183,26 @@ export function deleteRequestContext(requestId: string): void;
 
 // 清理过期上下文
 export function cleanupExpiredRequestContexts(): number;
+```
+
+**修改现有函数：**
+
+```typescript
+// createTask 需要支持新字段
+export function createTask(task: {
+  // ... existing fields ...
+  created_by_sender_id?: string;
+  created_by_sender_name?: string;
+  created_by_request_id?: string;
+}): void;
+
+// getTaskById 返回值需要包含新字段
+export interface ScheduledTask {
+  // ... existing fields ...
+  created_by_sender_id?: string;
+  created_by_sender_name?: string;
+  created_by_request_id?: string;
+}
 ```
 
 ### 2. 飞书通道 (src/channels/feishu.ts)
@@ -297,7 +333,26 @@ server.tool('feishu_fetch_doc', ..., async (args) => {
   });
   // ...
 });
+
+// schedule_task 同样需要注入 sourceRequestId
+server.tool('schedule_task', ..., async (args) => {
+  const context = getCurrentContext();
+  const data = {
+    type: 'schedule_task',
+    taskId,
+    prompt: args.prompt,
+    schedule_type: args.schedule_type,
+    schedule_value: args.schedule_value,
+    context_mode: args.context_mode || 'group',
+    targetJid,
+    sourceRequestId: context?.sourceRequestId,  // 注入，用于存储创建者信息
+    // ... other fields ...
+  };
+  writeIpcFile(TASKS_DIR, data);
+});
 ```
+
+**注意：** `sourceRequestId` 的注入是程序行为，由 MCP Server 自动完成。Agent 不需要知道这个字段的存在，也不需要在调用工具时提供。
 
 ### 8. IPC Watcher (src/ipc.ts)
 
@@ -353,6 +408,109 @@ async function verifySenderPermission(
       return { authorized: true }; // 未知类型默认通过
   }
 }
+```
+
+### 8.1 定时任务创建 (src/ipc.ts processTaskIpc)
+
+在处理 `schedule_task` IPC 请求时，存储创建者信息：
+
+```typescript
+case 'schedule_task':
+  // ... existing validation ...
+
+  // 获取创建者信息（程序自动获取，不需要 agent 提供）
+  let createdBySenderId: string | undefined;
+  let createdBySenderName: string | undefined;
+  let createdByRequestId: string | undefined;
+
+  if (data.sourceRequestId) {
+    const ctx = getRequestContext(data.sourceRequestId);
+    if (ctx) {
+      createdBySenderId = ctx.senderOpenId;
+      createdBySenderName = ctx.senderName;
+      createdByRequestId = data.sourceRequestId;
+    }
+  }
+
+  createTask({
+    id: taskId,
+    group_folder: targetFolder,
+    chat_jid: targetJid,
+    prompt: data.prompt,
+    schedule_type: scheduleType,
+    schedule_value: data.schedule_value,
+    context_mode: contextMode,
+    next_run: nextRun,
+    status: 'active',
+    created_at: new Date().toISOString(),
+    // 新增字段
+    created_by_sender_id: createdBySenderId,
+    created_by_sender_name: createdBySenderName,
+    created_by_request_id: createdByRequestId,
+  });
+```
+
+### 8.2 定时任务执行 (src/task-scheduler.ts)
+
+任务执行时，创建临时 request_context 用于权限验证：
+
+```typescript
+async function executeTask(task: ScheduledTask): Promise<void> {
+  // 如果任务有创建者信息，创建临时 request_context
+  let tempRequestId: string | undefined;
+
+  if (task.created_by_sender_id && FEISHU_VERIFY_SENDER === 'true') {
+    tempRequestId = `task-${task.id}-${Date.now()}`;
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 60 * 60 * 1000); // 1 小时过期
+
+    createRequestContext({
+      requestId: tempRequestId,
+      messageId: `scheduled-task:${task.id}`,
+      chatJid: task.chat_jid,
+      senderOpenId: task.created_by_sender_id,
+      senderName: task.created_by_sender_name,
+      triggerMessage: `[Scheduled Task] ${task.prompt.slice(0, 200)}`,
+      createdAt: now.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+    });
+  }
+
+  try {
+    // 执行任务，传递 tempRequestId 作为 sourceRequestId
+    await runContainerAgent(group, {
+      prompt: task.prompt,
+      sessionId: undefined, // 新 session
+      groupFolder: task.group_folder,
+      chatJid: task.chat_jid,
+      isMain: false,
+      isScheduledTask: true,
+      sourceRequestId: tempRequestId,
+    });
+  } finally {
+    // 清理临时 request_context
+    if (tempRequestId) {
+      deleteRequestContext(tempRequestId);
+    }
+  }
+}
+```
+
+**流程总结：**
+```
+用户发送消息 → 创建 requestId
+     ↓
+Agent 调用 schedule_task
+     ↓
+MCP Server 自动注入 sourceRequestId（程序行为）
+     ↓
+IPC watcher 处理，查询 request_contexts 获取创建者信息
+     ↓
+存入 scheduled_tasks 表（created_by_* 字段）
+     ↓
+任务执行时，创建临时 request_context 关联到创建者
+     ↓
+权限验证使用创建者身份
 ```
 
 ### 9. 飞书客户端 (src/feishu/client.ts)
