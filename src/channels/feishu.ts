@@ -4,6 +4,8 @@
  * 飞书消息通道实现，支持 WebSocket 长连接
  */
 
+import crypto from 'crypto';
+
 import { registerChannel, ChannelOpts, type Channel } from './registry.js';
 import type {
   OnInboundMessage,
@@ -11,6 +13,7 @@ import type {
   NewMessage,
   CardActionData,
   MessageAttachment,
+  RequestContext,
 } from '../types.js';
 import { FeishuClient } from '../feishu/client.js';
 import {
@@ -20,6 +23,8 @@ import {
 } from '../feishu/auth.js';
 import type { FeishuEvent } from '../feishu/types.js';
 import { larkLogger } from '../feishu/logger.js';
+import { createRequestContext } from '../db.js';
+import { REQUEST_CONTEXT_TTL_HOURS } from '../config.js';
 
 const log = larkLogger('channel');
 
@@ -120,6 +125,25 @@ export class FeishuChannel implements Channel {
           msg.mentions,
         );
 
+        // Generate requestId for sender verification tracking
+        const requestId = crypto.randomUUID();
+        const now = new Date();
+        const expiresAt = new Date(
+          now.getTime() + REQUEST_CONTEXT_TTL_HOURS * 60 * 60 * 1000,
+        );
+
+        // Store request context for permission verification
+        createRequestContext({
+          request_id: requestId,
+          message_id: msg.message_id,
+          chat_jid: jid,
+          sender_open_id: senderOpenId,
+          sender_name: senderName,
+          trigger_message: text.slice(0, 500), // Truncate for storage
+          created_at: now.toISOString(),
+          expires_at: expiresAt.toISOString(),
+        } as RequestContext);
+
         // 转换为 NanoClaw 消息格式
         const newMessage: NewMessage = {
           id: msg.message_id,
@@ -131,6 +155,7 @@ export class FeishuChannel implements Channel {
           is_from_me: false,
           message_type: messageType as NewMessage['message_type'],
           attachment: attachment,
+          requestId,
         };
 
         // 通知消息处理器（会被存储到 SQLite）
