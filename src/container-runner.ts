@@ -28,7 +28,7 @@ import {
 import { detectAuthMode } from './credential-proxy.js';
 import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
-import { RegisteredGroup } from './types.js';
+import { CurrentContext, RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -42,6 +42,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  sourceRequestId?: string;
 }
 
 export interface ContainerOutput {
@@ -363,6 +364,18 @@ export async function runContainerAgent(
     let stderr = '';
     let stdoutTruncated = false;
     let stderrTruncated = false;
+
+    // Write current_context.json for MCP server to read
+    const groupIpcDir = resolveGroupIpcPath(group.folder);
+    const contextPath = path.join(groupIpcDir, 'current_context.json');
+    const currentContext: CurrentContext = {
+      source_request_id: input.sourceRequestId || '',
+      chat_jid: input.chatJid,
+      group_folder: input.groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+    fs.writeFileSync(contextPath, JSON.stringify(currentContext, null, 2));
+    logger.debug({ contextPath, sourceRequestId: input.sourceRequestId }, 'Wrote current_context.json');
 
     container.stdin.write(JSON.stringify(input));
     container.stdin.end();
