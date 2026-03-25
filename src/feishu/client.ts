@@ -1632,23 +1632,43 @@ export class FeishuClient {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Permission Verification Helpers
+  // ---------------------------------------------------------------------------
+
   /**
-   * 上传并发送文件（组合方法）
-   * @param chatId 聊天 ID
-   * @param filePath 文件路径（主机路径）
-   * @param fileType 文件类型
+   * Get members of a chat
    */
-  async uploadAndSendFile(
-    chatId: string,
-    filePath: string,
-    fileType: 'file' | 'image' | 'audio' | 'video' | 'media' = 'file',
-  ): Promise<{ file_key: string; message_id: string }> {
-    const fileKey = await this.uploadFile(filePath, fileType);
-    const messageId = await this.sendFileMessage(
-      chatId,
-      fileKey,
-      filePath.split('/').pop(),
-    );
-    return { file_key: fileKey, message_id: messageId };
+  async getChatMembers(chatId: string): Promise<any[]> {
+    const response = await this.client.request({
+      url: `/open-apis/im/v1/chats/${chatId}/members`,
+      method: 'GET',
+      params: {
+        member_id_type: 'open_id',
+      },
+    });
+    return response?.data?.items || [];
+  }
+
+  /**
+   * Get permission members of a document
+   */
+  async getDocPermissionMembers(docId: string): Promise<any[]> {
+    const response = await this.client.request({
+      url: `/open-apis/drive/v1/permissions/${docId}/members`,
+      method: 'GET',
+    });
+    return response?.data?.items || [];
+  }
+
+  /**
+   * Get permission members of a folder
+   */
+  async getFolderPermissionMembers(folderToken: string): Promise<any[]> {
+    const response = await this.client.request({
+      url: `/open-apis/drive/v1/permissions/${folderToken}/members`,
+      method: 'GET',
+    });
+    return response?.data?.items || [];
   }
 }
