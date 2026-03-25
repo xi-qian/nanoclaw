@@ -64,6 +64,8 @@ export interface NewMessage {
     | 'interactive';
   // 附件信息（图片、文件、音频、视频等）
   attachment?: MessageAttachment;
+  // Request tracking (for sender verification)
+  requestId?: string;          // UUID linking to request_contexts table
 }
 
 /**
@@ -111,6 +113,10 @@ export interface ScheduledTask {
   last_result: string | null;
   status: 'active' | 'paused' | 'completed';
   created_at: string;
+  // Creator tracking (for scheduled task permission verification)
+  created_by_sender_id?: string;
+  created_by_sender_name?: string;
+  created_by_request_id?: string;
 }
 
 export interface TaskRunLog {
@@ -120,6 +126,33 @@ export interface TaskRunLog {
   status: 'success' | 'error';
   result: string | null;
   error: string | null;
+}
+
+/**
+ * Request context for tracking message origins
+ */
+export interface RequestContext {
+  requestId: string;           // UUID
+  messageId: string;           // Feishu message ID
+  chatJid: string;             // Chat JID (feishu:oc_xxx)
+  senderOpenId: string;        // Sender's open_id
+  senderName?: string;         // Sender's display name (cached)
+  triggerMessage?: string;     // Trigger message content (for audit)
+  createdAt: string;           // ISO timestamp
+  expiresAt: string;           // ISO timestamp
+}
+
+/**
+ * Current context shared with container via file
+ */
+export interface CurrentContext {
+  sourceRequestId: string;
+  messageId?: string;
+  senderOpenId?: string;
+  senderName?: string;
+  chatJid: string;
+  groupFolder: string;
+  timestamp: string;
 }
 
 // --- Channel abstraction ---
