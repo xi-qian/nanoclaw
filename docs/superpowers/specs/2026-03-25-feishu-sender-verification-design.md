@@ -29,66 +29,68 @@
 
 ## 架构概览
 
+```mermaid
+sequenceDiagram
+    participant FC as Feishu Channel
+    participant DB as request_contexts 表
+    participant IPC as IPC Input
+    participant CTX as current_context.json
+    participant AR as agent-runner
+    participant MCP as MCP Server
+    participant W as IPC Watcher
+    participant API as Feishu API
+
+    Note over FC,API: 消息进入阶段
+    FC->>DB: 1. 生成 requestId，存储映射<br/>{requestId: {messageId, sender, chatJid}}
+    FC->>IPC: 2. 写入消息文件<br/>{type: "message", text, sourceRequestId}
+    FC->>CTX: 3. 写入上下文文件<br/>{sourceRequestId, ...}
+
+    Note over AR,MCP: 容器处理阶段
+    AR->>IPC: 4. 读取消息文件
+    AR->>CTX: 5. 更新 current_context.json
+    MCP->>CTX: 6. 读取当前上下文
+    MCP->>IPC: 7. 写入 IPC 请求<br/>自动注入 sourceRequestId
+
+    Note over W,API: 权限验证阶段
+    W->>IPC: 8. 读取 IPC 请求
+    W->>DB: 9. 用 sourceRequestId 查询 sender
+    alt 启用验证
+        W->>API: 10. 调用飞书 API 验证权限
+        alt 权限通过
+            W->>W: 执行操作
+        else 权限拒绝
+            W->>IPC: 写入错误结果
+        end
+    else 未启用验证
+        W->>W: 直接执行操作
+    end
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Host (NanoClaw)                                 │
-│                                                                              │
-│  ┌──────────────┐    ┌──────────────────┐    ┌─────────────────────────┐   │
-│  │ Feishu       │───>│ generateRequestId│───>│ request_contexts table  │   │
-│  │ Channel      │    │ store mapping    │    │ {requestId: {           │   │
-│  │              │    │                  │    │   messageId,            │   │
-│  └──────────────┘    └──────────────────┘    │   sender,               │   │
-│                                               │   chatJid,              │   │
-│                                               │   timestamp             │   │
-│                                               │ }}                      │   │
-│                                               └─────────────────────────┘   │
-│                                                              │               │
-│  ┌──────────────────────────────────────────────────────────┼─────────────┐ │
-│  │                      IPC Flow                             │             │ │
-│  │                                                           ▼             │ │
-│  │  writeIpcInput({type: "message", text: "...", sourceRequestId})        │ │
-│  │                           │                                             │ │
-│  │                           ▼                                             │ │
-│  │  write current_context.json: {sourceRequestId, messageId, ...}         │ │
-│  │                           │                                             │ │
-│  └───────────────────────────┼─────────────────────────────────────────────┘ │
-│                              │                                                │
-└──────────────────────────────┼────────────────────────────────────────────────┘
-                               │
-                               ▼ volume mount
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                              Container                                        │
-│                                                                               │
-│  ┌─────────────────────────────────────────────────────────────────────────┐ │
-│  │ agent-runner                                                             │ │
-│  │   read IPC input → extract sourceRequestId                              │ │
-│  │   update current_context.json                                            │ │
-│  └─────────────────────────────────────────────────────────────────────────┘ │
-│                               │                                               │
-│                               ▼                                               │
-│  ┌─────────────────────────────────────────────────────────────────────────┐ │
-│  │ MCP Server (ipc-mcp-stdio)                                               │ │
-│  │   read current_context.json                                              │ │
-│  │   inject sourceRequestId into every IPC request                          │ │
-│  └─────────────────────────────────────────────────────────────────────────┘ │
-│                               │                                               │
-│                               ▼ write IPC request with sourceRequestId       │
-└───────────────────────────────┼───────────────────────────────────────────────┘
-                                │
-                                ▼ volume mount
-┌───────────────────────────────────────────────────────────────────────────────┐
-│                              Host (NanoClaw)                                  │
-│                                                                               │
-│  ┌─────────────────────────────────────────────────────────────────────────┐ │
-│  │ IPC Watcher (ipc.ts)                                                     │ │
-│  │   1. read IPC request with sourceRequestId                               │ │
-│  │   2. lookup sender from request_contexts table                           │ │
-│  │   3. call Feishu API to verify sender permissions                        │ │
-│  │   4. if authorized: execute operation                                    │ │
-│  │      if denied: write error result                                       │ │
-│  └─────────────────────────────────────────────────────────────────────────┘ │
-│                                                                               │
-└───────────────────────────────────────────────────────────────────────────────┘
+
+### 定时任务场景
+
+```mermaid
+sequenceDiagram
+    participant FC as Feishu Channel
+    participant DB as request_contexts 表
+    participant TS as scheduled_tasks 表
+    participant AR as agent-runner
+    participant W as IPC Watcher
+    participant API as Feishu API
+
+    Note over FC,TS: 创建任务阶段
+    FC->>DB: 用户消息触发，生成 requestId
+    AR->>W: schedule_task IPC 请求<br/>带 sourceRequestId
+    W->>DB: 查询创建者信息
+    W->>TS: 存储任务 + created_by_* 字段
+
+    Note over AR,API: 执行任务阶段（无用户消息）
+    AR->>AR: 定时触发任务执行
+    AR->>DB: 创建临时 request_context<br/>关联到 created_by_sender_id
+    AR->>AR: 执行容器，带 tempRequestId
+    AR->>W: IPC 请求带 tempRequestId
+    W->>DB: 查询 sender（获取创建者身份）
+    W->>API: 验证创建者权限
+    AR->>DB: 清理临时 request_context
 ```
 
 ## 数据模型
