@@ -133,14 +133,20 @@ export interface IpcRequestWithSource {
 }
 
 export interface CurrentContext {
-  sourceRequestId: string;
-  messageId?: string;
-  senderOpenId?: string;
-  senderName?: string;
-  chatJid: string;
-  groupFolder: string;
-  timestamp: string;
+  sourceRequestId: string;      // 来源请求 ID（从 request_contexts 表）
+  messageId?: string;           // 飞书消息 ID（从 request_contexts 表）
+  senderOpenId?: string;        // 发送人 open_id（从 request_contexts 表）
+  senderName?: string;          // 发送人名称（从 request_contexts 表）
+  chatJid: string;              // 聊天 JID（从 container-runner 传入）
+  groupFolder: string;          // 群组文件夹名（从 container-runner 传入，非 request_contexts 表）
+  timestamp: string;            // 当前时间戳
 }
+```
+
+**数据来源说明：**
+- `sourceRequestId`、`messageId`、`senderOpenId`、`senderName` 来自 `request_contexts` 表
+- `chatJid`、`groupFolder` 来自容器启动时的 `ContainerInput` 或后续 IPC input 消息
+- `timestamp` 在写入 `current_context.json` 时生成
 ```
 
 ## 组件修改
@@ -307,9 +313,12 @@ async function verifySenderPermission(
     return { authorized: true };
   }
 
-  // 没有 sourceRequestId 时拒绝（非飞书消息触发的 IPC）
+  // 没有 sourceRequestId 时，允许通过（支持其他通道）
+  // 注意：启用此功能时，飞书消息触发的 IPC 会验证权限，
+  // 但其他通道（WhatsApp、Telegram）的消息不会有 sourceRequestId，
+  // 因此它们的 IPC 请求会直接通过。
   if (!request.sourceRequestId) {
-    return { authorized: false, reason: 'No sourceRequestId provided' };
+    return { authorized: true };
   }
 
   // 查询请求上下文
@@ -326,12 +335,17 @@ async function verifySenderPermission(
       return await verifyChatAccess(feishuChannel, ctx.senderOpenId, request.chat_id);
 
     case 'fetch_doc':
-    case 'update_doc':
       return await verifyDocAccess(feishuChannel, ctx.senderOpenId, request.doc_id, 'read');
+
+    case 'update_doc':
+      return await verifyDocAccess(feishuChannel, ctx.senderOpenId, request.doc_id, 'edit');
 
     case 'create_doc':
       // 创建文档需要验证目标文件夹权限
-      return { authorized: true }; // 或更严格的验证
+      if (request.folder_token) {
+        return await verifyFolderAccess(feishuChannel, ctx.senderOpenId, request.folder_token, 'edit');
+      }
+      return { authorized: true };
 
     // ... other cases ...
 
@@ -363,8 +377,20 @@ async function verifyDocAccess(
   permission: 'read' | 'edit',
 ): Promise<{ authorized: boolean; reason?: string }> {
   // 调用飞书 API 检查文档权限
-  // GET /drive/v1/permissions/:token/members
-  // 或使用 docx/v1/documents/:documentId 检查访问权限
+  // 使用 GET /drive/v1/permissions/:token/members 获取权限成员列表
+  // 检查 senderOpenId 是否在成员列表中且有对应权限
+  // 注意：不能使用 docx/v1/documents/:documentId，因为那只验证 bot 的访问权限
+}
+
+async function verifyFolderAccess(
+  client: FeishuClient,
+  senderOpenId: string,
+  folderToken: string,
+  permission: 'read' | 'edit',
+): Promise<{ authorized: boolean; reason?: string }> {
+  // 调用飞书 API 检查文件夹权限
+  // GET /drive/v1/permissions/:folderToken/members
+  // 检查 senderOpenId 是否有对应权限
 }
 ```
 
@@ -374,6 +400,8 @@ async function verifyDocAccess(
 |--------|--------|------|
 | `FEISHU_VERIFY_SENDER` | `false` | 是否启用发送人权限验证 |
 | `REQUEST_CONTEXT_TTL_HOURS` | `24` | 请求上下文过期时间（小时） |
+
+**注意：** 当 `FEISHU_VERIFY_SENDER=true` 时，只有飞书消息触发的 IPC 操作会被验证权限。其他通道（WhatsApp、Telegram 等）的消息没有 `sourceRequestId`，因此它们的 IPC 请求会直接通过，不受此功能影响。
 
 ## 错误处理
 
