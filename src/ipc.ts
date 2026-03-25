@@ -547,6 +547,7 @@ export async function processTaskIpc(
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
+    sourceRequestId?: string;
     // For register_group
     jid?: string;
     name?: string;
@@ -637,6 +638,21 @@ export async function processTaskIpc(
           data.context_mode === 'group' || data.context_mode === 'isolated'
             ? data.context_mode
             : 'isolated';
+
+        // Extract creator info from sourceRequestId
+        let createdBySenderId: string | undefined;
+        let createdBySenderName: string | undefined;
+        let createdByRequestId: string | undefined;
+
+        if (data.sourceRequestId) {
+          const ctx = getRequestContext(data.sourceRequestId);
+          if (ctx) {
+            createdBySenderId = ctx.sender_open_id;
+            createdBySenderName = ctx.sender_name;
+            createdByRequestId = data.sourceRequestId;
+          }
+        }
+
         createTask({
           id: taskId,
           group_folder: targetFolder,
@@ -648,6 +664,9 @@ export async function processTaskIpc(
           next_run: nextRun,
           status: 'active',
           created_at: new Date().toISOString(),
+          created_by_sender_id: createdBySenderId,
+          created_by_sender_name: createdBySenderName,
+          created_by_request_id: createdByRequestId,
         });
         logger.info(
           { taskId, sourceGroup, targetFolder, contextMode },
