@@ -29,7 +29,8 @@ export async function verifyChatAccess(
     }
 
     const isMember = members.some(
-      (member: any) => member.member_id === senderOpenId || member.open_id === senderOpenId
+      (member: any) =>
+        member.member_id === senderOpenId || member.open_id === senderOpenId,
     );
 
     if (isMember) {
@@ -66,7 +67,9 @@ export async function verifyDocAccess(
     }
 
     const userPermission = members.find(
-      (member: any) => member.member_id === senderOpenId || member.member_id?.open_id === senderOpenId
+      (member: any) =>
+        member.member_id === senderOpenId ||
+        member.member_id?.open_id === senderOpenId,
     );
 
     if (!userPermission) {
@@ -110,7 +113,9 @@ export async function verifyFolderAccess(
     }
 
     const userPermission = members.find(
-      (member: any) => member.member_id === senderOpenId || member.member_id?.open_id === senderOpenId
+      (member: any) =>
+        member.member_id === senderOpenId ||
+        member.member_id?.open_id === senderOpenId,
     );
 
     if (!userPermission) {

@@ -75,8 +75,7 @@ export const AUTO_REGISTER_GROUPS =
 
 // Feishu sender verification
 // When enabled, IPC operations from Feishu messages will verify sender permissions
-export const FEISHU_VERIFY_SENDER =
-  process.env.FEISHU_VERIFY_SENDER === 'true'; // Default: false
+export const FEISHU_VERIFY_SENDER = process.env.FEISHU_VERIFY_SENDER === 'true'; // Default: false
 
 // Request context time-to-live in hours
 // After this time, request contexts are cleaned up

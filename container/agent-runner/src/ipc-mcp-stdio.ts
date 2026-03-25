@@ -16,6 +16,33 @@ const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const FEISHU_REQUESTS_DIR = path.join(IPC_DIR, 'feishu', 'requests');
 const FEISHU_RESULTS_DIR = path.join(IPC_DIR, 'feishu', 'results');
+const CURRENT_CONTEXT_PATH = '/workspace/ipc/current_context.json';
+
+interface CurrentContext {
+  source_request_id: string;
+  chat_jid: string;
+  group_folder: string;
+  timestamp: string;
+}
+
+function getCurrentContext(): CurrentContext | null {
+  try {
+    if (fs.existsSync(CURRENT_CONTEXT_PATH)) {
+      return JSON.parse(fs.readFileSync(CURRENT_CONTEXT_PATH, 'utf-8'));
+    }
+  } catch (err) {
+    // Ignore errors - context may not exist yet
+  }
+  return null;
+}
+
+function withSourceRequestId(data: Record<string, any>): Record<string, any> {
+  const context = getCurrentContext();
+  if (context?.source_request_id) {
+    return { ...data, sourceRequestId: context.source_request_id };
+  }
+  return data;
+}
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -134,7 +161,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    const data = {
+    const data = withSourceRequestId({
       type: 'schedule_task',
       taskId,
       prompt: args.prompt,
@@ -144,7 +171,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       targetJid,
       createdBy: groupFolder,
       timestamp: new Date().toISOString(),
-    };
+    });
 
     writeIpcFile(TASKS_DIR, data);
 
@@ -390,14 +417,14 @@ server.tool(
     limit: z.number().optional().describe('返回的最大字符数（仅在需要分页时使用）'),
   },
   async (args) => {
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'fetch_doc',
       doc_id: args.doc_id,
       offset: args.offset,
       limit: args.limit,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId);
@@ -432,7 +459,7 @@ server.tool(
     wiki_node: z.string().optional().describe('知识库节点 token 或 URL（可选，传入则在该节点下创建文档）'),
   },
   async (args) => {
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'create_doc',
       title: args.title,
       markdown: args.markdown,
@@ -440,7 +467,7 @@ server.tool(
       wiki_node: args.wiki_node,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId, DOC_CREATE_TIMEOUT_MS);
@@ -472,13 +499,13 @@ server.tool(
     markdown: z.string().describe('新的 Markdown 内容'),
   },
   async (args) => {
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'update_doc',
       doc_id: args.doc_id,
       markdown: args.markdown,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId, DOC_UPDATE_TIMEOUT_MS);
@@ -510,13 +537,13 @@ server.tool(
     limit: z.number().optional().describe('返回结果数量（默认 10）'),
   },
   async (args) => {
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'search_docs',
       query: args.query,
       limit: args.limit || 10,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId);
@@ -557,12 +584,12 @@ server.tool(
     name: z.string().describe('多维表格名称'),
   },
   async (args) => {
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'create_bitable',
       name: args.name,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId);
@@ -599,14 +626,14 @@ server.tool(
     })).describe('字段定义列表'),
   },
   async (args) => {
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'create_bitable_table',
       app_token: args.app_token,
       name: args.name,
       fields: args.fields,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId);
@@ -637,12 +664,12 @@ server.tool(
     app_token: z.string().describe('多维表格应用 token'),
   },
   async (args) => {
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'list_bitable_tables',
       app_token: args.app_token,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId);
@@ -688,14 +715,14 @@ server.tool(
     })).describe('记录列表，每条记录包含 fields 对象'),
   },
   async (args) => {
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'add_bitable_records',
       app_token: args.app_token,
       table_id: args.table_id,
       records: args.records,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId);
@@ -749,14 +776,14 @@ server.tool(
     if (args.page_size) options.pageSize = args.page_size;
     if (args.page_token) options.pageToken = args.page_token;
 
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'list_bitable_records',
       app_token: args.app_token,
       table_id: args.table_id,
       options,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId);
@@ -805,13 +832,13 @@ server.tool(
     table_id: z.string().describe('数据表 ID'),
   },
   async (args) => {
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'list_bitable_fields',
       app_token: args.app_token,
       table_id: args.table_id,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId);
@@ -864,7 +891,7 @@ server.tool(
     fields: z.record(z.string(), z.any()).describe('要更新的字段值，key 为字段名，value 为新值'),
   },
   async (args) => {
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'update_bitable_record',
       app_token: args.app_token,
       table_id: args.table_id,
@@ -872,7 +899,7 @@ server.tool(
       fields: args.fields,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId);
@@ -905,14 +932,14 @@ server.tool(
     record_id: z.string().describe('要删除的记录 ID'),
   },
   async (args) => {
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'delete_bitable_record',
       app_token: args.app_token,
       table_id: args.table_id,
       record_id: args.record_id,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId);
@@ -988,13 +1015,13 @@ server.tool(
       });
     }
 
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'send_card',
       chat_id: args.chat_id || chatJid.replace('feishu:', ''),
       card_content: cardContent,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId);
@@ -1074,13 +1101,13 @@ server.tool(
       ],
     };
 
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'send_card',
       chat_id: args.chat_id || chatJid.replace('feishu:', ''),
       card_content: cardContent,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId);
@@ -1129,7 +1156,7 @@ server.tool(
     type: z.enum(['image', 'file', 'audio', 'video', 'media']).default('file').describe('资源类型，必须与消息的 type 属性一致'),
   },
   async (args) => {
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'download_resource',
       message_id: args.message_id,
       file_key: args.file_key,
@@ -1137,7 +1164,7 @@ server.tool(
       resource_type: args.type,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId);
@@ -1218,14 +1245,14 @@ server.tool(
       };
     }
 
-    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, withSourceRequestId({
       type: 'send_file',
       chat_id: targetChatId,
       file_path: args.file_path,
       file_type: args.file_type,
       groupFolder,
       timestamp: new Date().toISOString(),
-    });
+    }));
 
     try {
       const result = await waitForFeishuResult(requestId, DOC_CREATE_TIMEOUT_MS);

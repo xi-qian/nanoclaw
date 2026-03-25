@@ -24,7 +24,11 @@ describe('permission verification', () => {
         { member_id: 'ou_bob', open_id: 'ou_bob' },
       ]);
 
-      const result = await verifyChatAccess(mockClient, 'ou_alice', 'oc_chat123');
+      const result = await verifyChatAccess(
+        mockClient,
+        'ou_alice',
+        'oc_chat123',
+      );
       expect(result.authorized).toBe(true);
     });
 
@@ -41,14 +45,22 @@ describe('permission verification', () => {
     it('allows when members list is unavailable', async () => {
       mockClient.getChatMembers.mockResolvedValue(null);
 
-      const result = await verifyChatAccess(mockClient, 'ou_alice', 'oc_chat123');
+      const result = await verifyChatAccess(
+        mockClient,
+        'ou_alice',
+        'oc_chat123',
+      );
       expect(result.authorized).toBe(true);
     });
 
     it('allows on API error (fail-open)', async () => {
       mockClient.getChatMembers.mockRejectedValue(new Error('API error'));
 
-      const result = await verifyChatAccess(mockClient, 'ou_alice', 'oc_chat123');
+      const result = await verifyChatAccess(
+        mockClient,
+        'ou_alice',
+        'oc_chat123',
+      );
       expect(result.authorized).toBe(true);
     });
   });
@@ -59,7 +71,12 @@ describe('permission verification', () => {
         { member_id: 'ou_alice', perm: 'view' },
       ]);
 
-      const result = await verifyDocAccess(mockClient, 'ou_alice', 'doc123', 'read');
+      const result = await verifyDocAccess(
+        mockClient,
+        'ou_alice',
+        'doc123',
+        'read',
+      );
       expect(result.authorized).toBe(true);
     });
 
@@ -68,7 +85,12 @@ describe('permission verification', () => {
         { member_id: 'ou_alice', perm: 'view' },
       ]);
 
-      const result = await verifyDocAccess(mockClient, 'ou_alice', 'doc123', 'edit');
+      const result = await verifyDocAccess(
+        mockClient,
+        'ou_alice',
+        'doc123',
+        'edit',
+      );
       expect(result.authorized).toBe(false);
       expect(result.reason).toContain('only has view access');
     });
@@ -78,7 +100,12 @@ describe('permission verification', () => {
         { member_id: 'ou_alice', perm: 'edit' },
       ]);
 
-      const result = await verifyDocAccess(mockClient, 'ou_alice', 'doc123', 'edit');
+      const result = await verifyDocAccess(
+        mockClient,
+        'ou_alice',
+        'doc123',
+        'edit',
+      );
       expect(result.authorized).toBe(true);
     });
 
@@ -87,7 +114,12 @@ describe('permission verification', () => {
         { member_id: 'ou_bob', perm: 'edit' },
       ]);
 
-      const result = await verifyDocAccess(mockClient, 'ou_alice', 'doc123', 'read');
+      const result = await verifyDocAccess(
+        mockClient,
+        'ou_alice',
+        'doc123',
+        'read',
+      );
       expect(result.authorized).toBe(false);
       expect(result.reason).toContain('does not have access');
     });
@@ -95,14 +127,26 @@ describe('permission verification', () => {
     it('allows when permission list is unavailable', async () => {
       mockClient.getDocPermissionMembers.mockResolvedValue(null);
 
-      const result = await verifyDocAccess(mockClient, 'ou_alice', 'doc123', 'read');
+      const result = await verifyDocAccess(
+        mockClient,
+        'ou_alice',
+        'doc123',
+        'read',
+      );
       expect(result.authorized).toBe(true);
     });
 
     it('allows on API error (fail-open)', async () => {
-      mockClient.getDocPermissionMembers.mockRejectedValue(new Error('API error'));
+      mockClient.getDocPermissionMembers.mockRejectedValue(
+        new Error('API error'),
+      );
 
-      const result = await verifyDocAccess(mockClient, 'ou_alice', 'doc123', 'edit');
+      const result = await verifyDocAccess(
+        mockClient,
+        'ou_alice',
+        'doc123',
+        'edit',
+      );
       expect(result.authorized).toBe(true);
     });
   });
@@ -113,7 +157,12 @@ describe('permission verification', () => {
         { member_id: 'ou_alice', perm: 'view' },
       ]);
 
-      const result = await verifyFolderAccess(mockClient, 'ou_alice', 'folder123', 'read');
+      const result = await verifyFolderAccess(
+        mockClient,
+        'ou_alice',
+        'folder123',
+        'read',
+      );
       expect(result.authorized).toBe(true);
     });
 
@@ -122,7 +171,12 @@ describe('permission verification', () => {
         { member_id: 'ou_alice', perm: 'view' },
       ]);
 
-      const result = await verifyFolderAccess(mockClient, 'ou_alice', 'folder123', 'edit');
+      const result = await verifyFolderAccess(
+        mockClient,
+        'ou_alice',
+        'folder123',
+        'edit',
+      );
       expect(result.authorized).toBe(false);
       expect(result.reason).toContain('only has view access');
     });
@@ -132,7 +186,12 @@ describe('permission verification', () => {
         { member_id: 'ou_alice', perm: 'edit' },
       ]);
 
-      const result = await verifyFolderAccess(mockClient, 'ou_alice', 'folder123', 'edit');
+      const result = await verifyFolderAccess(
+        mockClient,
+        'ou_alice',
+        'folder123',
+        'edit',
+      );
       expect(result.authorized).toBe(true);
     });
 
@@ -141,7 +200,12 @@ describe('permission verification', () => {
         { member_id: 'ou_bob', perm: 'edit' },
       ]);
 
-      const result = await verifyFolderAccess(mockClient, 'ou_alice', 'folder123', 'read');
+      const result = await verifyFolderAccess(
+        mockClient,
+        'ou_alice',
+        'folder123',
+        'read',
+      );
       expect(result.authorized).toBe(false);
       expect(result.reason).toContain('does not have access');
     });
@@ -149,14 +213,26 @@ describe('permission verification', () => {
     it('allows when permission list is unavailable', async () => {
       mockClient.getFolderPermissionMembers.mockResolvedValue(null);
 
-      const result = await verifyFolderAccess(mockClient, 'ou_alice', 'folder123', 'read');
+      const result = await verifyFolderAccess(
+        mockClient,
+        'ou_alice',
+        'folder123',
+        'read',
+      );
       expect(result.authorized).toBe(true);
     });
 
     it('allows on API error (fail-open)', async () => {
-      mockClient.getFolderPermissionMembers.mockRejectedValue(new Error('API error'));
+      mockClient.getFolderPermissionMembers.mockRejectedValue(
+        new Error('API error'),
+      );
 
-      const result = await verifyFolderAccess(mockClient, 'ou_alice', 'folder123', 'edit');
+      const result = await verifyFolderAccess(
+        mockClient,
+        'ou_alice',
+        'folder123',
+        'edit',
+      );
       expect(result.authorized).toBe(true);
     });
   });

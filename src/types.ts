@@ -65,7 +65,7 @@ export interface NewMessage {
   // 附件信息（图片、文件、音频、视频等）
   attachment?: MessageAttachment;
   // Request tracking (for sender verification)
-  requestId?: string;          // UUID linking to request_contexts table
+  requestId?: string; // UUID linking to request_contexts table
 }
 
 /**
@@ -132,14 +132,14 @@ export interface TaskRunLog {
  * Request context for tracking message origins
  */
 export interface RequestContext {
-  request_id: string;           // UUID
-  message_id: string;           // Feishu message ID
-  chat_jid: string;             // Chat JID (feishu:oc_xxx)
-  sender_open_id: string;      // Sender's open_id
-  sender_name?: string;         // Sender's display name (cached)
-  trigger_message?: string;     // Trigger message content (for audit)
-  created_at: string;           // ISO timestamp
-  expires_at: string;           // ISO timestamp
+  request_id: string; // UUID
+  message_id: string; // Feishu message ID
+  chat_jid: string; // Chat JID (feishu:oc_xxx)
+  sender_open_id: string; // Sender's open_id
+  sender_name?: string; // Sender's display name (cached)
+  trigger_message?: string; // Trigger message content (for audit)
+  created_at: string; // ISO timestamp
+  expires_at: string; // ISO timestamp
 }
 
 /**
@@ -152,7 +152,7 @@ export interface CurrentContext {
   sender_name?: string;
   chat_jid: string;
   group_folder: string;
-  timestamp: string;            // ISO timestamp
+  timestamp: string; // ISO timestamp
 }
 
 // --- Channel abstraction ---

@@ -375,7 +375,10 @@ export async function runContainerAgent(
       timestamp: new Date().toISOString(),
     };
     fs.writeFileSync(contextPath, JSON.stringify(currentContext, null, 2));
-    logger.debug({ contextPath, sourceRequestId: input.sourceRequestId }, 'Wrote current_context.json');
+    logger.debug(
+      { contextPath, sourceRequestId: input.sourceRequestId },
+      'Wrote current_context.json',
+    );
 
     container.stdin.write(JSON.stringify(input));
     container.stdin.end();
