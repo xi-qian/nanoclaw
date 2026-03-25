@@ -2,13 +2,15 @@ import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
-import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { ASSISTANT_NAME, FEISHU_VERIFY_SENDER, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import {
   ContainerOutput,
   runContainerAgent,
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
+  createRequestContext,
+  deleteRequestContext,
   getAllTasks,
   getDueTasks,
   getTaskById,
@@ -146,6 +148,30 @@ async function runTask(
     })),
   );
 
+  // Create temp request context for sender verification
+  let tempRequestId: string | undefined;
+  if (task.created_by_sender_id && FEISHU_VERIFY_SENDER) {
+    tempRequestId = `task-${task.id}-${Date.now()}`;
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour
+
+    createRequestContext({
+      request_id: tempRequestId,
+      message_id: `scheduled-task:${task.id}`,
+      chat_jid: task.chat_jid,
+      sender_open_id: task.created_by_sender_id,
+      sender_name: task.created_by_sender_name,
+      trigger_message: `[Scheduled Task] ${task.prompt.slice(0, 200)}`,
+      created_at: now.toISOString(),
+      expires_at: expiresAt.toISOString(),
+    });
+
+    logger.debug(
+      { taskId: task.id, tempRequestId, senderId: task.created_by_sender_id },
+      'Created temp request context for scheduled task',
+    );
+  }
+
   let result: string | null = null;
   let error: string | null = null;
 
@@ -179,6 +205,7 @@ async function runTask(
         isMain,
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
+        sourceRequestId: tempRequestId,
       },
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
@@ -216,6 +243,15 @@ async function runTask(
     if (closeTimer) clearTimeout(closeTimer);
     error = err instanceof Error ? err.message : String(err);
     logger.error({ taskId: task.id, error }, 'Task failed');
+  } finally {
+    // Clean up temp request context
+    if (tempRequestId) {
+      deleteRequestContext(tempRequestId);
+      logger.debug(
+        { taskId: task.id, tempRequestId },
+        'Cleaned up temp request context for scheduled task',
+      );
+    }
   }
 
   const durationMs = Date.now() - startTime;

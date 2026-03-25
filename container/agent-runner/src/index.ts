@@ -105,6 +105,13 @@ interface SessionsIndex {
   entries: SessionEntry[];
 }
 
+interface CurrentContext {
+  source_request_id: string;
+  chat_jid: string;
+  group_folder: string;
+  timestamp: string;
+}
+
 interface SDKUserMessage {
   type: 'user';
   message: { role: 'user'; content: string };
@@ -343,9 +350,9 @@ function shouldClose(): boolean {
 
 /**
  * Drain all pending IPC input messages.
- * Returns messages found, or empty array.
+ * Returns messages found and optional sourceRequestId, or empty array.
  */
-function drainIpcInput(): string[] {
+function drainIpcInput(): { messages: string[]; sourceRequestId?: string } {
   try {
     fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
     const files = fs.readdirSync(IPC_INPUT_DIR)
@@ -353,6 +360,7 @@ function drainIpcInput(): string[] {
       .sort();
 
     const messages: string[] = [];
+    let sourceRequestId: string | undefined;
     for (const file of files) {
       const filePath = path.join(IPC_INPUT_DIR, file);
       try {
@@ -361,32 +369,54 @@ function drainIpcInput(): string[] {
         if (data.type === 'message' && data.text) {
           messages.push(data.text);
         }
+        if (data.sourceRequestId) {
+          sourceRequestId = data.sourceRequestId;
+        }
       } catch (err) {
         log(`Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`);
         try { fs.unlinkSync(filePath); } catch { /* ignore */ }
       }
     }
-    return messages;
+    return { messages, sourceRequestId };
   } catch (err) {
     log(`IPC drain error: ${err instanceof Error ? err.message : String(err)}`);
-    return [];
+    return { messages: [], sourceRequestId: undefined };
+  }
+}
+
+/**
+ * Update current_context.json with the latest sourceRequestId.
+ */
+function updateCurrentContext(sourceRequestId: string, chatJid: string, groupFolder: string): void {
+  const contextPath = '/workspace/ipc/current_context.json';
+  const context: CurrentContext = {
+    source_request_id: sourceRequestId,
+    chat_jid: chatJid,
+    group_folder: groupFolder,
+    timestamp: new Date().toISOString(),
+  };
+  try {
+    fs.writeFileSync(contextPath, JSON.stringify(context, null, 2));
+    log(`Updated current_context.json with sourceRequestId: ${sourceRequestId}`);
+  } catch (err) {
+    log(`Failed to update current_context.json: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
 /**
  * Wait for a new IPC message or _close sentinel.
- * Returns the messages as a single string, or null if _close.
+ * Returns the messages as a single string and optional sourceRequestId, or null if _close.
  */
-function waitForIpcMessage(): Promise<string | null> {
+function waitForIpcMessage(): Promise<{ text: string | null; sourceRequestId?: string }> {
   return new Promise((resolve) => {
     const poll = () => {
       if (shouldClose()) {
-        resolve(null);
+        resolve({ text: null });
         return;
       }
-      const messages = drainIpcInput();
+      const { messages, sourceRequestId } = drainIpcInput();
       if (messages.length > 0) {
-        resolve(messages.join('\n'));
+        resolve({ text: messages.join('\n'), sourceRequestId });
         return;
       }
       setTimeout(poll, IPC_POLL_MS);
@@ -428,7 +458,7 @@ async function runQuery(
       ipcPolling = false;
       return;
     }
-    const messages = drainIpcInput();
+    const { messages } = drainIpcInput();
     for (const text of messages) {
       log(`Piping IPC message into active query (${text.length} chars)`);
       stream.push(text);
@@ -605,9 +635,12 @@ async function main(): Promise<void> {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
   }
   const pending = drainIpcInput();
-  if (pending.length > 0) {
-    log(`Draining ${pending.length} pending IPC messages into initial prompt`);
-    prompt += '\n' + pending.join('\n');
+  if (pending.messages.length > 0) {
+    log(`Draining ${pending.messages.length} pending IPC messages into initial prompt`);
+    prompt += '\n' + pending.messages.join('\n');
+  }
+  if (pending.sourceRequestId) {
+    updateCurrentContext(pending.sourceRequestId, containerInput.chatJid, containerInput.groupFolder);
   }
 
   logPerf('main: ready to start query loop');
@@ -650,13 +683,18 @@ async function main(): Promise<void> {
         const nextMessage = await waitForIpcMessage();
         logPerf('main: waited for IPC', Date.now() - ipcStartTime);
 
-        if (nextMessage === null) {
+        if (nextMessage.text === null) {
           log('Close sentinel received, exiting');
           break;
         }
 
-        log(`Got new message (${nextMessage.length} chars), starting new query`);
-        prompt = nextMessage;
+        // Update context if sourceRequestId was provided
+        if (nextMessage.sourceRequestId) {
+          updateCurrentContext(nextMessage.sourceRequestId, containerInput.chatJid, containerInput.groupFolder);
+        }
+
+        log(`Got new message (${nextMessage.text.length} chars), starting new query`);
+        prompt = nextMessage.text;
       } catch (queryError) {
         // Handle session not found - clear session and retry as new
         const errorMsg = queryError instanceof Error ? queryError.message : String(queryError);
