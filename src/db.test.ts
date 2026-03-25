@@ -2,18 +2,23 @@ import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   _initTestDatabase,
+  cleanupExpiredRequestContexts,
+  createRequestContext,
   createTask,
+  deleteRequestContext,
   deleteTask,
   getAllChats,
   getAllRegisteredGroups,
   getMessagesSince,
   getNewMessages,
+  getRequestContext,
   getTaskById,
   setRegisteredGroup,
   storeChatMetadata,
   storeMessage,
   updateTask,
 } from './db.js';
+import type { RequestContext } from './types.js';
 
 beforeEach(() => {
   _initTestDatabase();
@@ -480,5 +485,80 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+// --- request_contexts CRUD ---
+
+describe('request_contexts CRUD', () => {
+  it('creates and retrieves a request context', () => {
+    const ctx: RequestContext = {
+      request_id: 'req-123',
+      message_id: 'msg-456',
+      chat_jid: 'feishu:oc_abc',
+      sender_open_id: 'ou_xyz',
+      sender_name: 'Alice',
+      trigger_message: 'hello',
+      created_at: '2024-01-01T00:00:00.000Z',
+      expires_at: '2024-01-02T00:00:00.000Z',
+    };
+
+    createRequestContext(ctx);
+    const retrieved = getRequestContext('req-123');
+
+    expect(retrieved).toBeDefined();
+    expect(retrieved!.request_id).toBe('req-123');
+    expect(retrieved!.message_id).toBe('msg-456');
+    expect(retrieved!.sender_open_id).toBe('ou_xyz');
+    expect(retrieved!.sender_name).toBe('Alice');
+  });
+
+  it('returns undefined for non-existent request_id', () => {
+    expect(getRequestContext('non-existent')).toBeUndefined();
+  });
+
+  it('deletes a request context', () => {
+    const ctx: RequestContext = {
+      request_id: 'req-delete',
+      message_id: 'msg-1',
+      chat_jid: 'feishu:oc_1',
+      sender_open_id: 'ou_1',
+      created_at: '2024-01-01T00:00:00.000Z',
+      expires_at: '2024-01-02T00:00:00.000Z',
+    };
+
+    createRequestContext(ctx);
+    expect(getRequestContext('req-delete')).toBeDefined();
+
+    deleteRequestContext('req-delete');
+    expect(getRequestContext('req-delete')).toBeUndefined();
+  });
+
+  it('cleanupExpiredRequestContexts removes expired entries', () => {
+    const now = new Date();
+    const expiredCtx: RequestContext = {
+      request_id: 'req-expired',
+      message_id: 'msg-1',
+      chat_jid: 'feishu:oc_1',
+      sender_open_id: 'ou_1',
+      created_at: '2024-01-01T00:00:00.000Z',
+      expires_at: new Date(now.getTime() - 1000).toISOString(), // 1 second ago
+    };
+    const validCtx: RequestContext = {
+      request_id: 'req-valid',
+      message_id: 'msg-2',
+      chat_jid: 'feishu:oc_1',
+      sender_open_id: 'ou_1',
+      created_at: '2024-01-01T00:00:00.000Z',
+      expires_at: new Date(now.getTime() + 86400000).toISOString(), // 1 day from now
+    };
+
+    createRequestContext(expiredCtx);
+    createRequestContext(validCtx);
+
+    const removed = cleanupExpiredRequestContexts();
+    expect(removed).toBe(1);
+    expect(getRequestContext('req-expired')).toBeUndefined();
+    expect(getRequestContext('req-valid')).toBeDefined();
   });
 });

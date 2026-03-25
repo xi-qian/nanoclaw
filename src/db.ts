@@ -8,6 +8,7 @@ import { logger } from './logger.js';
 import {
   NewMessage,
   RegisteredGroup,
+  RequestContext,
   ScheduledTask,
   TaskRunLog,
 } from './types.js';
@@ -83,6 +84,17 @@ function createSchema(database: Database.Database): void {
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS request_contexts (
+      request_id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      sender_open_id TEXT NOT NULL,
+      sender_name TEXT,
+      trigger_message TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_request_contexts_expires ON request_contexts(expires_at);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -767,4 +779,66 @@ function migrateJsonState(): void {
       }
     }
   }
+}
+
+// --- request_contexts CRUD ---
+
+export function createRequestContext(ctx: RequestContext): void {
+  db.prepare(`
+    INSERT INTO request_contexts (
+      request_id, message_id, chat_jid, sender_open_id,
+      sender_name, trigger_message, created_at, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    ctx.request_id,
+    ctx.message_id,
+    ctx.chat_jid,
+    ctx.sender_open_id,
+    ctx.sender_name ?? null,
+    ctx.trigger_message ?? null,
+    ctx.created_at,
+    ctx.expires_at,
+  );
+}
+
+export function getRequestContext(
+  request_id: string,
+): RequestContext | undefined {
+  const row = db
+    .prepare(`SELECT * FROM request_contexts WHERE request_id = ?`)
+    .get(request_id) as {
+      request_id: string;
+      message_id: string;
+      chat_jid: string;
+      sender_open_id: string;
+      sender_name: string | null;
+      trigger_message: string | null;
+      created_at: string;
+      expires_at: string;
+    } | undefined;
+
+  if (!row) return undefined;
+
+  return {
+    request_id: row.request_id,
+    message_id: row.message_id,
+    chat_jid: row.chat_jid,
+    sender_open_id: row.sender_open_id,
+    sender_name: row.sender_name ?? undefined,
+    trigger_message: row.trigger_message ?? undefined,
+    created_at: row.created_at,
+    expires_at: row.expires_at,
+  };
+}
+
+export function deleteRequestContext(request_id: string): void {
+  db.prepare(`DELETE FROM request_contexts WHERE request_id = ?`).run(request_id);
+}
+
+export function cleanupExpiredRequestContexts(): number {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(`DELETE FROM request_contexts WHERE expires_at < ?`)
+    .run(now);
+  return result.changes;
 }
