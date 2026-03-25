@@ -167,6 +167,23 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // Add created_by columns for scheduled tasks (sender verification)
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN created_by_sender_id TEXT`);
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN created_by_sender_name TEXT`);
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN created_by_request_id TEXT`);
+  } catch {
+    /* column already exists */
+  }
 }
 
 export function initDatabase(): void {
@@ -445,12 +462,19 @@ export function getMessagesBefore(
 }
 
 export function createTask(
-  task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
+  task: Omit<ScheduledTask, 'last_run' | 'last_result'> & {
+    created_by_sender_id?: string;
+    created_by_sender_name?: string;
+    created_by_request_id?: string;
+  },
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (
+      id, group_folder, chat_jid, prompt, schedule_type, schedule_value,
+      context_mode, next_run, status, created_at,
+      created_by_sender_id, created_by_sender_name, created_by_request_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -463,13 +487,54 @@ export function createTask(
     task.next_run,
     task.status,
     task.created_at,
+    task.created_by_sender_id ?? null,
+    task.created_by_sender_name ?? null,
+    task.created_by_request_id ?? null,
   );
 }
 
-export function getTaskById(id: string): ScheduledTask | undefined {
-  return db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as
-    | ScheduledTask
-    | undefined;
+export function getTaskById(id: string): (ScheduledTask & {
+  created_by_sender_id?: string;
+  created_by_sender_name?: string;
+  created_by_request_id?: string;
+}) | undefined {
+  const row = db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as {
+    id: string;
+    group_folder: string;
+    chat_jid: string;
+    prompt: string;
+    schedule_type: string;
+    schedule_value: string;
+    context_mode: string;
+    next_run: string | null;
+    last_run: string | null;
+    last_result: string | null;
+    status: string;
+    created_at: string;
+    created_by_sender_id: string | null;
+    created_by_sender_name: string | null;
+    created_by_request_id: string | null;
+  } | undefined;
+
+  if (!row) return undefined;
+
+  return {
+    id: row.id,
+    group_folder: row.group_folder,
+    chat_jid: row.chat_jid,
+    prompt: row.prompt,
+    schedule_type: row.schedule_type as 'cron' | 'interval' | 'once',
+    schedule_value: row.schedule_value,
+    context_mode: row.context_mode as 'group' | 'isolated',
+    next_run: row.next_run,
+    last_run: row.last_run,
+    last_result: row.last_result,
+    status: row.status as 'active' | 'paused' | 'completed',
+    created_at: row.created_at,
+    created_by_sender_id: row.created_by_sender_id ?? undefined,
+    created_by_sender_name: row.created_by_sender_name ?? undefined,
+    created_by_request_id: row.created_by_request_id ?? undefined,
+  };
 }
 
 export function getTasksForGroup(groupFolder: string): ScheduledTask[] {
@@ -784,12 +849,14 @@ function migrateJsonState(): void {
 // --- request_contexts CRUD ---
 
 export function createRequestContext(ctx: RequestContext): void {
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO request_contexts (
       request_id, message_id, chat_jid, sender_open_id,
       sender_name, trigger_message, created_at, expires_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `,
+  ).run(
     ctx.request_id,
     ctx.message_id,
     ctx.chat_jid,
@@ -806,16 +873,18 @@ export function getRequestContext(
 ): RequestContext | undefined {
   const row = db
     .prepare(`SELECT * FROM request_contexts WHERE request_id = ?`)
-    .get(request_id) as {
-      request_id: string;
-      message_id: string;
-      chat_jid: string;
-      sender_open_id: string;
-      sender_name: string | null;
-      trigger_message: string | null;
-      created_at: string;
-      expires_at: string;
-    } | undefined;
+    .get(request_id) as
+    | {
+        request_id: string;
+        message_id: string;
+        chat_jid: string;
+        sender_open_id: string;
+        sender_name: string | null;
+        trigger_message: string | null;
+        created_at: string;
+        expires_at: string;
+      }
+    | undefined;
 
   if (!row) return undefined;
 
@@ -832,7 +901,9 @@ export function getRequestContext(
 }
 
 export function deleteRequestContext(request_id: string): void {
-  db.prepare(`DELETE FROM request_contexts WHERE request_id = ?`).run(request_id);
+  db.prepare(`DELETE FROM request_contexts WHERE request_id = ?`).run(
+    request_id,
+  );
 }
 
 export function cleanupExpiredRequestContexts(): number {

@@ -394,6 +394,30 @@ describe('task CRUD', () => {
     deleteTask('task-3');
     expect(getTaskById('task-3')).toBeUndefined();
   });
+
+  it('stores created_by fields for scheduled tasks', () => {
+    createTask({
+      id: 'task-creator',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'test',
+      schedule_type: 'once',
+      schedule_value: '2024-06-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+      created_by_sender_id: 'ou_abc123',
+      created_by_sender_name: 'Alice',
+      created_by_request_id: 'req-xyz',
+    });
+
+    const task = getTaskById('task-creator');
+    expect(task).toBeDefined();
+    expect(task!.created_by_sender_id).toBe('ou_abc123');
+    expect(task!.created_by_sender_name).toBe('Alice');
+    expect(task!.created_by_request_id).toBe('req-xyz');
+  });
 });
 
 // --- LIMIT behavior ---
