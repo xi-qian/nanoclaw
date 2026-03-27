@@ -159,9 +159,47 @@ export class GroupQueue {
    */
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder || state.isTaskContainer)
+
+    // 更可靠的判断：优先检查进程真实状态
+    // 即使 state.active = false，只要进程还在运行就能复用
+    const processAlive = state.process && state.process.exitCode === null;
+
+    if (processAlive && state.groupFolder && !state.isTaskContainer) {
+      state.idleWaiting = false; // Agent is about to receive work, no longer idle
+      logger.debug(
+        {
+          groupJid,
+          checkMethod: 'process-state',
+          exitCode: state.process?.exitCode,
+          active: state.active,
+        },
+        'sendMessage: reusing container by process state',
+      );
+    } else if (state.active && state.groupFolder && !state.isTaskContainer) {
+      state.idleWaiting = false;
+      logger.debug(
+        {
+          groupJid,
+          checkMethod: 'state-active',
+          active: state.active,
+        },
+        'sendMessage: reusing container by active flag',
+      );
+    } else {
+      logger.debug(
+        {
+          groupJid,
+          hasProcess: !!state.process,
+          exitCode: state.process?.exitCode,
+          active: state.active,
+          hasFolder: !!state.groupFolder,
+          isTask: state.isTaskContainer,
+          checkMethod: 'process-state',
+        },
+        'sendMessage: container not reusable',
+      );
       return false;
-    state.idleWaiting = false; // Agent is about to receive work, no longer idle
+    }
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
@@ -171,6 +209,15 @@ export class GroupQueue {
       const tempPath = `${filepath}.tmp`;
       fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
       fs.renameSync(tempPath, filepath);
+
+      logger.debug(
+        {
+          groupJid,
+          textLength: text.length,
+        },
+        'sendMessage: IPC message written successfully',
+      );
+
       return true;
     } catch {
       return false;
