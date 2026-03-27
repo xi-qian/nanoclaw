@@ -77,8 +77,10 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// `\b` only works for ASCII word boundaries; Chinese assistant names (e.g. 詹妮弗.劳伦斯)
+// need a lookahead so `@name hello` still matches after the trigger token.
 export const TRIGGER_PATTERN = new RegExp(
-  `@${escapeRegex(ASSISTANT_NAME)}\\b`,
+  `@${escapeRegex(ASSISTANT_NAME)}(?=\\s|$|[，。！？,.!?]|[\\u4e00-\\u9fff])`,
   'i',
 );
 

@@ -102,11 +102,17 @@ export class FeishuChannel implements Channel {
           event.event?.sender?.sender_id?.open_id ||
           msg.sender?.sender_id?.open_id ||
           '';
+        const senderUnionId =
+          event.event?.sender?.sender_id?.union_id ||
+          msg.sender?.sender_id?.union_id;
 
         const jid = `feishu:${chatId}`;
 
-        // 获取用户名称（异步）
-        const senderName = await this.client.getUserName(senderOpenId);
+        // 获取用户名称（异步）；失败时用 open_id，并可回退 union_id 查通讯录
+        const senderName = await this.client.getUserName(
+          senderOpenId,
+          senderUnionId,
+        );
 
         // 先存储 chat 元数据（避免外键约束错误）
         const isGroup = chatType === 'group';

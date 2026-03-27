@@ -51,6 +51,7 @@ export interface FeishuEvent {
       sender?: {
         sender_id: {
           open_id: string;
+          union_id?: string;
         };
       };
     };
