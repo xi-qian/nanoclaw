@@ -317,10 +317,7 @@ export class FeishuClient {
       });
 
       if (response.code === 0) {
-        log.debug(
-          { messageId, reactionId },
-          'Typing indicator removed',
-        );
+        log.debug({ messageId, reactionId }, 'Typing indicator removed');
       } else {
         log.warn(
           { messageId, reactionId, code: response.code, msg: response.msg },
@@ -535,37 +532,10 @@ export class FeishuClient {
         throw new Error('No document_id returned from create API');
       }
 
-      // Step 2: 尝试添加内容（非阻塞，失败不影响文档创建成功）
-      const blocks = this.markdownToBlocks(markdown);
-      if (blocks.length > 0) {
+      // Step 2: 使用飞书官方转换 API 将 Markdown 转换为文档块
+      if (markdown.trim()) {
         try {
-          // 使用原始请求方法创建块
-          for (let i = 0; i < blocks.length; i++) {
-            const block = blocks[i];
-            const blockResponse = await this.client.request({
-              url: `/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
-              method: 'POST',
-              data: {
-                index: i,
-                children: [block],
-              },
-            });
-            if (blockResponse.code !== 0) {
-              log.warn(
-                {
-                  documentId,
-                  index: i,
-                  code: blockResponse.code,
-                  msg: blockResponse.msg,
-                },
-                'Failed to add block',
-              );
-            }
-            // 添加延迟避免速率限制 (429 Too Many Requests)
-            if (i < blocks.length - 1) {
-              await this.sleep(this.RATE_LIMIT_DELAY);
-            }
-          }
+          await this.addMarkdownContent(documentId, markdown);
         } catch (blockError) {
           log.warn(
             {
@@ -575,7 +545,7 @@ export class FeishuClient {
                   ? blockError.message
                   : String(blockError),
             },
-            'Document created but failed to add some content',
+            'Document created but failed to add content',
           );
         }
       }
@@ -609,41 +579,10 @@ export class FeishuClient {
     try {
       const actualDocId = this.extractDocId(docId);
 
-      // 将 markdown 转换为文档块并逐个追加
-      const blocks = this.markdownToBlocks(markdown);
+      // 使用飞书官方转换 API 将 Markdown 转换为文档块并追加
+      await this.addMarkdownContent(actualDocId, markdown);
 
-      // 使用逐个创建块的方式（batch_create 端点不存在）
-      for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i];
-        const blockResponse = await this.client.request({
-          url: `/open-apis/docx/v1/documents/${actualDocId}/blocks/${actualDocId}/children`,
-          method: 'POST',
-          data: {
-            index: -1, // 追加到末尾
-            children: [block],
-          },
-        });
-        if (blockResponse.code !== 0) {
-          log.warn(
-            {
-              docId: actualDocId,
-              index: i,
-              code: blockResponse.code,
-              msg: blockResponse.msg,
-            },
-            'Failed to add block during update',
-          );
-        }
-        // 添加延迟避免速率限制
-        if (i < blocks.length - 1) {
-          await this.sleep(this.RATE_LIMIT_DELAY);
-        }
-      }
-
-      log.info(
-        { docId: actualDocId, blocksCount: blocks.length },
-        'Document updated successfully',
-      );
+      log.info({ docId: actualDocId }, 'Document updated successfully');
     } catch (error) {
       log.error(
         {
@@ -1065,6 +1004,7 @@ export class FeishuClient {
 
   /**
    * 将 Markdown 转换为 Feishu 文档块
+   * @deprecated 使用 addMarkdownContent 代替，该方法使用飞书官方转换 API
    */
   private markdownToBlocks(markdown: string): any[] {
     const blocks: any[] = [];
@@ -1129,6 +1069,176 @@ export class FeishuClient {
     }
 
     return blocks;
+  }
+
+  /**
+   * 使用飞书官方转换 API 将 Markdown 内容添加到文档
+   * 参见：https://open.feishu.cn/document/server-docs/task-v1/markdown-module
+   */
+  private async addMarkdownContent(
+    documentId: string,
+    markdown: string,
+    options?: { index?: number; parent_block_id?: string },
+  ): Promise<void> {
+    try {
+      // Step 1: 调用转换 API 将 Markdown 转换为文档块
+      // 注意：这是独立端点，不需要 document_id
+      const convertResponse = await this.client.request({
+        url: '/open-apis/docx/v1/documents/blocks/convert',
+        method: 'POST',
+        data: {
+          content_type: 'markdown',
+          content: markdown,
+        },
+      });
+
+      if (convertResponse.code !== 0) {
+        throw new Error(
+          `Failed to convert markdown: ${convertResponse.msg} (code: ${convertResponse.code})`,
+        );
+      }
+
+      let blocks = convertResponse.data?.blocks;
+      if (!blocks || blocks.length === 0) {
+        log.warn({ documentId }, 'No blocks returned from convert API');
+        return;
+      }
+
+      log.debug(
+        { documentId, blocksCount: blocks.length },
+        'Markdown converted to blocks successfully',
+      );
+
+      // Step 2: 处理块数据，移除只读字段
+      // 注意事项：表格块中的 merge_info 为只读属性，需要移除
+      blocks = this.cleanBlocksForInsert(blocks);
+
+      // Step 3: 将转换后的块批量添加到文档
+      // ⚠️ 单次调用最多可插入 50 个块（严格的 API 限制）
+      const BATCH_SIZE = 50;
+      for (let i = 0; i < blocks.length; i += BATCH_SIZE) {
+        const batch = blocks.slice(i, i + BATCH_SIZE);
+        const blockResponse = await this.client.request({
+          url: `/open-apis/docx/v1/documents/${documentId}/blocks/${options?.parent_block_id || documentId}/children`,
+          method: 'POST',
+          data: {
+            index: options?.index ?? -1, // -1 表示追加到末尾
+            children: batch,
+          },
+        });
+
+        if (blockResponse.code !== 0) {
+          // 记录详细的错误响应
+          log.error(
+            {
+              documentId,
+              batchIndex: i,
+              code: blockResponse.code,
+              msg: blockResponse.msg,
+              response: JSON.stringify(blockResponse, null, 2),
+            },
+            'Failed to create block children - API error response',
+          );
+          throw new Error(
+            `Failed to create block children: ${blockResponse.msg} (code: ${blockResponse.code})`,
+          );
+        }
+
+        log.debug(
+          { documentId, batchIndex: i, batchSize: batch.length },
+          'Batch of blocks added successfully',
+        );
+
+        // 添加延迟避免速率限制（如果不是最后一批）
+        if (i + BATCH_SIZE < blocks.length) {
+          await this.sleep(this.RATE_LIMIT_DELAY);
+        }
+      }
+
+      log.info(
+        { documentId, totalBlocks: blocks.length },
+        'Markdown content added to document successfully',
+      );
+    } catch (error) {
+      log.error(
+        {
+          documentId,
+          error: error instanceof Error ? error.message : String(error),
+          // 如果是 Axios 错误，记录响应数据
+          ...(error && typeof error === 'object' && 'response' in error
+            ? {
+                responseData: JSON.stringify(
+                  (error as any).response?.data,
+                  null,
+                  2,
+                ),
+              }
+            : {}),
+        },
+        'Failed to add markdown content',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 清理块数据，移除只读字段和其他问题字段
+   * 根据飞书文档要求：
+   * - 表格块中的 merge_info 为只读属性，需要移除
+   * - parent_id 为空字符串时需要移除（会导致 400 错误）
+   * - children 数组最大长度为 50
+   * - 某些块类型不能单独创建（如 table_cell、有 children 的块）
+   */
+  private cleanBlocksForInsert(blocks: any[]): any[] {
+    return blocks
+      .filter((block: any) => {
+        // 过滤掉表格单元格块（block_type 32），它们应该作为表格的一部分
+        if (block.block_type === 32) {
+          return false;
+        }
+
+        // 过滤掉有 children 字段的块（这些不是顶层块）
+        // children 是块内部的数据结构，不是用于插入的子块
+        if (
+          block.children &&
+          Array.isArray(block.children) &&
+          block.children.length > 0
+        ) {
+          return false;
+        }
+
+        return true;
+      })
+      .map((block) => {
+        const cleaned = { ...block };
+
+        // 移除空的 parent_id 字段（会导致插入失败）
+        if (cleaned.parent_id === '') {
+          delete cleaned.parent_id;
+        }
+
+        // 移除表格块中的 merge_info 字段（只读属性）
+        // block_type: 5=table, 31=table, 32=table_cell
+        if (cleaned.block_type === 5 && cleaned.table?.merge_info) {
+          delete cleaned.table.merge_info;
+          log.debug('Removed merge_info from table block');
+        }
+
+        if (cleaned.block_type === 31 && cleaned.table?.merge_info) {
+          delete cleaned.table.merge_info;
+        }
+
+        if (cleaned.block_type === 32 && cleaned.table_cell?.merge_info) {
+          delete cleaned.table_cell.merge_info;
+        }
+
+        // 移除 children 字段（这些不是用于插入的子块）
+        if (cleaned.children) {
+          delete cleaned.children;
+        }
+
+        return cleaned;
+      });
   }
 
   /**
