@@ -20,6 +20,82 @@ import { larkLogger } from './logger.js';
 
 const log = larkLogger('client');
 
+/**
+ * 从 Axios / HTTP 错误中取出飞书开放平台常见字段，便于区分「权限 / 参数 / 其它」。
+ * 参见：https://open.feishu.cn/document/ukTMukTMukTM/ugjM14COyUjL4ITN
+ */
+function extractFeishuHttpErrorPayload(error: unknown): {
+  httpStatus?: number;
+  feishuCode?: number;
+  feishuMsg?: string;
+  rawBody?: unknown;
+} {
+  if (!error || typeof error !== 'object') {
+    return { rawBody: error };
+  }
+  const anyErr = error as Record<string, unknown>;
+  const response = anyErr.response as
+    | { status?: number; data?: unknown }
+    | undefined;
+  if (!response) {
+    return {
+      feishuMsg: anyErr.message as string | undefined,
+      rawBody: error,
+    };
+  }
+  const data = response.data as Record<string, unknown> | undefined;
+  const feishuCode =
+    typeof data?.code === 'number'
+      ? data.code
+      : typeof data?.code === 'string'
+        ? parseInt(data.code, 10)
+        : undefined;
+  const feishuMsg = typeof data?.msg === 'string' ? data.msg : undefined;
+  return {
+    httpStatus: response.status,
+    feishuCode: Number.isNaN(feishuCode as number) ? undefined : feishuCode,
+    feishuMsg,
+    rawBody: data,
+  };
+}
+
+function hintForFeishuContactError(
+  httpStatus: number | undefined,
+  feishuCode: number | undefined,
+  feishuMsg: string | undefined,
+): string {
+  const parts: string[] = [];
+  if (httpStatus === 401 || httpStatus === 403) {
+    parts.push(
+      'HTTP 401/403：多为 token 无效或应用无权限，检查应用是否已发布、tenant_access_token 是否有效',
+    );
+  }
+  if (httpStatus === 400) {
+    parts.push(
+      'HTTP 400：多为请求参数与 user_id_type 不匹配、或开放平台返回业务错误；请看下方 feishuCode/feishuMsg',
+    );
+  }
+  if (feishuCode === 99991663 || feishuCode === 41050) {
+    parts.push(
+      '飞书常见无权限类 code：请在开放平台为应用开通「通讯录 / 获取用户基本信息」等权限并重新发布版本',
+    );
+  }
+  if (feishuCode === 41012) {
+    parts.push(
+      '飞书 41012：用户 ID 无效或与 user_id_type 不一致，属参数/ID 问题而非单纯权限名写错',
+    );
+  }
+  if (feishuMsg?.includes('permission') || feishuMsg?.includes('权限')) {
+    parts.push('msg 含权限：以开放平台权限与管理员审核为准');
+  }
+  if (parts.length === 0) {
+    parts.push(
+      '对照 open.feishu.cn 文档中 contact/v3/users 错误码；若 feishuCode 为空，把 rawBody 发给飞书支持或查网关返回',
+    );
+  }
+  return parts.join(' ');
+}
+
 // ES 模块中 __dirname 的替代
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -561,11 +637,16 @@ export class FeishuClient {
   private readonly USER_CACHE_TTL = 3600000; // 1 hour in ms
 
   /**
-   * 获取用户信息
+   * 获取用户信息（通讯录）
+   * https://open.feishu.cn/document/server-docs/contact-v3/user/get
+   * 需权限：contact:user.base:readonly 等。
+   * 部分租户下仅用 open_id 会 HTTP 400，可再尝试 union_id。
+   *
    * @param openId 用户的 open_id
+   * @param unionId 可选；与事件中的 sender_id.union_id 一致，用于回退查询
    * @returns 用户名称，获取失败时返回 openId
    */
-  async getUserName(openId: string): Promise<string> {
+  async getUserName(openId: string, unionId?: string): Promise<string> {
     if (!openId) return '';
 
     // Check cache first
@@ -574,66 +655,96 @@ export class FeishuClient {
       return cached.name;
     }
 
-    try {
-      // Call Feishu API to get user info
-      // https://open.feishu.cn/document/server-docs/contact-v3/user/get
-      // Note: user_id goes in the URL path, not query params
-      // Required permissions: contact:user.base:readonly or contact:contact:readonly_as_app
-      const response = await this.client.request({
-        url: `/open-apis/contact/v3/users/${openId}`,
-        method: 'GET',
-        params: {
-          user_id_type: 'open_id',
-        },
-      });
+    const tryContact = async (
+      userId: string,
+      userIdType: 'open_id' | 'union_id',
+    ): Promise<string | null> => {
+      try {
+        const response = (await this.client.request({
+          url: `/open-apis/contact/v3/users/${encodeURIComponent(userId)}`,
+          method: 'GET',
+          params: {
+            user_id_type: userIdType,
+          },
+        })) as {
+          code?: number;
+          msg?: string;
+          data?: { user?: { name?: string; en_name?: string } };
+        };
 
-      log.debug(
-        { openId, code: response.code, msg: response.msg },
-        'User API response',
-      );
+        log.debug(
+          { userId, userIdType, code: response.code, msg: response.msg },
+          'Contact user API response',
+        );
 
-      if (response.code === 0 && response.data?.user) {
-        const user = response.data.user;
-        // 优先使用 name，其次 en_name，最后 open_id
-        const name = user.name || user.en_name || openId;
+        if (response.code === 0 && response.data?.user) {
+          const user = response.data.user;
+          return user.name || user.en_name || null;
+        }
 
-        // Cache the result
-        this.userInfoCache.set(openId, {
-          name,
-          expireAt: Date.now() + this.USER_CACHE_TTL,
-        });
-
-        log.info({ openId, name }, 'User info fetched successfully');
-        return name;
-      } else {
-        // Log detailed error for debugging
-        // Common errors:
-        // - 41050: no user authority - need contact permission
-        // - 41012: user id invalid
+        if (response.code !== 0 && response.code !== undefined) {
+          log.warn(
+            {
+              step: 'contact_user_sdk_body',
+              userId,
+              userIdType,
+              feishuCode: response.code,
+              feishuMsg: response.msg,
+              hint: hintForFeishuContactError(
+                undefined,
+                response.code,
+                response.msg,
+              ),
+            },
+            'Feishu contact user: non-zero business code (HTTP likely 200)',
+          );
+        }
+        return null;
+      } catch (error) {
+        const { httpStatus, feishuCode, feishuMsg, rawBody } =
+          extractFeishuHttpErrorPayload(error);
+        const errMsg = error instanceof Error ? error.message : String(error);
         log.warn(
           {
-            openId,
-            code: response.code,
-            msg: response.msg,
-            hint: 'Ensure contact:user.base:readonly or contact:contact:readonly_as_app permission is granted',
+            step: 'contact_user_http',
+            userId,
+            userIdType,
+            httpStatus,
+            feishuCode,
+            feishuMsg,
+            rawBody,
+            axiosMessage: errMsg,
+            hint: hintForFeishuContactError(httpStatus, feishuCode, feishuMsg),
           },
-          'Failed to get user info from Feishu API',
+          'Feishu contact user: HTTP/SDK error (inspect feishuCode/feishuMsg vs permission)',
         );
-        return openId; // Return openId as fallback
+        return null;
       }
-    } catch (error) {
-      // HTTP-level error (e.g., 400, 401, 403)
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      log.warn(
-        {
-          openId,
-          error: errorMsg,
-          hint: 'Check if contact permissions are granted in Feishu developer console',
-        },
-        'HTTP error fetching user info',
-      );
-      return openId; // Return openId as fallback
+    };
+
+    let name = await tryContact(openId, 'open_id');
+    if (!name && unionId) {
+      name = await tryContact(unionId, 'union_id');
     }
+
+    if (name) {
+      this.userInfoCache.set(openId, {
+        name,
+        expireAt: Date.now() + this.USER_CACHE_TTL,
+      });
+      log.info({ openId, unionId, name }, 'User info fetched successfully');
+      return name;
+    }
+
+    log.warn(
+      {
+        openId,
+        unionId,
+        hint: 'Grant contact:user.base:readonly (or contact:contact:readonly_as_app) and re-publish the app; or rely on open_id as display fallback',
+      },
+      'Could not resolve user name from Feishu contact API',
+    );
+    return openId;
   }
 
   /**
