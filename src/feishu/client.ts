@@ -253,6 +253,94 @@ export class FeishuClient {
   }
 
   /**
+   * 添加"正在输入"指示器（通过 emoji reaction）
+   * @param messageId 消息ID
+   * @returns reaction ID，用于后续删除
+   */
+  async addTypingIndicator(messageId: string): Promise<string | null> {
+    try {
+      const response = await this.client.im.messageReaction.create({
+        path: {
+          message_id: messageId,
+        },
+        data: {
+          reaction_type: {
+            emoji_type: 'Typing',
+          },
+        },
+      });
+
+      if (response.code === 0) {
+        const reactionId = response.data?.reaction_id || null;
+        log.debug(
+          { messageId, reactionId },
+          'Typing indicator added (emoji reaction)',
+        );
+        return reactionId;
+      } else {
+        log.warn(
+          { messageId, code: response.code, msg: response.msg },
+          'Failed to add typing indicator',
+        );
+        return null;
+      }
+    } catch (error) {
+      log.debug(
+        {
+          messageId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to add typing indicator',
+      );
+      // 静默失败，不影响消息处理
+      return null;
+    }
+  }
+
+  /**
+   * 移除"正在输入"指示器
+   * @param messageId 消息ID
+   * @param reactionId reaction ID
+   */
+  async removeTypingIndicator(
+    messageId: string,
+    reactionId: string,
+  ): Promise<void> {
+    if (!reactionId) return;
+
+    try {
+      const response = await this.client.im.messageReaction.delete({
+        path: {
+          message_id: messageId,
+          reaction_id: reactionId,
+        },
+      });
+
+      if (response.code === 0) {
+        log.debug(
+          { messageId, reactionId },
+          'Typing indicator removed',
+        );
+      } else {
+        log.warn(
+          { messageId, reactionId, code: response.code, msg: response.msg },
+          'Failed to remove typing indicator',
+        );
+      }
+    } catch (error) {
+      log.debug(
+        {
+          messageId,
+          reactionId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to remove typing indicator',
+      );
+      // 静默失败
+    }
+  }
+
+  /**
    * 发送消息（自动转换为飞书富文本格式，支持 Markdown 渲染）
    */
   async sendMessage(chatId: string, text: string): Promise<void> {

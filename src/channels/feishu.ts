@@ -37,6 +37,12 @@ export class FeishuChannel implements Channel {
     sender: string,
   ) => void;
   private credentials: FeishuCredentials;
+  // 追踪活跃的 typing indicators { chatId: { messageId, reactionId } }
+  // 使用 chatId 作为 key，因为发送回复时只知道 chatId
+  private typingIndicators: Map<
+    string,
+    { messageId: string; reactionId: string }
+  > = new Map();
 
   constructor(opts: ChannelOpts, credentials: FeishuCredentials) {
     this.credentials = credentials;
@@ -141,6 +147,17 @@ export class FeishuChannel implements Channel {
 
         // 通知消息处理器（会被存储到 SQLite）
         this.onMessage(jid, newMessage);
+
+        // 添加 typing indicator（通过 emoji reaction）
+        // 使用 chatId 作为 key，方便后续删除
+        this.client.addTypingIndicator(msg.message_id).then((reactionId) => {
+          if (reactionId) {
+            this.typingIndicators.set(chatId, {
+              messageId: msg.message_id,
+              reactionId,
+            });
+          }
+        });
 
         log.debug(
           {
@@ -353,6 +370,17 @@ export class FeishuChannel implements Channel {
       // 去掉 "feishu:" 前缀
       const chatId = jid.replace(/^feishu:/, '');
       await this.client.sendMessage(chatId, text);
+
+      // 发送成功后，删除该 chat 的 typing indicator
+      const typingState = this.typingIndicators.get(chatId);
+      if (typingState) {
+        await this.client.removeTypingIndicator(
+          typingState.messageId,
+          typingState.reactionId,
+        );
+        this.typingIndicators.delete(chatId);
+      }
+
       log.debug({ jid, textLength: text.length }, 'Message sent');
     } catch (error) {
       log.error(
