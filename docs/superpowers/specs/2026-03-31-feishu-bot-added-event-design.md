@@ -13,6 +13,15 @@ Add support for the Feishu `im.chat.member.bot.added_v1` event to automatically 
 
 ## Architecture
 
+### Design Decision: Text-Based Event Message
+
+After reviewing the existing architecture, this design uses a **text-based event message** approach rather than extending TypeScript interfaces. This approach:
+
+- Reuses the existing IPC message flow without modifications
+- Works naturally with container reuse
+- Requires minimal code changes
+- Leverages the existing skill loading mechanism
+
 ### Event Flow
 
 ```
@@ -23,15 +32,16 @@ FeishuClient.emit('im.chat.member.bot.added_v1')
          │
          ▼
 FeishuChannel.handleBotAddedEvent()
-         │ Constructs NewMessage { event_type: 'bot_added_to_chat', ... }
+         │ Formats event as text message:
+         │ "[BOT_ADDED_TO_CHAT]\nchat_id: oc_xxx\n..."
          ▼
 src/index.ts (onMessage callback)
          │ Stores to SQLite → Sends via IPC to container
+         │ (same flow as regular messages)
          ▼
-agent-runner (IPC listener)
-         │ SkillCache.matchByTrigger(message)
-         │ Matches bot-welcome skill
-         │ Injects skill content into system prompt
+agent-runner
+         │ Receives as regular text message
+         │ bot-welcome skill (loaded via CLAUDE.md) recognizes format
          ▼
 Claude API call
          │ Generates welcome message based on group config in skill
@@ -50,41 +60,149 @@ Feishu group receives welcome message
 
 ## Implementation Details
 
-### 1. Extend NewMessage Type
+### 1. Event Message Format
 
-**File**: `src/types.ts`
+When the bot is added to a chat, format the event as a structured text message:
 
-Add `event_type` and `event_metadata` fields to `NewMessage`:
+```
+[BOT_ADDED_TO_CHAT]
+chat_id: oc_xxx
+chat_name: 项目讨论组
+operator: 张三
+operator_id: ou_xxx
+timestamp: 1608725989000
+```
+
+This format:
+- Starts with `[BOT_ADDED_TO_CHAT]` marker for easy recognition
+- Contains all relevant event data as key-value pairs
+- Is human-readable and easy for the agent to parse
+
+### 2. Register Event Listener in FeishuClient
+
+**File**: `src/feishu/client.ts`
+
+In the `connect()` method, register the new event listener in the EventDispatcher:
 
 ```typescript
-export interface NewMessage {
-  id: string;
-  chat_jid: string;
-  sender: string;
-  sender_name: string;
-  content: string;
-  timestamp: string;
-  is_from_me: boolean;
-  message_type: 'text' | 'image' | 'file' | 'audio' | 'video' | 'media' | 'post' | 'interactive';
-  attachment?: MessageAttachment;
+const eventDispatcher = new Lark.EventDispatcher({
+  loggerLevel: Lark.LoggerLevel.debug,
+}).register({
+  'im.message.receive_v1': async (data: any) => {
+    log.info({ data: JSON.stringify(data) }, 'Event received from EventDispatcher');
+    self.emit('im.message.receive_v1', {
+      type: 'im.message.receive_v1',
+      event: data,
+    });
+  },
+  'card.action.trigger': async (data: any) => {
+    log.info({ data: JSON.stringify(data) }, 'Card action event received');
+    self.emit('card.action.trigger', {
+      type: 'card.action.trigger',
+      event: data,
+    });
+  },
+  // New: Bot added to chat event
+  'im.chat.member.bot.added_v1': async (data: any) => {
+    log.info({ data: JSON.stringify(data) }, 'Bot added to chat event received');
+    self.emit('im.chat.member.bot.added_v1', {
+      type: 'im.chat.member.bot.added_v1',
+      header: data.header,
+      event: data.event,
+    });
+  },
+});
+```
 
-  // Event type (empty for regular messages, set for special events)
-  event_type?: 'bot_added_to_chat' | 'user_added_to_chat';
+Update the log message at line 191-192 to include the new event type.
 
-  // Event metadata (for bot_added_to_chat: operator info, chat name)
-  event_metadata?: {
-    operator_id?: string;      // Operator's open_id
-    operator_name?: string;    // Operator's display name
-    chat_name?: string;        // Group name
-  };
+### 3. Handle Bot Added Event in FeishuChannel
+
+**File**: `src/channels/feishu.ts`
+
+Add event handler registration in the existing `setupEventHandlers()` method (after line 88):
+
+```typescript
+private setupEventHandlers(): void {
+  // Existing handlers (lines 63-88)...
+
+  // Listen for bot added to chat event
+  this.client.on('im.chat.member.bot.added_v1', (event: FeishuEvent) => {
+    this.handleBotAddedEvent(event).catch((err) => {
+      log.error({ err }, 'Error in bot added event handler');
+    });
+  });
+
+  log.info('WebSocket event handlers registered');
 }
 ```
 
-### 2. Extend FeishuEvent Type
+Add the new handler method:
+
+```typescript
+/**
+ * 处理机器人入群事件
+ */
+private async handleBotAddedEvent(event: FeishuEvent): Promise<void> {
+  try {
+    if (event.type === 'im.chat.member.bot.added_v1' && event.event) {
+      const chatId = event.event.chat_id || '';
+      const chatName = event.event.name || '';
+      const operatorOpenId = event.event.operator_id?.open_id || '';
+      const timestamp = event.header?.create_time || Date.now().toString();
+
+      // Get operator name from contact API
+      const operatorName = await this.client.getUserName(operatorOpenId);
+
+      const jid = `feishu:${chatId}`;
+
+      // Store chat metadata first
+      this.onChatMetadata(jid, timestamp, chatId, 'feishu', true);
+
+      // Format event as structured text message
+      const eventMessage = [
+        '[BOT_ADDED_TO_CHAT]',
+        `chat_id: ${chatId}`,
+        `chat_name: ${chatName}`,
+        `operator: ${operatorName}`,
+        `operator_id: ${operatorOpenId}`,
+        `timestamp: ${timestamp}`,
+      ].join('\n');
+
+      // Construct message (same structure as regular messages)
+      const newMessage: NewMessage = {
+        id: `event_${event.header?.event_id || Date.now()}`,
+        chat_jid: jid,
+        sender: operatorOpenId,
+        sender_name: operatorName,
+        content: eventMessage,
+        timestamp: timestamp,
+        is_from_me: false,
+        message_type: 'text',
+      };
+
+      // Notify message handler (triggers agent via existing flow)
+      this.onMessage(jid, newMessage);
+
+      log.info(
+        { chatId, chatName, operatorName, operatorOpenId },
+        'Bot added to chat event processed',
+      );
+    }
+  } catch (error) {
+    log.error(
+      { error: error instanceof Error ? error.message : String(error) },
+      'Failed to handle bot added event',
+    );
+  }
+}
+```
+
+### 4. Update FeishuEvent Type
 
 **File**: `src/feishu/types.ts`
 
-Add the `im.chat.member.bot.added_v1` event structure:
+Add fields for the bot added event in the `FeishuEvent` interface:
 
 ```typescript
 export interface FeishuEvent {
@@ -98,14 +216,15 @@ export interface FeishuEvent {
     tenant_key: string;
   };
   event?: {
-    // Existing fields...
-    message?: { ... };
+    // Existing fields for message events...
+    operator?: { open_id: string };
     sender?: { ... };
+    message?: { ... };
     reaction?: { ... };
     action?: { ... };
     context?: { ... };
 
-    // New: Bot added to chat event
+    // Fields for im.chat.member.bot.added_v1 event
     chat_id?: string;
     operator_id?: {
       union_id?: string;
@@ -124,235 +243,7 @@ export interface FeishuEvent {
 }
 ```
 
-### 3. Register Event Listener in FeishuClient
-
-**File**: `src/feishu/client.ts`
-
-In the `connect()` method, register the new event listener:
-
-```typescript
-const eventDispatcher = new Lark.EventDispatcher({
-  loggerLevel: Lark.LoggerLevel.debug,
-}).register({
-  'im.message.receive_v1': async (data: any) => { ... },
-  'card.action.trigger': async (data: any) => { ... },
-
-  // New: Bot added to chat event
-  'im.chat.member.bot.added_v1': async (data: any) => {
-    log.info({ data: JSON.stringify(data) }, 'Bot added to chat event received');
-    self.emit('im.chat.member.bot.added_v1', {
-      type: 'im.chat.member.bot.added_v1',
-      header: data.header,
-      event: data.event,
-    });
-  },
-});
-```
-
-### 4. Handle Bot Added Event in FeishuChannel
-
-**File**: `src/channels/feishu.ts`
-
-Add event handler registration and event processing:
-
-```typescript
-private setupEventHandlers(): void {
-  // Existing handlers...
-
-  // Listen for bot added to chat event
-  this.client.on('im.chat.member.bot.added_v1', (event: FeishuEvent) => {
-    this.handleBotAddedEvent(event).catch((err) => {
-      log.error({ err }, 'Error in bot added event handler');
-    });
-  });
-}
-
-private async handleBotAddedEvent(event: FeishuEvent): Promise<void> {
-  try {
-    if (event.type === 'im.chat.member.bot.added_v1' && event.event) {
-      const chatId = event.event.chat_id;
-      const operatorOpenId = event.event.operator_id?.open_id || '';
-      const chatName = event.event.name || '';
-      const timestamp = event.header?.create_time || Date.now().toString();
-
-      // Get operator name from contact API
-      const operatorName = await this.client.getUserName(operatorOpenId);
-
-      const jid = `feishu:${chatId}`;
-
-      // Store chat metadata
-      this.onChatMetadata(jid, timestamp, chatId, 'feishu', true);
-
-      // Construct virtual message for the event
-      const newMessage: NewMessage = {
-        id: `event_${event.header?.event_id || Date.now()}`,
-        chat_jid: jid,
-        sender: operatorOpenId,
-        sender_name: operatorName,
-        content: '',
-        timestamp: timestamp,
-        is_from_me: false,
-        message_type: 'text',
-        event_type: 'bot_added_to_chat',
-        event_metadata: {
-          operator_id: operatorOpenId,
-          operator_name: operatorName,
-          chat_name: chatName,
-        },
-      };
-
-      // Notify message handler
-      this.onMessage(jid, newMessage);
-
-      log.info(
-        { chatId, chatName, operatorName, operatorOpenId },
-        'Bot added to chat event processed',
-      );
-    }
-  } catch (error) {
-    log.error(
-      { error: error instanceof Error ? error.message : String(error) },
-      'Failed to handle bot added event',
-    );
-  }
-}
-```
-
-### 5. Skill Cache and Trigger Matching
-
-**New File**: `container/agent-runner/src/skill-cache.ts`
-
-```typescript
-import * as fs from 'fs';
-import * as path from 'path';
-
-export interface SkillMeta {
-  name: string;
-  description: string;
-  trigger?: string;
-  content: string;
-  path: string;
-}
-
-export class SkillCache {
-  private skills: SkillMeta[] = [];
-  private skillDir: string;
-
-  constructor(skillDir: string) {
-    this.skillDir = skillDir;
-  }
-
-  async loadSkills(): Promise<void> {
-    this.skills = [];
-
-    const dirs = await fs.promises.readdir(this.skillDir);
-    for (const dir of dirs) {
-      const skillPath = path.join(this.skillDir, dir, 'SKILL.md');
-      try {
-        const content = await fs.promises.readFile(skillPath, 'utf-8');
-        const meta = this.parseFrontmatter(content, skillPath);
-        if (meta) {
-          this.skills.push(meta);
-        }
-      } catch (err) {
-        // Skill file doesn't exist or can't be read, skip
-      }
-    }
-  }
-
-  private parseFrontmatter(content: string, skillPath: string): SkillMeta | null {
-    const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-    if (!match) return null;
-
-    const frontmatter = match[1];
-    const body = match[2];
-
-    const lines = frontmatter.split('\n');
-    const meta: Partial<SkillMeta> = { content: body, path: skillPath };
-
-    for (const line of lines) {
-      const [key, ...valueParts] = line.split(':');
-      const value = valueParts.join(':').trim();
-      if (key && value) {
-        (meta as any)[key.trim()] = value;
-      }
-    }
-
-    return meta as SkillMeta;
-  }
-
-  matchByTrigger(message: any): SkillMeta[] {
-    return this.skills.filter(skill => {
-      if (!skill.trigger) return false;
-      return evaluateTrigger(skill.trigger, message);
-    });
-  }
-}
-
-function evaluateTrigger(trigger: string, message: any): boolean {
-  // Support simple comparison expressions:
-  // - event_type == 'bot_added_to_chat'
-  // - event_type != null
-  // - message_type == 'text'
-
-  const context: Record<string, any> = {
-    event_type: message.event_type,
-    message_type: message.message_type,
-    content: message.content,
-    sender: message.sender,
-    chat_jid: message.chat_jid,
-  };
-
-  // Replace field names with context references
-  let expr = trigger;
-  for (const key of Object.keys(context)) {
-    const regex = new RegExp(`\\b${key}\\b`, 'g');
-    expr = expr.replace(regex, `context.${key}`);
-  }
-
-  // Safely evaluate the expression
-  try {
-    const fn = new Function('context', `return ${expr}`);
-    return !!fn(context);
-  } catch {
-    return false;
-  }
-}
-```
-
-### 6. Integrate Trigger Matching in Message Handler
-
-**File**: `container/agent-runner/src/message-handler.ts`
-
-Modify the message handling to inject matched skills:
-
-```typescript
-import { SkillCache } from './skill-cache.js';
-
-const skillCache = new SkillCache('/workspace/skills');
-await skillCache.loadSkills();
-
-async function handleMessage(message: any): Promise<void> {
-  // Find skills that match the message via trigger
-  const matchedSkills = skillCache.matchByTrigger(message);
-
-  // Build system prompt with matched skills
-  let enhancedPrompt = baseSystemPrompt;
-  for (const skill of matchedSkills) {
-    enhancedPrompt += `\n\n---\n# Skill: ${skill.name}\n\n${skill.content}\n---\n`;
-  }
-
-  // Call Claude with enhanced prompt
-  const response = await callClaude({
-    system: enhancedPrompt,
-    messages: [{ role: 'user', content: formatMessage(message) }],
-  });
-
-  outputResponse(response);
-}
-```
-
-### 7. bot-welcome Skill
+### 5. bot-welcome Skill
 
 **New File**: `container/skills/bot-welcome/SKILL.md`
 
@@ -360,22 +251,21 @@ async function handleMessage(message: any): Promise<void> {
 ---
 name: bot-welcome
 description: 机器人入群欢迎消息处理
-trigger: event_type == 'bot_added_to_chat'
 ---
 
 # Bot Welcome
 
 当机器人被添加到群聊时，根据群配置发送欢迎消息。
 
-## 入口检查
+## 触发条件
 
-此技能仅处理 `event_type === 'bot_added_to_chat'` 的事件消息。
+当收到以 `[BOT_ADDED_TO_CHAT]` 开头的消息时，执行欢迎逻辑。
 
 ## 群组欢迎配置
 
-根据 `chat_jid` 发送对应的欢迎内容：
+根据消息中的 `chat_id` 发送对应的欢迎内容：
 
-### 群：feishu:oc_xxx（项目讨论组）
+### 群：oc_xxx（项目讨论组）
 
 欢迎加入项目讨论组！我是 NanoClaw 助手。
 
@@ -388,7 +278,7 @@ trigger: event_type == 'bot_added_to_chat'
 
 ---
 
-### 群：feishu:oc_yyy（测试群）
+### 群：oc_yyy（测试群）
 
 {% call skill='project-init' %}
 自动初始化项目环境。
@@ -403,6 +293,47 @@ trigger: event_type == 'bot_added_to_chat'
 回复 `/help` 查看可用功能。
 ```
 
+### 6. Skill Loading Configuration
+
+The `bot-welcome` skill is loaded automatically via the group's `CLAUDE.md` file. Add to `groups/{name}/CLAUDE.md`:
+
+```markdown
+# Group Configuration
+
+{% skill bot-welcome %}
+```
+
+Or add to the global skills directory if using `settingSources: ['project', 'user']` configuration.
+
+## Why This Approach Works
+
+### Container Reuse Compatibility
+
+The event message flows through the same IPC path as regular messages:
+- Host writes `{type: "message", text: "[BOT_ADDED_TO_CHAT]..."}` to IPC
+- agent-runner's `drainIpcInput()` reads it
+- Message is pushed to the stream during `runQuery()`
+- Works for both new and existing containers
+
+### No IPC Modifications
+
+Uses the existing IPC message format:
+```json
+{
+  "type": "message",
+  "text": "[BOT_ADDED_TO_CHAT]\nchat_id: oc_xxx\n..."
+}
+```
+
+No changes needed to `src/ipc.ts` or `container/agent-runner/src/index.ts`.
+
+### Simplicity
+
+- No new TypeScript interfaces required for event types
+- No trigger expression parsing
+- No skill caching mechanism needed
+- Reuses existing message flow
+
 ## Error Handling
 
 ### Permission Requirements
@@ -411,13 +342,13 @@ The Feishu app requires:
 - Permission: `获取群组信息` or `获取与更新群组信息`
 - Event subscription: `机器人进群` event enabled in the developer console
 
-If the event is not received, document the required configuration steps.
+If the event is not received, check the developer console configuration.
 
 ### Duplicate Add to Group
 
 The bot may be added to the same group multiple times (removed then re-added).
 
-**Behavior**: Trigger welcome logic on every add event, without checking for "first add".
+**Behavior**: Trigger welcome logic on every add event. No "first add" check.
 
 ### Unconfigured Group
 
@@ -425,43 +356,35 @@ If `bot-welcome` skill doesn't have a specific configuration for a group.
 
 **Behavior**: Use the default welcome message defined in the skill.
 
-### Invalid Trigger Expression
+### Operator Name Unavailable
 
-If a skill's `trigger` syntax is incorrect or evaluation fails.
+If the contact API fails to get the operator's name.
 
-**Behavior**:
-- `evaluateTrigger` catches exceptions and returns `false` (no match)
-- Log the error for debugging
-
-### Message Without event_type
-
-Regular messages have `event_type` as `undefined`.
-
-**Behavior**: `trigger: event_type == 'bot_added_to_chat'` returns `false` for `undefined`, preventing false triggers.
+**Behavior**: Use the `open_id` as the operator name fallback.
 
 ## File Changes Summary
 
 | File | Change |
 |------|--------|
-| `src/types.ts` | Add `event_type` and `event_metadata` to `NewMessage` |
-| `src/feishu/types.ts` | Add `im.chat.member.bot.added_v1` event structure |
-| `src/feishu/client.ts` | Register bot added event listener in `connect()` |
-| `src/channels/feishu.ts` | Add `handleBotAddedEvent()` method |
-| `container/agent-runner/src/skill-cache.ts` | **New**: Skill caching and trigger matching |
-| `container/agent-runner/src/message-handler.ts` | Integrate trigger matching and skill injection |
+| `src/feishu/types.ts` | Add `header` and bot_added event fields to `FeishuEvent` |
+| `src/feishu/client.ts` | Register `im.chat.member.bot.added_v1` listener in EventDispatcher |
+| `src/channels/feishu.ts` | Add `handleBotAddedEvent()` method and event registration |
 | `container/skills/bot-welcome/SKILL.md` | **New**: Bot welcome skill |
 
 ## Testing
 
 ### Manual Testing
 
-1. Configure event subscription in Feishu developer console
+1. Configure event subscription in Feishu developer console:
+   - Enable "机器人进群" event
+   - Ensure app has `获取群组信息` permission
 2. Add the bot to a test group
 3. Verify welcome message is received
-4. Check logs to confirm trigger matching succeeded
+4. Check logs to confirm event was processed
 
 ### Edge Cases to Test
 
 - Bot removed and re-added to the same group
 - Group without specific welcome configuration (should use default)
-- Multiple skills with matching triggers
+- Operator name unavailable (should show open_id)
+- Container reuse: add bot to a group with existing session
