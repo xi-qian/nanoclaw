@@ -109,13 +109,15 @@ const eventDispatcher = new Lark.EventDispatcher({
     log.info({ data: JSON.stringify(data) }, 'Bot added to chat event received');
     self.emit('im.chat.member.bot.added_v1', {
       type: 'im.chat.member.bot.added_v1',
-      event: data,  // Full data object, access header via event.header
+      event: data,  // Full data object wrapped in event
     });
   },
 });
 ```
 
 Update the log message at line 191-192 to include the new event type.
+
+**Note on Event Data Structure**: The Lark SDK EventDispatcher callback receives the event body. Based on the existing code patterns in `handleMessageEvent`, the `data` object contains fields like `message`, `sender` directly. For the bot added event, it should contain `chat_id`, `operator_id`, `name`, etc. The Feishu API `header` (with `event_id`, `create_time`) may not be directly accessible through the SDK callback - use fallbacks if needed.
 
 ### 3. Handle Bot Added Event in FeishuChannel
 
@@ -147,12 +149,13 @@ Add the new handler method:
 private async handleBotAddedEvent(event: FeishuEvent): Promise<void> {
   try {
     if (event.type === 'im.chat.member.bot.added_v1' && event.event) {
-      // Access fields from event.event (data wrapped in event, consistent with other handlers)
+      // Access fields from event.event (SDK callback data wrapped in event)
       const eventData = event.event;
       const chatId = eventData.chat_id || '';
       const chatName = eventData.name || '';
       const operatorOpenId = eventData.operator_id?.open_id || '';
-      const timestamp = event.event?.header?.create_time || Date.now().toString();
+      // Use current time as fallback (SDK may not expose header.create_time)
+      const timestamp = Date.now().toString();
 
       // Get operator name from contact API
       const operatorName = await this.client.getUserName(operatorOpenId);
@@ -173,8 +176,9 @@ private async handleBotAddedEvent(event: FeishuEvent): Promise<void> {
       ].join('\n');
 
       // Construct message (same structure as regular messages)
+      // Use timestamp-based ID as fallback (SDK may not expose header.event_id)
       const newMessage: NewMessage = {
-        id: `event_${event.event?.header?.event_id || Date.now()}`,
+        id: `event_${timestamp}`,
         chat_jid: jid,
         sender: operatorOpenId,
         sender_name: operatorName,
@@ -205,24 +209,13 @@ private async handleBotAddedEvent(event: FeishuEvent): Promise<void> {
 
 **File**: `src/feishu/types.ts`
 
-Add `header` field and bot added event fields to the `FeishuEvent` interface.
+Add fields for the bot added event in the `FeishuEvent` interface.
 
-**Note**: The `event.operator` field already exists in the current types (lines 30-32). Only `header` and the bot-added-specific fields are new.
+**Note**: The `event.operator` field already exists in the current types (lines 30-32). Only the bot-added-specific fields are new. The `header` field is not included as it may not be exposed by the Lark SDK EventDispatcher callback.
 
 ```typescript
 export interface FeishuEvent {
   type: string;
-
-  // NEW: Header field for all events (needed for event_id, create_time, etc.)
-  header?: {
-    event_id: string;
-    event_type: string;
-    create_time: string;
-    token: string;
-    app_id: string;
-    tenant_key: string;
-  };
-
   event?: {
     // EXISTING: Already in current types
     operator?: {
@@ -260,6 +253,8 @@ export interface FeishuEvent {
   };
 }
 ```
+
+**Future Enhancement**: If the Lark SDK is updated to expose the `header` field (containing `event_id`, `create_time`), the type can be extended to include it.
 
 ### 5. bot-welcome Skill
 
