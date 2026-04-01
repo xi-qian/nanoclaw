@@ -82,7 +82,9 @@ This format:
 
 **File**: `src/feishu/client.ts`
 
-In the `connect()` method, register the new event listener in the EventDispatcher:
+In the `connect()` method, register the new event listener in the EventDispatcher.
+
+**Important**: Keep consistent with existing event emit pattern (wrap full `data` in `event`):
 
 ```typescript
 const eventDispatcher = new Lark.EventDispatcher({
@@ -102,13 +104,12 @@ const eventDispatcher = new Lark.EventDispatcher({
       event: data,
     });
   },
-  // New: Bot added to chat event
+  // New: Bot added to chat event (same pattern as existing events)
   'im.chat.member.bot.added_v1': async (data: any) => {
     log.info({ data: JSON.stringify(data) }, 'Bot added to chat event received');
     self.emit('im.chat.member.bot.added_v1', {
       type: 'im.chat.member.bot.added_v1',
-      header: data.header,
-      event: data.event,
+      event: data,  // Full data object, access header via event.header
     });
   },
 });
@@ -146,10 +147,12 @@ Add the new handler method:
 private async handleBotAddedEvent(event: FeishuEvent): Promise<void> {
   try {
     if (event.type === 'im.chat.member.bot.added_v1' && event.event) {
-      const chatId = event.event.chat_id || '';
-      const chatName = event.event.name || '';
-      const operatorOpenId = event.event.operator_id?.open_id || '';
-      const timestamp = event.header?.create_time || Date.now().toString();
+      // Access fields from event.event (data wrapped in event, consistent with other handlers)
+      const eventData = event.event;
+      const chatId = eventData.chat_id || '';
+      const chatName = eventData.name || '';
+      const operatorOpenId = eventData.operator_id?.open_id || '';
+      const timestamp = event.event?.header?.create_time || Date.now().toString();
 
       // Get operator name from contact API
       const operatorName = await this.client.getUserName(operatorOpenId);
@@ -171,7 +174,7 @@ private async handleBotAddedEvent(event: FeishuEvent): Promise<void> {
 
       // Construct message (same structure as regular messages)
       const newMessage: NewMessage = {
-        id: `event_${event.header?.event_id || Date.now()}`,
+        id: `event_${event.event?.header?.event_id || Date.now()}`,
         chat_jid: jid,
         sender: operatorOpenId,
         sender_name: operatorName,
@@ -202,11 +205,15 @@ private async handleBotAddedEvent(event: FeishuEvent): Promise<void> {
 
 **File**: `src/feishu/types.ts`
 
-Add fields for the bot added event in the `FeishuEvent` interface:
+Add `header` field and bot added event fields to the `FeishuEvent` interface.
+
+**Note**: The `event.operator` field already exists in the current types (lines 30-32). Only `header` and the bot-added-specific fields are new.
 
 ```typescript
 export interface FeishuEvent {
   type: string;
+
+  // NEW: Header field for all events (needed for event_id, create_time, etc.)
   header?: {
     event_id: string;
     event_type: string;
@@ -215,16 +222,27 @@ export interface FeishuEvent {
     app_id: string;
     tenant_key: string;
   };
+
   event?: {
-    // Existing fields for message events...
-    operator?: { open_id: string };
-    sender?: { ... };
+    // EXISTING: Already in current types
+    operator?: {
+      open_id: string;
+    };
+    sender?: {
+      sender_id: {
+        open_id: string;
+        union_id?: string;
+        user_id?: string | null;
+      };
+      sender_type: string;
+      tenant_key: string;
+    };
     message?: { ... };
     reaction?: { ... };
     action?: { ... };
     context?: { ... };
 
-    // Fields for im.chat.member.bot.added_v1 event
+    // NEW: Fields for im.chat.member.bot.added_v1 event
     chat_id?: string;
     operator_id?: {
       union_id?: string;
@@ -248,25 +266,31 @@ export interface FeishuEvent {
 **New File**: `container/skills/bot-welcome/SKILL.md`
 
 ```markdown
----
-name: bot-welcome
-description: 机器人入群欢迎消息处理
----
-
-# Bot Welcome
-
-当机器人被添加到群聊时，根据群配置发送欢迎消息。
+# 机器人入群欢迎 Skill
 
 ## 触发条件
 
 当收到以 `[BOT_ADDED_TO_CHAT]` 开头的消息时，执行欢迎逻辑。
 
-## 群组欢迎配置
+## 作用
 
-根据消息中的 `chat_id` 发送对应的欢迎内容：
+根据群组配置发送欢迎消息，帮助新成员了解机器人功能。
+
+## 消息解析
+
+从消息中提取以下信息：
+- `chat_id`: 群组 ID
+- `chat_name`: 群名称
+- `operator`: 拉机器人进群的操作者
+- `timestamp`: 事件时间
+
+## 群组欢迎配置
 
 ### 群：oc_xxx（项目讨论组）
 
+发送以下欢迎消息：
+
+```
 欢迎加入项目讨论组！我是 NanoClaw 助手。
 
 我可以帮你：
@@ -274,36 +298,48 @@ description: 机器人入群欢迎消息处理
 - 创建飞书文档
 - 搜索项目信息
 
-发送消息即可与我交互，或使用 `/help` 查看更多指令。
-
----
+发送消息即可与我交互，或使用 /help 查看更多指令。
+```
 
 ### 群：oc_yyy（测试群）
 
-{% call skill='project-init' %}
-自动初始化项目环境。
-{% endcall %}
+发送欢迎消息后，自动执行项目初始化：
 
----
+1. 发送欢迎消息
+2. 然后按照 project-init 技能的流程，询问用户是否需要初始化项目
 
-## 默认欢迎（未配置的群）
+### 默认欢迎（未配置的群）
 
+发送以下消息：
+
+```
 你好！我是 NanoClaw 助手，有什么可以帮助你的？
 
-回复 `/help` 查看可用功能。
+回复 /help 查看可用功能。
+```
+
+## 执行逻辑
+
+1. 检查消息是否以 `[BOT_ADDED_TO_CHAT]` 开头
+2. 解析消息内容，提取 `chat_id`
+3. 根据上面的群组配置，发送对应的欢迎消息
+4. 如果群组需要触发其他技能，在欢迎消息后继续执行相应操作
 ```
 
 ### 6. Skill Loading Configuration
 
-The `bot-welcome` skill is loaded automatically via the group's `CLAUDE.md` file. Add to `groups/{name}/CLAUDE.md`:
+The `bot-welcome` skill is loaded automatically when the agent processes messages. Skills work by:
 
-```markdown
-# Group Configuration
+1. The skill file (`container/skills/bot-welcome/SKILL.md`) is mounted into the container at `/workspace/skills/bot-welcome/SKILL.md`
+2. The group's `CLAUDE.md` file includes a reference to load the skill:
+   ```markdown
+   # Group Configuration
 
-{% skill bot-welcome %}
-```
+   使用 bot-welcome 技能处理机器人入群事件。
+   ```
+3. When the agent receives a `[BOT_ADDED_TO_CHAT]` message, it follows the skill's instructions
 
-Or add to the global skills directory if using `settingSources: ['project', 'user']` configuration.
+**Note**: The agent determines when to apply the skill based on the message content (trigger condition in the skill description).
 
 ## Why This Approach Works
 
