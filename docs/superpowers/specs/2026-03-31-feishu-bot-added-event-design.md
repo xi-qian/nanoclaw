@@ -397,7 +397,7 @@ If the contact API fails to get the operator's name.
 
 | File | Change |
 |------|--------|
-| `src/feishu/types.ts` | Add `header` and bot_added event fields to `FeishuEvent` |
+| `src/feishu/types.ts` | Add bot_added event fields to `FeishuEvent` |
 | `src/feishu/client.ts` | Register `im.chat.member.bot.added_v1` listener in EventDispatcher |
 | `src/channels/feishu.ts` | Add `handleBotAddedEvent()` method and event registration |
 | `container/skills/bot-welcome/SKILL.md` | **New**: Bot welcome skill |
