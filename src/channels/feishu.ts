@@ -245,11 +245,21 @@ export class FeishuChannel implements Channel {
 
   /**
    * 从富文本消息中提取文本内容
+   * 支持两种格式：
+   * - 标准: {zh_cn: {content: [...]}} 或 {en_us: {content: [...]}}
+   * - 简化: {content: [...]}（某些消息类型直接发送）
    */
   private extractPostText(content: any): string {
     try {
+      // 尝试标准格式（有 zh_cn/en_us 层级）
       const zhContent = content.zh_cn || content.en_us || {};
-      const postContent = zhContent.content || [];
+      let postContent = zhContent.content || [];
+
+      // 如果没有找到，尝试简化格式（直接 content 层级）
+      if (postContent.length === 0 && Array.isArray(content.content)) {
+        postContent = content.content;
+      }
+
       const texts: string[] = [];
 
       for (const paragraph of postContent) {

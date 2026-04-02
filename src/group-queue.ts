@@ -4,12 +4,7 @@ import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 
-import {
-  CONTAINER_TIMEOUT,
-  DATA_DIR,
-  IDLE_TIMEOUT,
-  MAX_CONCURRENT_CONTAINERS,
-} from './config.js';
+import { DATA_DIR, IDLE_TIMEOUT, MAX_CONCURRENT_CONTAINERS } from './config.js';
 import { logger } from './logger.js';
 
 const execAsync = promisify(exec);
@@ -324,32 +319,11 @@ export class GroupQueue {
 
     try {
       if (this.processMessagesFn) {
-        // Timeout protection: prevent Promise from hanging forever
-        const timeoutMs = CONTAINER_TIMEOUT + 60000; // 1 minute grace period
-        let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-        try {
-          const success = await Promise.race([
-            this.processMessagesFn(groupJid),
-            new Promise<boolean>((_, reject) => {
-              timeoutId = setTimeout(
-                () =>
-                  reject(
-                    new Error(
-                      `Container processing timeout after ${timeoutMs}ms`,
-                    ),
-                  ),
-                timeoutMs,
-              );
-            }),
-          ]);
-          if (success) {
-            state.retryCount = 0;
-          } else {
-            this.scheduleRetry(groupJid, state);
-          }
-        } finally {
-          if (timeoutId) clearTimeout(timeoutId);
+        const success = await this.processMessagesFn(groupJid);
+        if (success) {
+          state.retryCount = 0;
+        } else {
+          this.scheduleRetry(groupJid, state);
         }
       }
     } catch (err) {
@@ -401,23 +375,7 @@ export class GroupQueue {
     );
 
     try {
-      // Timeout protection: prevent task from hanging forever
-      const timeoutMs = CONTAINER_TIMEOUT + 60000; // 1 minute grace period
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-      try {
-        await Promise.race([
-          task.fn(),
-          new Promise<void>((_, reject) => {
-            timeoutId = setTimeout(
-              () => reject(new Error(`Task timeout after ${timeoutMs}ms`)),
-              timeoutMs,
-            );
-          }),
-        ]);
-      } finally {
-        if (timeoutId) clearTimeout(timeoutId);
-      }
+      await task.fn();
     } catch (err) {
       logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
     } finally {
