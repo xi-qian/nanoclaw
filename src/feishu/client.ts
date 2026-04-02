@@ -1892,6 +1892,75 @@ export class FeishuClient {
   }
 
   /**
+   * 发送消息给指定用户
+   * @param receiveId 接收者标识（open_id 或 email）
+   * @param receiveIdType 标识类型：open_id 或 email
+   * @param text 消息内容
+   * @param msgType 消息类型：text 或 post（默认 post，支持 Markdown）
+   * @returns 消息 ID 和聊天 ID
+   */
+  async sendToUser(
+    receiveId: string,
+    receiveIdType: 'open_id' | 'email',
+    text: string,
+    msgType: 'text' | 'post' = 'post',
+  ): Promise<{ message_id: string; chat_id?: string }> {
+    try {
+      let content: string;
+
+      if (msgType === 'post') {
+        // 富文本消息，支持 Markdown 渲染
+        content = JSON.stringify({
+          zh_cn: {
+            content: [[{ tag: 'md', text }]],
+          },
+        });
+      } else {
+        // 纯文本消息
+        content = JSON.stringify({ text });
+      }
+
+      const response = await this.client.im.message.create({
+        params: {
+          receive_id_type: receiveIdType,
+        },
+        data: {
+          receive_id: receiveId,
+          msg_type: msgType,
+          content,
+        },
+      });
+
+      if (response.code !== 0) {
+        throw new Error(`发送失败: ${response.msg} (code: ${response.code})`);
+      }
+
+      const messageId = response.data?.message_id || '';
+      const chatId = response.data?.chat_id;
+
+      log.info(
+        { receiveId, receiveIdType, messageId, chatId },
+        'Message sent to user successfully',
+      );
+
+      return {
+        message_id: messageId,
+        chat_id: chatId,
+      };
+    } catch (error) {
+      log.error(
+        {
+          receiveId,
+          receiveIdType,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to send message to user',
+      );
+      throw error;
+    }
+  }
+
+  /**
    * 发送文件消息
    * @param chatId 聊天 ID
    * @param fileKey 文件 key（通过 uploadFile 获取）

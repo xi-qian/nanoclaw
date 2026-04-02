@@ -352,6 +352,70 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                     result = sendResult;
                     break;
+                  // 发送消息给指定用户
+                  case 'send_to_user': {
+                    const {
+                      identify_type,
+                      identify_value,
+                      user_name,
+                      message,
+                      msg_type,
+                    } = request;
+
+                    // 验证 identify_type
+                    if (!['open_id', 'email'].includes(identify_type)) {
+                      throw new Error(`不支持的标识类型: ${identify_type}`);
+                    }
+
+                    // 发送消息
+                    const sendResult = await feishuChannel.client.sendToUser(
+                      identify_value,
+                      identify_type,
+                      message,
+                      msg_type || 'post',
+                    );
+
+                    // 自动注册单聊
+                    if (sendResult.chat_id) {
+                      const p2pChatJid = `feishu:${sendResult.chat_id}`;
+
+                      if (!registeredGroups[p2pChatJid]) {
+                        const p2pFolder = `feishu-${sendResult.chat_id}`;
+
+                        deps.registerGroup(p2pChatJid, {
+                          name: `单聊-${user_name || identify_value}`,
+                          folder: p2pFolder,
+                          trigger: '',
+                          added_at: new Date().toISOString(),
+                          is_p2p: true,
+                          p2p_user: {
+                            open_id:
+                              identify_type === 'open_id'
+                                ? identify_value
+                                : undefined,
+                            name: user_name,
+                            email:
+                              identify_type === 'email'
+                                ? identify_value
+                                : undefined,
+                          },
+                          source_group: sourceGroup,
+                        });
+
+                        logger.info(
+                          { p2pChatJid, user_name, sourceGroup },
+                          'P2P chat auto-registered',
+                        );
+                      }
+                    }
+
+                    result = {
+                      message_id: sendResult.message_id,
+                      chat_id: sendResult.chat_id,
+                      user_name: user_name,
+                    };
+                    break;
+                  }
                   default:
                     throw new Error(
                       `Unknown feishu request type: ${request.type}`,

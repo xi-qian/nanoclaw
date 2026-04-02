@@ -28,7 +28,8 @@ const log = larkLogger('channel');
  */
 export class FeishuChannel implements Channel {
   name = 'feishu';
-  private client: FeishuClient;
+  /** 飞书客户端实例（公开以供 IPC 访问） */
+  readonly client: FeishuClient;
   private onMessage: OnInboundMessage;
   private onChatMetadata: OnChatMetadata;
   private onCardAction?: (

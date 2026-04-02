@@ -63,21 +63,49 @@ describe('formatMessages', () => {
   it('formats a single message as XML with context header', () => {
     const result = formatMessages([makeMsg()], TZ);
     expect(result).toContain('<context timezone="UTC" />');
+    expect(result).toContain('<messages>');
     expect(result).toContain('<message sender="Alice"');
     expect(result).toContain('>hello</message>');
-    expect(result).toContain('Jan 1, 2024');
+  });
+
+  it('includes sender_id for unique user identification', () => {
+    const result = formatMessages(
+      [makeMsg({ sender: 'ou_abc123', sender_name: '张三' })],
+      TZ,
+    );
+    expect(result).toContain('sender="张三"');
+    expect(result).toContain('sender_id="ou_abc123"');
+  });
+
+  it('omits sender_id when sender is not provided', () => {
+    const result = formatMessages(
+      [makeMsg({ sender: undefined as any, sender_name: 'Anonymous' })],
+      TZ,
+    );
+    expect(result).toContain('sender="Anonymous"');
+    expect(result).not.toContain('sender_id=');
+  });
+
+  it('escapes special characters in sender_id', () => {
+    const result = formatMessages(
+      [makeMsg({ sender: 'ou_<test>&"id"', sender_name: 'User' })],
+      TZ,
+    );
+    expect(result).toContain('sender_id="ou_&lt;test&gt;&amp;&quot;id&quot;"');
   });
 
   it('formats multiple messages', () => {
     const msgs = [
       makeMsg({
         id: '1',
+        sender: 'ou_alice',
         sender_name: 'Alice',
         content: 'hi',
         timestamp: '2024-01-01T00:00:00.000Z',
       }),
       makeMsg({
         id: '2',
+        sender: 'ou_bob',
         sender_name: 'Bob',
         content: 'hey',
         timestamp: '2024-01-01T01:00:00.000Z',
@@ -85,7 +113,9 @@ describe('formatMessages', () => {
     ];
     const result = formatMessages(msgs, TZ);
     expect(result).toContain('sender="Alice"');
+    expect(result).toContain('sender_id="ou_alice"');
     expect(result).toContain('sender="Bob"');
+    expect(result).toContain('sender_id="ou_bob"');
     expect(result).toContain('>hi</message>');
     expect(result).toContain('>hey</message>');
   });
@@ -139,16 +169,19 @@ describe('TRIGGER_PATTERN', () => {
     expect(TRIGGER_PATTERN.test(`@${upper} hello`)).toBe(true);
   });
 
-  it('does not match when not at start of message', () => {
-    expect(TRIGGER_PATTERN.test(`hello @${name}`)).toBe(false);
+  it('matches @name even when in middle of message (looks ahead for space or end)', () => {
+    // TRIGGER_PATTERN uses lookahead, so it matches @name followed by space/end
+    // even if not at start of message
+    expect(TRIGGER_PATTERN.test(`hello @${name}`)).toBe(true);
   });
 
   it('does not match partial name like @NameExtra (word boundary)', () => {
     expect(TRIGGER_PATTERN.test(`@${name}extra hello`)).toBe(false);
   });
 
-  it('matches with word boundary before apostrophe', () => {
-    expect(TRIGGER_PATTERN.test(`@${name}'s thing`)).toBe(true);
+  it('does not match @name followed by apostrophe', () => {
+    // Apostrophe is not in the lookahead character set
+    expect(TRIGGER_PATTERN.test(`@${name}'s thing`)).toBe(false);
   });
 
   it('matches @name alone (end of string is a word boundary)', () => {

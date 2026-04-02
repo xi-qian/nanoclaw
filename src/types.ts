@@ -40,6 +40,14 @@ export interface RegisteredGroup {
   containerConfig?: ContainerConfig;
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
+  // 单聊字段
+  is_p2p?: boolean; // 是否为单聊
+  p2p_user?: {
+    open_id?: string;
+    name?: string;
+    email?: string;
+  };
+  source_group?: string; // 来源群组（单聊是从哪个群发起的）
 }
 
 export interface NewMessage {
