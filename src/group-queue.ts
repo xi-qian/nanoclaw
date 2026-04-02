@@ -1,9 +1,13 @@
 import { ChildProcess } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
+import { DATA_DIR, IDLE_TIMEOUT, MAX_CONCURRENT_CONTAINERS } from './config.js';
 import { logger } from './logger.js';
+
+const execAsync = promisify(exec);
 
 interface QueuedTask {
   id: string;
@@ -82,6 +86,14 @@ export class GroupQueue {
       return;
     }
 
+    // CRITICAL: Set active flag BEFORE calling runForGroup to prevent race condition
+    // This ensures that if enqueueMessageCheck is called again before runForGroup starts,
+    // the second call will see state.active = true and queue the message instead of
+    // starting another container.
+    state.active = true;
+    state.pendingMessages = false;
+    this.activeCount++;
+
     this.runForGroup(groupJid, 'messages').catch((err) =>
       logger.error({ groupJid, err }, 'Unhandled error in runForGroup'),
     );
@@ -123,7 +135,12 @@ export class GroupQueue {
       return;
     }
 
-    // Run immediately
+    // CRITICAL: Set active flag BEFORE calling runTask to prevent race condition
+    state.active = true;
+    state.isTaskContainer = true;
+    state.runningTaskId = taskId;
+    this.activeCount++;
+
     this.runTask(groupJid, { id: taskId, groupJid, fn }).catch((err) =>
       logger.error({ groupJid, taskId, err }, 'Unhandled error in runTask'),
     );
@@ -240,16 +257,60 @@ export class GroupQueue {
     }
   }
 
+  /**
+   * Check if a Docker container is still running.
+   * Returns false if the container doesn't exist or has exited.
+   */
+  private async isContainerAlive(containerName: string): Promise<boolean> {
+    if (!containerName) return false;
+
+    try {
+      const { stdout } = await execAsync(
+        `docker inspect -f '{{.State.Running}}' ${containerName} 2>/dev/null`,
+        { timeout: 5000 },
+      );
+      return stdout.trim() === 'true';
+    } catch (err) {
+      // Container doesn't exist or docker command failed
+      logger.debug(
+        { containerName, error: err },
+        'Container health check failed',
+      );
+      return false;
+    }
+  }
+
   private async runForGroup(
     groupJid: string,
     reason: 'messages' | 'drain',
   ): Promise<void> {
     const state = this.getGroup(groupJid);
-    state.active = true;
+
+    // Check if already active (could be set by enqueueMessageCheck)
+    // If not active, set it now (this handles the 'drain' case)
+    if (!state.active) {
+      state.active = true;
+      state.pendingMessages = false;
+      this.activeCount++;
+    }
+
     state.idleWaiting = false;
     state.isTaskContainer = false;
-    state.pendingMessages = false;
-    this.activeCount++;
+
+    // Health check: if previous container died, force cleanup
+    if (state.containerName) {
+      const isAlive = await this.isContainerAlive(state.containerName);
+      if (!isAlive) {
+        logger.warn(
+          { groupJid, containerName: state.containerName },
+          'Previous container died unexpectedly, resetting state',
+        );
+        state.process = null;
+        state.containerName = null;
+        state.groupFolder = null;
+        // Note: active flag remains true since we're about to start a new container
+      }
+    }
 
     logger.debug(
       { groupJid, reason, activeCount: this.activeCount },
@@ -274,17 +335,39 @@ export class GroupQueue {
       state.containerName = null;
       state.groupFolder = null;
       this.activeCount--;
+      // Call drainGroup AFTER resetting state.active
       this.drainGroup(groupJid);
     }
   }
 
   private async runTask(groupJid: string, task: QueuedTask): Promise<void> {
     const state = this.getGroup(groupJid);
-    state.active = true;
+
+    // Check if already active (could be set by enqueueTask)
+    // If not active, set it now
+    if (!state.active) {
+      state.active = true;
+      state.isTaskContainer = true;
+      state.runningTaskId = task.id;
+      this.activeCount++;
+    }
+
     state.idleWaiting = false;
-    state.isTaskContainer = true;
-    state.runningTaskId = task.id;
-    this.activeCount++;
+
+    // Health check: if previous container died, force cleanup
+    if (state.containerName) {
+      const isAlive = await this.isContainerAlive(state.containerName);
+      if (!isAlive) {
+        logger.warn(
+          { groupJid, taskId: task.id, containerName: state.containerName },
+          'Previous container died unexpectedly before task, resetting state',
+        );
+        state.process = null;
+        state.containerName = null;
+        state.groupFolder = null;
+        // Note: active flag remains true since we're about to start a new container
+      }
+    }
 
     logger.debug(
       { groupJid, taskId: task.id, activeCount: this.activeCount },
@@ -349,12 +432,15 @@ export class GroupQueue {
 
     // Then pending messages
     if (state.pendingMessages) {
-      this.runForGroup(groupJid, 'drain').catch((err) =>
-        logger.error(
-          { groupJid, err },
-          'Unhandled error in runForGroup (drain)',
-        ),
-      );
+      // Check if already active to prevent race condition
+      if (!state.active) {
+        this.runForGroup(groupJid, 'drain').catch((err) =>
+          logger.error(
+            { groupJid, err },
+            'Unhandled error in runForGroup (drain)',
+          ),
+        );
+      }
       return;
     }
 
@@ -380,12 +466,15 @@ export class GroupQueue {
           ),
         );
       } else if (state.pendingMessages) {
-        this.runForGroup(nextJid, 'drain').catch((err) =>
-          logger.error(
-            { groupJid: nextJid, err },
-            'Unhandled error in runForGroup (waiting)',
-          ),
-        );
+        // Check if already active to prevent race condition
+        if (!state.active) {
+          this.runForGroup(nextJid, 'drain').catch((err) =>
+            logger.error(
+              { groupJid: nextJid, err },
+              'Unhandled error in runForGroup (waiting)',
+            ),
+          );
+        }
       }
       // If neither pending, skip this group
     }
