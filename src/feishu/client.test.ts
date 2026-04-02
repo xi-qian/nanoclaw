@@ -30,14 +30,12 @@ vi.mock('form-data', () => ({
 }));
 
 // Mock @larksuiteoapi/node-sdk
+const mockMessageCreate = vi.fn();
 vi.mock('@larksuiteoapi/node-sdk', () => ({
   Client: class MockClient {
     im = {
       message: {
-        create: vi.fn().mockResolvedValue({
-          code: 0,
-          data: { message_id: 'test_message_id' },
-        }),
+        create: mockMessageCreate,
       },
     };
     request = vi.fn();
@@ -160,6 +158,11 @@ describe('FeishuClient', () => {
 
   describe('sendFileMessage', () => {
     it('should send file message successfully', async () => {
+      mockMessageCreate.mockResolvedValueOnce({
+        code: 0,
+        data: { message_id: 'test_message_id' },
+      });
+
       const messageId = await client.sendFileMessage(
         'test_chat_id',
         'test_file_key',
@@ -206,6 +209,11 @@ describe('FeishuClient', () => {
           status: 200,
         });
 
+      mockMessageCreate.mockResolvedValueOnce({
+        code: 0,
+        data: { message_id: 'test_message_id' },
+      });
+
       const result = await client.uploadAndSendFile(
         'test_chat_id',
         '/test/path/file.pdf',
@@ -214,6 +222,103 @@ describe('FeishuClient', () => {
 
       expect(result.file_key).toBe('test_file_key');
       expect(result.message_id).toBe('test_message_id');
+    });
+  });
+
+  describe('sendToUser', () => {
+    it('should send message to user by open_id with post type', async () => {
+      mockMessageCreate.mockResolvedValueOnce({
+        code: 0,
+        data: {
+          message_id: 'test_message_id',
+          chat_id: 'oc_test_chat',
+        },
+      });
+
+      const result = await client.sendToUser(
+        'ou_test_user',
+        'open_id',
+        'Hello, this is a test message',
+        'post',
+      );
+
+      expect(result.message_id).toBe('test_message_id');
+      expect(result.chat_id).toBe('oc_test_chat');
+
+      // Verify the call was made with correct parameters
+      expect(mockMessageCreate).toHaveBeenCalledWith({
+        params: { receive_id_type: 'open_id' },
+        data: {
+          receive_id: 'ou_test_user',
+          msg_type: 'post',
+          content: expect.stringContaining('Hello, this is a test message'),
+        },
+      });
+    });
+
+    it('should send message to user by email with text type', async () => {
+      mockMessageCreate.mockResolvedValueOnce({
+        code: 0,
+        data: {
+          message_id: 'test_message_id',
+          chat_id: 'oc_test_chat',
+        },
+      });
+
+      const result = await client.sendToUser(
+        'user@example.com',
+        'email',
+        'Plain text message',
+        'text',
+      );
+
+      expect(result.message_id).toBe('test_message_id');
+      expect(result.chat_id).toBe('oc_test_chat');
+
+      // Verify the call was made with correct parameters
+      expect(mockMessageCreate).toHaveBeenCalledWith({
+        params: { receive_id_type: 'email' },
+        data: {
+          receive_id: 'user@example.com',
+          msg_type: 'text',
+          content: expect.stringContaining('Plain text message'),
+        },
+      });
+    });
+
+    it('should default to post type when msg_type not specified', async () => {
+      mockMessageCreate.mockResolvedValueOnce({
+        code: 0,
+        data: { message_id: 'test_message_id' },
+      });
+
+      await client.sendToUser('ou_test_user', 'open_id', 'Test');
+
+      const callArgs = mockMessageCreate.mock.calls[0][0];
+      expect(callArgs.data.msg_type).toBe('post');
+    });
+
+    it('should throw error when send fails', async () => {
+      mockMessageCreate.mockResolvedValueOnce({
+        code: 99991661,
+        msg: 'user not found',
+      });
+
+      await expect(
+        client.sendToUser('ou_invalid', 'open_id', 'Test message'),
+      ).rejects.toThrow('发送失败: user not found');
+    });
+
+    it('should handle missing chat_id in response', async () => {
+      mockMessageCreate.mockResolvedValueOnce({
+        code: 0,
+        data: { message_id: 'test_message_id' },
+      });
+
+      const result = await client.sendToUser('ou_test_user', 'open_id', 'Test');
+
+      expect(result.message_id).toBe('test_message_id');
+      expect(result.chat_id).toBeUndefined();
     });
   });
 });

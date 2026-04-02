@@ -1264,6 +1264,83 @@ server.tool(
   },
 );
 
+server.tool(
+  'feishu_send_to_user',
+  `发送消息给飞书指定联系人。
+
+使用场景：
+- 定时任务通知指定用户
+- 向用户发送私聊消息
+- 主动联系用户（而不是等待用户先发消息）
+
+标识类型说明：
+- open_id: 用户的 open_id（推荐，格式如 "ou_xxx"）
+- email: 用户邮箱地址
+
+消息类型说明：
+- post: 富文本消息（默认），支持 Markdown 格式
+- text: 纯文本消息
+
+注意：
+- 发送成功后会自动注册单聊，后续可以直接通过 chat_id 发送消息
+- 如果用户不存在或无权限，会返回错误`,
+  {
+    identify_type: z.enum(['open_id', 'email']).describe('标识类型：open_id 或 email'),
+    identify_value: z.string().describe('标识值：open_id（如 "ou_xxx"）或邮箱地址'),
+    user_name: z.string().optional().describe('用户姓名（可选，用于显示）'),
+    message: z.string().describe('消息内容'),
+    msg_type: z.enum(['text', 'post']).optional().default('post').describe('消息类型：text=纯文本, post=富文本（默认，支持 Markdown）'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'send_to_user',
+      identify_type: args.identify_type,
+      identify_value: args.identify_value,
+      user_name: args.user_name,
+      message: args.message,
+      msg_type: args.msg_type || 'post',
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        const chatInfo = result.chat_id ? `\n聊天 ID: ${result.chat_id}` : '';
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `消息发送成功!\n\n消息 ID: ${result.message_id}${chatInfo}\n接收者: ${result.user_name || args.identify_value}`,
+            },
+          ],
+        };
+      } else {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `发送消息失败: ${result.error || '未知错误'}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `发送消息超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
 // Start the stdio server transport
 const transport = new StdioServerTransport();
 await server.connect(transport);
