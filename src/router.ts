@@ -41,6 +41,9 @@ export function formatMessages(messages: any[], timezone: string): string {
       const sender = escapeXml(msg.sender_name || 'User');
       const content = escapeXml(msg.content);
 
+      // Include sender_id for unique user identification
+      const senderId = msg.sender ? ` sender_id="${escapeXml(msg.sender)}"` : '';
+
       // Include attachment info if present
       let attachmentInfo = '';
       if (msg.attachment && msg.message_type) {
@@ -55,7 +58,7 @@ export function formatMessages(messages: any[], timezone: string): string {
         }
       }
 
-      return `    <message sender="${sender}" timestamp="${timestamp}"${attachmentInfo}>${content}</message>`;
+      return `    <message sender="${sender}"${senderId} timestamp="${timestamp}"${attachmentInfo}>${content}</message>`;
     })
     .join('\n');
 
@@ -83,6 +86,9 @@ export function formatMessagesWithHistory(
     const sender = escapeXml(msg.sender_name || 'User');
     const content = escapeXml(msg.content);
 
+    // Include sender_id for unique user identification
+    const senderId = msg.sender ? ` sender_id="${escapeXml(msg.sender)}"` : '';
+
     // Include attachment info if present
     let attachmentInfo = '';
     if (msg.attachment && msg.message_type) {
@@ -97,7 +103,7 @@ export function formatMessagesWithHistory(
       }
     }
 
-    return `    <message sender="${sender}" timestamp="${timestamp}"${attachmentInfo}>${content}</message>`;
+    return `    <message sender="${sender}"${senderId} timestamp="${timestamp}"${attachmentInfo}>${content}</message>`;
   };
 
   // If no history, use simple format
