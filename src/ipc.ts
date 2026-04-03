@@ -388,6 +388,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                           trigger: '',
                           added_at: new Date().toISOString(),
                           is_p2p: true,
+                          requiresTrigger: false, // 私聊不需要触发器
                           p2p_user: {
                             open_id:
                               identify_type === 'open_id'
