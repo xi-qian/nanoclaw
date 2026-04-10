@@ -6,7 +6,7 @@ export interface InstanceInfo {
   startTime: string;
   mainGroup?: string;
   channels: string[];
-  status: 'running' | 'idle' | 'error';
+  status: 'running' | 'idle' | 'error' | 'offline';
   lastHeartbeat: string;
   apiEndpoint?: string;
 }

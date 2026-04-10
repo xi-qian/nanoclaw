@@ -6,7 +6,7 @@ const config = loadConfig();
 console.log('NanoClaw Monitor starting...');
 
 // Initialize database
-const db = initDatabase(config.dataDir);
+initDatabase(config.dataDir);
 console.log('Database initialized');
 
 // TODO: Start server
