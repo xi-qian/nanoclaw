@@ -18,7 +18,7 @@ async function loadInstances() {
   try {
     const result = await api.getInstances();
     if (!result.success) {
-      grid.innerHTML = `<div class="col-12"><div class="alert alert-danger">加载失败: ${result.error}</div></div>`;
+      grid.innerHTML = `<div class="col-12"><div class="alert alert-danger">加载失败: ${escapeHtml(result.error)}</div></div>`;
       return;
     }
 
@@ -35,11 +35,11 @@ async function loadInstances() {
     grid.querySelectorAll('.instance-card').forEach(card => {
       card.addEventListener('click', () => {
         const id = card.dataset.instanceId;
-        window.location.href = `/instance?id=${id}`;
+        window.location.href = `/instance?id=${encodeURIComponent(id)}`;
       });
     });
   } catch (err) {
-    grid.innerHTML = `<div class="col-12"><div class="alert alert-danger">加载失败: ${err.message}</div></div>`;
+    grid.innerHTML = `<div class="col-12"><div class="alert alert-danger">加载失败: ${escapeHtml(err.message)}</div></div>`;
   }
 }
 
@@ -96,6 +96,7 @@ function getStatusClass(status) {
 }
 
 function escapeHtml(text) {
+  if (text == null) return '';
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
