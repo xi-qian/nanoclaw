@@ -70,7 +70,12 @@ import {
   CardActionData,
 } from './types.js';
 import { logger } from './logger.js';
-import { startReporter, stopReporter, notifyContainerStarted, notifyContainerStopped } from './reporter/index.js';
+import {
+  startReporter,
+  stopReporter,
+  notifyContainerStarted,
+  notifyContainerStopped,
+} from './reporter/index.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -644,17 +649,21 @@ async function main(): Promise<void> {
   if (MONITOR_ENABLED) {
     startReporter({
       instanceId: INSTANCE_ID || undefined,
-      mainGroup: Object.values(registeredGroups).find(g => g.isMain)?.name,
+      mainGroup: Object.values(registeredGroups).find((g) => g.isMain)?.name,
       getContainers: () => getRunningContainers(),
-      getGroups: () => Object.values(registeredGroups).map(g => ({
-        jid: Object.keys(registeredGroups).find(jid => registeredGroups[jid] === g) || '',
-        name: g.name,
-        folder: g.folder,
-        isMain: g.isMain || false,
-        trigger: g.trigger,
-        requiresTrigger: g.requiresTrigger ?? true,
-      })),
-      getChannels: () => channels.map(c => c.name),
+      getGroups: () =>
+        Object.values(registeredGroups).map((g) => ({
+          jid:
+            Object.keys(registeredGroups).find(
+              (jid) => registeredGroups[jid] === g,
+            ) || '',
+          name: g.name,
+          folder: g.folder,
+          isMain: g.isMain || false,
+          trigger: g.trigger,
+          requiresTrigger: g.requiresTrigger ?? true,
+        })),
+      getChannels: () => channels.map((c) => c.name),
     });
   }
 

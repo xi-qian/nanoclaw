@@ -22,7 +22,7 @@ export function getGroupSkills(groupFolder: string): SkillInfo[] {
     'sessions',
     groupFolder,
     '.claude',
-    'skills'
+    'skills',
   );
 
   if (!fs.existsSync(skillsDir)) {
@@ -81,7 +81,11 @@ export function getGroupMemory(groupFolder: string): MemoryFile[] {
 }
 
 // Update skill content
-export function updateSkill(groupFolder: string, skillName: string, content: string): void {
+export function updateSkill(
+  groupFolder: string,
+  skillName: string,
+  content: string,
+): void {
   const skillPath = path.join(
     DATA_DIR,
     'sessions',
@@ -89,7 +93,7 @@ export function updateSkill(groupFolder: string, skillName: string, content: str
     '.claude',
     'skills',
     skillName,
-    'SKILL.md'
+    'SKILL.md',
   );
 
   const dir = path.dirname(skillPath);
@@ -102,7 +106,11 @@ export function updateSkill(groupFolder: string, skillName: string, content: str
 }
 
 // Update memory file
-export function updateMemory(groupFolder: string, filename: string, content: string): void {
+export function updateMemory(
+  groupFolder: string,
+  filename: string,
+  content: string,
+): void {
   const groupDir = resolveGroupFolderPath(groupFolder);
   const filePath = path.join(groupDir, filename);
 
@@ -122,7 +130,10 @@ export function deleteMemory(groupFolder: string, filename: string): void {
 }
 
 // Get skill content
-export function getSkillContent(groupFolder: string, skillName: string): string | null {
+export function getSkillContent(
+  groupFolder: string,
+  skillName: string,
+): string | null {
   const skillPath = path.join(
     DATA_DIR,
     'sessions',
@@ -130,7 +141,7 @@ export function getSkillContent(groupFolder: string, skillName: string): string 
     '.claude',
     'skills',
     skillName,
-    'SKILL.md'
+    'SKILL.md',
   );
 
   if (fs.existsSync(skillPath)) {
@@ -140,7 +151,10 @@ export function getSkillContent(groupFolder: string, skillName: string): string 
 }
 
 // Get memory file content
-export function getMemoryContent(groupFolder: string, filename: string): string | null {
+export function getMemoryContent(
+  groupFolder: string,
+  filename: string,
+): string | null {
   const groupDir = resolveGroupFolderPath(groupFolder);
   const filePath = path.join(groupDir, filename);
 

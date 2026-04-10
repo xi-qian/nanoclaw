@@ -1,11 +1,7 @@
 import WebSocket from 'ws';
 import os from 'os';
 import { v4 as uuidv4 } from 'uuid';
-import {
-  MONITOR_URL,
-  INSTANCE_ID,
-  ASSISTANT_NAME,
-} from '../config.js';
+import { MONITOR_URL, INSTANCE_ID, ASSISTANT_NAME } from '../config.js';
 import { InstanceInfo, HeartbeatPayload, ContainerInfo } from './types.js';
 import { logger } from '../logger.js';
 
@@ -149,7 +145,12 @@ function handleMessage(message: any): void {
   }
 }
 
-function sendResponse(requestId: string, success: boolean, data?: any, error?: string): void {
+function sendResponse(
+  requestId: string,
+  success: boolean,
+  data?: any,
+  error?: string,
+): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ requestId, success, data, error }));
 }
@@ -230,12 +231,22 @@ function handleRestart(requestId: string): void {
 
 export function notifyContainerStarted(container: ContainerInfo): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: 'container_started', data: { instanceId, ...container } }));
+  ws.send(
+    JSON.stringify({
+      type: 'container_started',
+      data: { instanceId, ...container },
+    }),
+  );
 }
 
 export function notifyContainerStopped(containerId: string): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: 'container_stopped', data: { instanceId, containerId } }));
+  ws.send(
+    JSON.stringify({
+      type: 'container_stopped',
+      data: { instanceId, containerId },
+    }),
+  );
 }
 
 export function stopReporter(): void {
