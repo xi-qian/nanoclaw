@@ -55,25 +55,25 @@ function createInstanceCard(instance) {
 
   const channels = instance.channels || [];
   const channelsHtml = channels.length > 0
-    ? `<div class="channels-list text-muted">频道: ${channels.join(', ')}</div>`
+    ? `<div class="channels-list text-muted">频道: ${escapeHtml(channels.join(', '))}</div>`
     : '';
 
   return `
     <div class="col-md-4 col-lg-3">
-      <div class="card instance-card" data-instance-id="${instance.instance_id}">
+      <div class="card instance-card" data-instance-id="${escapeHtml(instance.instance_id)}">
         <div class="card-body">
           <div class="d-flex justify-content-between align-items-start mb-2">
-            <h5 class="card-title">${instance.hostname || instance.instance_id}</h5>
-            <span class="badge ${statusClass}">${instance.status || '未知'}</span>
+            <h5 class="card-title">${escapeHtml(instance.hostname || instance.instance_id)}</h5>
+            <span class="badge ${statusClass}">${escapeHtml(instance.status || '未知')}</span>
           </div>
           <div class="mb-2">
-            <small class="text-muted">ID: ${instance.instance_id}</small>
+            <small class="text-muted">ID: ${escapeHtml(instance.instance_id)}</small>
           </div>
           <div class="mb-2">
             ${connectionBadge}
           </div>
           <div class="mb-2">
-            <small class="text-muted">最后心跳: ${lastHeartbeat}</small>
+            <small class="text-muted">最后心跳: ${escapeHtml(lastHeartbeat)}</small>
           </div>
           ${channelsHtml}
         </div>
@@ -93,6 +93,12 @@ function getStatusClass(status) {
     default:
       return 'status-offline';
   }
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }
 
 function formatTime(timestamp) {
