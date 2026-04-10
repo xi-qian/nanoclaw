@@ -5,7 +5,7 @@ import { requireAuth } from './auth.js';
 import { v4 as uuidv4 } from 'uuid';
 
 export function createContainersRouter(): Router {
-  const router = Router();
+  const router = Router({ mergeParams: true });
   router.use(requireAuth);
 
   // GET /api/instances/:id/containers
