@@ -58,6 +58,20 @@
 
 调用 feishu_update_bitable_record 更新各记录。
 
+### 第七步：缺少周报记录时（可选）
+若周报表中某项目**没有对应周报记录**，而用户希望手动添加：
+- 调用 `feishu_add_bitable_records` 添加新记录
+- 必填字段：所属项目（与项目表项目名称一致）、汇报时间（毫秒时间戳）
+- 可选字段：进度内容、风险等级、风险内容、协调支持内容
+
+## 可用的 MCP 工具
+
+| 工具名 | 功能 |
+|--------|------|
+| `feishu_list_bitable_records` | 查询表格记录 |
+| `feishu_update_bitable_record` | 更新指定记录 |
+| `feishu_add_bitable_records` | 批量添加记录（最多 500 条） |
+
 ## 注意事项
 
 - 飞书多维表格 URL 格式：
