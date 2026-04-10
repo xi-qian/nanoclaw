@@ -35,8 +35,14 @@ export function createWebSocketServer(port: number): WebSocketServer {
 
     ws.on('message', (data) => {
       try {
-        const message: ClientMessage = JSON.parse(data.toString());
-        handleMessage(ws, message, (id) => { instanceId = id; });
+        const rawMessage = JSON.parse(data.toString());
+        // Check if this is a response (has requestId instead of type)
+        if (rawMessage.requestId !== undefined) {
+          handleInstanceResponse(rawMessage as InstanceResponse);
+        } else {
+          const message: ClientMessage = rawMessage;
+          handleMessage(ws, message, (id) => { instanceId = id; });
+        }
       } catch (err) {
         console.error('[WS] Failed to parse message:', err);
       }
