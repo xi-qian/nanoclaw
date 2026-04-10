@@ -1,7 +1,13 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { createAuthToken, isValidToken, deleteToken } from '../db/index.js';
-import { AuthConfig } from '../config.js';
+import { AuthConfig } from '../types.js';
+
+// Constant-time comparison to prevent timing attacks
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
 
 export function createAuthRouter(config: AuthConfig): Router {
   const router = Router();
@@ -17,7 +23,8 @@ export function createAuthRouter(config: AuthConfig): Router {
 
     // Token-based auth
     if (config.type === 'token') {
-      if (token === config.token) {
+      const providedToken = typeof token === 'string' ? token : '';
+      if (config.token && timingSafeEqual(providedToken, config.token)) {
         const sessionToken = generateToken();
         createAuthToken(sessionToken);
         return res.json({ success: true, token: sessionToken });
@@ -27,7 +34,13 @@ export function createAuthRouter(config: AuthConfig): Router {
 
     // Password-based auth
     if (config.type === 'password') {
-      if (username === config.adminUser && password === config.adminPassword) {
+      const providedUser = typeof username === 'string' ? username : '';
+      const providedPass = typeof password === 'string' ? password : '';
+      if (
+        config.adminUser && config.adminPassword &&
+        timingSafeEqual(providedUser, config.adminUser) &&
+        timingSafeEqual(providedPass, config.adminPassword)
+      ) {
         const sessionToken = generateToken();
         createAuthToken(sessionToken);
         return res.json({ success: true, token: sessionToken });
@@ -56,7 +69,7 @@ export function createAuthRouter(config: AuthConfig): Router {
 }
 
 // Auth middleware
-export function requireAuth(req: Request, res: Response, next: Function): void {
+export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const token = req.headers.authorization?.replace('Bearer ', '');
 
   if (!token) {
