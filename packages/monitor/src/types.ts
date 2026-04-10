@@ -63,7 +63,7 @@ export interface CachedData {
   instanceId: string;
   type: 'skills' | 'memory' | 'groups';
   groupFolder?: string;
-  data: any;
+  data: unknown;
   cachedAt: string;
 }
 
