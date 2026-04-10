@@ -1,6 +1,6 @@
 import { loadConfig } from './config.js';
 import { initDatabase } from './db/index.js';
-import { createWebSocketServer, startHeartbeatChecker } from './ws/manager.js';
+import { createWebSocketServer, startHeartbeatChecker, stopHeartbeatChecker } from './ws/manager.js';
 import { createHttpServer } from './server.js';
 
 const config = loadConfig();
@@ -26,3 +26,12 @@ app.listen(config.port, () => {
   console.log('HTTP server started on port', config.port);
   console.log('Monitor ready!');
 });
+
+// Graceful shutdown
+const shutdown = (signal: string) => {
+  console.log('Shutdown signal received:', signal);
+  stopHeartbeatChecker();
+  process.exit(0);
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
