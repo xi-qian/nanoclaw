@@ -1,7 +1,7 @@
 import express from 'express';
 import { Router } from 'express';
 import { MonitorConfig } from './config.js';
-import { createAuthRouter, requireAuth } from './api/auth.js';
+import { createAuthRouter } from './api/auth.js';
 import { createInstancesRouter } from './api/instances.js';
 import { createContainersRouter } from './api/containers.js';
 import { createGroupsRouter } from './api/groups.js';
