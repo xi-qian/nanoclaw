@@ -65,7 +65,7 @@ function connect(mainGroup?: string): void {
     startHeartbeat();
   });
 
-  ws.on('message', (data) => {
+  ws.on('message', (data: WebSocket.RawData) => {
     try {
       const message = JSON.parse(data.toString());
       handleMessage(message);
@@ -168,7 +168,7 @@ function handleGetSkills(requestId: string, groupFolder?: string): void {
   // Import from local-api
   import('./local-api.js').then((api) => {
     try {
-      const skills = api.getGroupSkills(groupFolder);
+      const skills = api.getGroupSkills(groupFolder!);
       sendResponse(requestId, true, skills);
     } catch (err) {
       sendResponse(requestId, false, undefined, (err as Error).message);
@@ -179,7 +179,7 @@ function handleGetSkills(requestId: string, groupFolder?: string): void {
 function handleGetMemory(requestId: string, groupFolder?: string): void {
   import('./local-api.js').then((api) => {
     try {
-      const memory = api.getGroupMemory(groupFolder);
+      const memory = api.getGroupMemory(groupFolder!);
       sendResponse(requestId, true, memory);
     } catch (err) {
       sendResponse(requestId, false, undefined, (err as Error).message);
