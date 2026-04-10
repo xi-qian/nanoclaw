@@ -52,7 +52,16 @@ export interface ContainerEventMessage {
 }
 
 // Monitor -> Instance messages
-export type ServerMessageType = 'get_groups' | 'get_skills' | 'get_memory' | 'restart' | 'stop_container';
+export type ServerMessageType =
+  | 'get_groups'
+  | 'get_skills'
+  | 'get_memory'
+  | 'update_skill'
+  | 'update_memory'
+  | 'delete_memory'
+  | 'restart'
+  | 'stop_container'
+  | 'get_container_logs';
 
 export interface ServerMessage {
   type: ServerMessageType;

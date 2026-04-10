@@ -67,6 +67,11 @@ export function createGroupsRouter(): Router {
     const { instanceId, folder, name } = req.params;
     const { content } = req.body;
 
+    // Validate request body
+    if (typeof content !== 'string' || content.trim() === '') {
+      return res.status(400).json({ success: false, error: 'Invalid or missing content' });
+    }
+
     if (!isInstanceConnected(instanceId)) {
       return res.status(400).json({ success: false, error: 'Instance not connected' });
     }
@@ -77,8 +82,7 @@ export function createGroupsRouter(): Router {
         requestId: uuidv4(),
         data: { groupFolder: folder, skillName: name, content },
       });
-      // Update cache
-      setCache({ instanceId, type: 'skills', groupFolder: folder, data: { name, content } });
+      // Note: Cache will be refreshed on next GET request
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ success: false, error: (err as Error).message });
@@ -115,6 +119,11 @@ export function createGroupsRouter(): Router {
   router.put('/:folder/memory/:filename', async (req: Request, res: Response) => {
     const { instanceId, folder, filename } = req.params;
     const { content } = req.body;
+
+    // Validate request body
+    if (typeof content !== 'string') {
+      return res.status(400).json({ success: false, error: 'Content must be a string' });
+    }
 
     if (!isInstanceConnected(instanceId)) {
       return res.status(400).json({ success: false, error: 'Instance not connected' });
