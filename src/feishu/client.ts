@@ -109,6 +109,14 @@ const BRAND_TO_DOMAIN: Record<LarkBrand, Lark.Domain> = {
 };
 
 /**
+ * 品牌到 MCP 端点的映射
+ */
+const BRAND_TO_MCP_ENDPOINT: Record<LarkBrand, string> = {
+  feishu: 'https://mcp.feishu.cn/mcp',
+  lark: 'https://mcp.larksuite.com/mcp',
+};
+
+/**
  * 事件处理器类型
  */
 export type EventHandler = (event: FeishuEvent) => void;
@@ -137,6 +145,107 @@ export class FeishuClient {
     });
 
     log.info({ brand, appId: credentials.appId }, 'Feishu client created');
+  }
+
+  /**
+   * 获取 MCP 端点 URL
+   */
+  private getMcpEndpoint(): string {
+    return BRAND_TO_MCP_ENDPOINT[this.brand];
+  }
+
+  /**
+   * 调用飞书 MCP 工具
+   * @param toolName 工具名称（如 create-doc, update-doc）
+   * @param args 工具参数
+   * @returns 工具返回结果
+   */
+  private async callMCPTool<T = Record<string, unknown>>(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<T> {
+    try {
+      const token = await this.getTenantAccessToken();
+      const endpoint = this.getMcpEndpoint();
+
+      const body = {
+        jsonrpc: '2.0',
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        method: 'tools/call',
+        params: {
+          name: toolName,
+          arguments: args,
+        },
+      };
+
+      log.debug({ toolName, args, endpoint }, 'Calling MCP tool');
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Lark-MCP-TAT': token,
+          'X-Lark-MCP-Allowed-Tools': toolName,
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        log.error(
+          { toolName, status: response.status, errorText },
+          'MCP tool call failed with HTTP error',
+        );
+        throw new Error(
+          `MCP tool ${toolName} failed: HTTP ${response.status} - ${errorText}`,
+        );
+      }
+
+      const data = (await response.json()) as {
+        result?: { content?: Array<{ type: string; text: string }> };
+        error?: { message?: string; code?: number };
+      };
+
+      // 检查 JSON-RPC 错误
+      if (data.error) {
+        log.error(
+          { toolName, error: data.error },
+          'MCP tool returned error',
+        );
+        throw new Error(
+          `MCP tool ${toolName} error: ${data.error.message || JSON.stringify(data.error)}`,
+        );
+      }
+
+      // 解析结果
+      const content = data.result?.content;
+      if (content && Array.isArray(content) && content.length > 0) {
+        const textItem = content.find((item) => item.type === 'text');
+        if (textItem?.text) {
+          try {
+            const parsed = JSON.parse(textItem.text) as T;
+            log.debug({ toolName, result: parsed }, 'MCP tool call successful');
+            return parsed;
+          } catch {
+            // 如果不是 JSON，直接返回文本包装为对象
+            return textItem.text as T;
+          }
+        }
+      }
+
+      log.debug({ toolName, result: data.result }, 'MCP tool call successful');
+      return data.result as T;
+    } catch (error) {
+      log.error(
+        {
+          toolName,
+          args,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to call MCP tool',
+      );
+      throw error;
+    }
   }
 
   /**
@@ -463,33 +572,44 @@ export class FeishuClient {
 
   /**
    * 获取文档内容
+   * 使用飞书 MCP fetch-doc 工具获取文档的 Markdown 内容
    */
   async fetchDoc(
     docId: string,
-    offset?: number,
-    limit?: number,
+    _offset?: number,
+    _limit?: number,
   ): Promise<FeishuDocInfo> {
     try {
       const actualDocId = this.extractDocId(docId);
 
-      // 使用 HTTP 请求获取文档内容
-      const response = await this.client.request({
-        url: `/open-apis/docx/v1/documents/${actualDocId}/blocks/${actualDocId}`,
-        method: 'GET',
-        params: {
-          page_size: limit ? Math.min(limit, 500) : 100,
-          page_token: offset,
-        },
-      });
+      log.info({ docId: actualDocId }, 'Fetching document via MCP fetch-doc');
 
-      if (response.code !== 0) {
-        throw new Error(`Failed to fetch doc: ${response.msg}`);
+      const result = await this.callMCPTool<{
+        doc_id?: string;
+        markdown?: string;
+        length?: number;
+        error?: string;
+      }>('fetch-doc', { doc_id: actualDocId });
+
+      // 检查是否有错误
+      if (result.error) {
+        throw new Error(`fetch-doc error: ${result.error}`);
       }
 
+      const documentId = result.doc_id || actualDocId;
+      const markdown = result.markdown || '';
+      const url = this.buildDocUrl(documentId, this.brand);
+
+      log.info(
+        { docId: documentId, length: result.length || markdown.length },
+        'Document fetched successfully via MCP',
+      );
+
       return {
-        doc_id: actualDocId,
-        title: response.data?.title || '',
-        content: JSON.stringify(response.data),
+        doc_id: documentId,
+        title: '',
+        content: markdown,
+        url,
         has_more: false,
       };
     } catch (error) {
@@ -498,7 +618,7 @@ export class FeishuClient {
           docId,
           error: error instanceof Error ? error.message : String(error),
         },
-        'Failed to fetch doc',
+        'Failed to fetch doc via MCP',
       );
       throw error;
     }
@@ -506,6 +626,7 @@ export class FeishuClient {
 
   /**
    * 创建文档
+   * 使用飞书 MCP create-doc 工具，正确处理 Markdown 内容顺序
    */
   async createDoc(
     title: string,
@@ -513,47 +634,37 @@ export class FeishuClient {
     options?: CreateDocOptions,
   ): Promise<FeishuDocInfo> {
     try {
-      // Step 1: 创建空文档
-      const createResponse = await this.client.request({
-        url: '/open-apis/docx/v1/documents',
-        method: 'POST',
-        data: {
-          title: title,
-          folder_token: options?.folder_token,
-        },
-      });
+      const args: Record<string, unknown> = {
+        title,
+        markdown,
+      };
 
-      if (createResponse.code !== 0) {
-        throw new Error(`Failed to create document: ${createResponse.msg}`);
+      if (options?.folder_token) {
+        args.folder_token = options.folder_token;
       }
 
-      const documentId = createResponse.data?.document?.document_id;
+      log.info({ title, options }, 'Creating document via MCP create-doc');
+
+      const result = await this.callMCPTool<{
+        doc_id?: string;
+        doc_url?: string;
+        task_id?: string;
+        error?: string;
+      }>('create-doc', args);
+
+      // 检查是否有错误
+      if (result.error) {
+        throw new Error(`create-doc error: ${result.error}`);
+      }
+
+      const documentId = result.doc_id;
       if (!documentId) {
-        throw new Error('No document_id returned from create API');
+        throw new Error('No doc_id returned from create-doc MCP tool');
       }
 
-      // Step 2: 使用飞书官方转换 API 将 Markdown 转换为文档块
-      if (markdown.trim()) {
-        try {
-          await this.addMarkdownContent(documentId, markdown);
-        } catch (blockError) {
-          log.warn(
-            {
-              documentId,
-              error:
-                blockError instanceof Error
-                  ? blockError.message
-                  : String(blockError),
-            },
-            'Document created but failed to add content',
-          );
-        }
-      }
+      const url = result.doc_url || this.buildDocUrl(documentId, this.brand);
 
-      // 获取文档 URL
-      const url = this.buildDocUrl(documentId, this.brand);
-
-      log.info({ documentId, title, url }, 'Document created successfully');
+      log.info({ documentId, title, url }, 'Document created successfully via MCP');
 
       return {
         doc_id: documentId,
@@ -566,7 +677,7 @@ export class FeishuClient {
           title,
           error: error instanceof Error ? error.message : String(error),
         },
-        'Failed to create doc',
+        'Failed to create doc via MCP',
       );
       throw error;
     }
@@ -574,22 +685,147 @@ export class FeishuClient {
 
   /**
    * 更新文档（追加内容）
+   * 使用飞书 MCP update-doc 工具，正确处理 Markdown 内容顺序
    */
   async updateDoc(docId: string, markdown: string): Promise<void> {
     try {
       const actualDocId = this.extractDocId(docId);
 
-      // 使用飞书官方转换 API 将 Markdown 转换为文档块并追加
-      await this.addMarkdownContent(actualDocId, markdown);
+      const args: Record<string, unknown> = {
+        doc_id: actualDocId,
+        mode: 'append',
+        markdown,
+      };
 
-      log.info({ docId: actualDocId }, 'Document updated successfully');
+      log.info({ docId: actualDocId }, 'Updating document via MCP update-doc');
+
+      const result = await this.callMCPTool<{
+        success?: boolean;
+        error?: string;
+      }>('update-doc', args);
+
+      // 检查是否有错误
+      if (result.error) {
+        throw new Error(`update-doc error: ${result.error}`);
+      }
+
+      log.info({ docId: actualDocId }, 'Document updated successfully via MCP');
     } catch (error) {
       log.error(
         {
           docId,
           error: error instanceof Error ? error.message : String(error),
         },
-        'Failed to update doc',
+        'Failed to update doc via MCP',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 删除文档
+   * 使用飞书 Drive API 将文档移到回收站
+   * @param docId 文档 ID 或 URL
+   */
+  async deleteDoc(docId: string): Promise<void> {
+    try {
+      const actualDocId = this.extractDocId(docId);
+
+      log.info({ docId: actualDocId }, 'Deleting document');
+
+      const response = await this.client.request({
+        url: `/open-apis/drive/v1/files/${actualDocId}`,
+        method: 'DELETE',
+        params: {
+          type: 'docx',
+        },
+      });
+
+      if (response.code !== 0) {
+        throw new Error(`Failed to delete document: ${response.msg}`);
+      }
+
+      log.info({ docId: actualDocId }, 'Document deleted successfully');
+    } catch (error) {
+      log.error(
+        {
+          docId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to delete document',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 删除多维表格记录
+   * @param appToken 多维表格应用 token
+   * @param tableId 数据表 ID
+   * @param recordId 记录 ID
+   */
+  async deleteBitableRecord(
+    appToken: string,
+    tableId: string,
+    recordId: string,
+  ): Promise<void> {
+    try {
+      const response = await this.client.bitable.appTableRecord.delete({
+        path: {
+          app_token: appToken,
+          table_id: tableId,
+          record_id: recordId,
+        },
+      });
+
+      if (response.code !== 0) {
+        throw new Error(`Failed to delete bitable record: ${response.msg}`);
+      }
+
+      log.info({ appToken, tableId, recordId }, 'Bitable record deleted');
+    } catch (error) {
+      log.error(
+        {
+          appToken,
+          tableId,
+          recordId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to delete bitable record',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 删除整个多维表格
+   * 使用飞书 Drive API 将多维表格移到回收站
+   * @param appToken 多维表格应用 token
+   */
+  async deleteBitable(appToken: string): Promise<void> {
+    try {
+      log.info({ appToken }, 'Deleting bitable');
+
+      const response = await this.client.request({
+        url: `/open-apis/drive/v1/files/${appToken}`,
+        method: 'DELETE',
+        params: {
+          type: 'bitable',
+        },
+      });
+
+      if (response.code !== 0) {
+        throw new Error(`Failed to delete bitable: ${response.msg}`);
+      }
+
+      log.info({ appToken }, 'Bitable deleted successfully');
+    } catch (error) {
+      log.error(
+        {
+          appToken,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to delete bitable',
       );
       throw error;
     }
@@ -991,15 +1227,21 @@ export class FeishuClient {
 
   /**
    * 从 URL 或字符串中提取文档 ID
+   * 支持格式：
+   * - https://feishu.cn/docx/xxx
+   * - https://feishu.cn/docs/xxx
+   * - https://xxx.feishu.cn/docx/xxx
+   * - 纯文档 ID
    */
   private extractDocId(input: string): string {
     if (input.includes('feishu.cn') || input.includes('feishu.com')) {
-      const match = input.match(/\/docs\/([a-zA-Z0-9_-]+)/);
+      // 匹配 /docx/xxx 或 /docs/xxx
+      const match = input.match(/\/doc(?:x|s)\/([a-zA-Z0-9_-]+)/);
       if (match) {
         return match[1];
       }
     }
-    return input;
+    return input.trim();
   }
 
   /**
@@ -1073,6 +1315,8 @@ export class FeishuClient {
 
   /**
    * 使用飞书官方转换 API 将 Markdown 内容添加到文档
+   * @deprecated 已废弃。飞书的 /blocks/convert API 返回的块顺序是乱的，无法正确保持 Markdown 内容顺序。
+   * 请使用 MCP create-doc 或 update-doc 工具代替。
    * 参见：https://open.feishu.cn/document/server-docs/task-v1/markdown-module
    */
   private async addMarkdownContent(
@@ -1183,6 +1427,7 @@ export class FeishuClient {
 
   /**
    * 清理块数据，移除只读字段和其他问题字段
+   * @deprecated 已废弃。配合 addMarkdownContent 使用，该方法不再需要。
    * 根据飞书文档要求：
    * - 表格块中的 merge_info 为只读属性，需要移除
    * - parent_id 为空字符串时需要移除（会导致 400 错误）
@@ -1705,42 +1950,6 @@ export class FeishuClient {
           error: error instanceof Error ? error.message : String(error),
         },
         'Failed to update bitable record',
-      );
-      throw error;
-    }
-  }
-
-  /**
-   * 删除数据表记录
-   */
-  async deleteBitableRecord(
-    appToken: string,
-    tableId: string,
-    recordId: string,
-  ): Promise<void> {
-    try {
-      const response = await this.client.bitable.appTableRecord.delete({
-        path: {
-          app_token: appToken,
-          table_id: tableId,
-          record_id: recordId,
-        },
-      });
-
-      if (response.code !== 0) {
-        throw new Error(`Failed to delete bitable record: ${response.msg}`);
-      }
-
-      log.info({ appToken, tableId, recordId }, 'Bitable record deleted');
-    } catch (error) {
-      log.error(
-        {
-          appToken,
-          tableId,
-          recordId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        'Failed to delete bitable record',
       );
       throw error;
     }

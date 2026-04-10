@@ -936,6 +936,78 @@ server.tool(
   },
 );
 
+server.tool(
+  'feishu_delete_doc',
+  '删除飞书云文档。文档会被移到回收站，可以从回收站恢复。',
+  {
+    doc_id: z.string().describe('文档 ID 或完整 URL（支持自动解析）'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'delete_doc',
+      doc_id: args.doc_id,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: `文档删除成功! 文档已移到回收站。` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `删除文档失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `删除文档超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_delete_bitable',
+  '删除整个多维表格。多维表格会被移到回收站，可以从回收站恢复。',
+  {
+    app_token: z.string().describe('多维表格应用 token'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'delete_bitable',
+      app_token: args.app_token,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: `多维表格删除成功! 多维表格已移到回收站。` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `删除多维表格失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `删除多维表格超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 // ==================== 卡片消息工具 ====================
 
 server.tool(

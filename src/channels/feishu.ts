@@ -623,6 +623,20 @@ export class FeishuChannel implements Channel {
   }
 
   /**
+   * 删除文档
+   */
+  async deleteDoc(docId: string): Promise<void> {
+    return await this.client.deleteDoc(docId);
+  }
+
+  /**
+   * 删除整个多维表格
+   */
+  async deleteBitable(appToken: string): Promise<void> {
+    return await this.client.deleteBitable(appToken);
+  }
+
+  /**
    * 发送富文本消息
    */
   async sendRichText(chatId: string, elements: any[]): Promise<void> {

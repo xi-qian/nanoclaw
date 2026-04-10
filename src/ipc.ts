@@ -210,6 +210,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       request.markdown,
                     );
                     break;
+                  case 'delete_doc':
+                    await feishuChannel.deleteDoc(request.doc_id);
+                    result = { deleted: true };
+                    break;
                   case 'search_docs':
                     result = await feishuChannel.searchDocs(
                       request.query,
@@ -271,6 +275,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       request.table_id,
                       request.record_id,
                     );
+                    result = { deleted: true };
+                    break;
+                  case 'delete_bitable':
+                    await feishuChannel.deleteBitable(request.app_token);
                     result = { deleted: true };
                     break;
                   // 卡片消息发送
