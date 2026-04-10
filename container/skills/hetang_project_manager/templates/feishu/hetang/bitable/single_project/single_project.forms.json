@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "description": "【单独项目管理】仅成员「成员信息收集」（字段：账号、角色、负责阶段；隐藏成员序号）、任务「任务提交表单」。无项目登记、周报提交。form_id 即 view_id。",
+  "app_token": "",
+  "table_ids": {
+    "members": "",
+    "tasks": ""
+  },
+  "tables": [
+    {
+      "key": "members",
+      "forms": [
+        {
+          "view_name": "成员信息收集",
+          "skip_if_exists": true,
+          "patch": {
+            "property": {
+              "hidden_field_names": ["成员序号", "负责任务", "执行任务"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "key": "tasks",
+      "forms": [
+        {
+          "view_name": "任务提交表单",
+          "skip_if_exists": true
+        }
+      ]
+    }
+  ]
+}

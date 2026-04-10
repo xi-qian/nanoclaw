@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "description": "【单独项目管理】仅任务表 + 成员表。任务：四看板（项目阶段/状态/优先级/负责人）+ 按项目阶段的进展甘特图。成员：职责视图。无项目表、周报表。项目阶段共八阶段。注：使用黄金模板复制（cockpit_copy 模式）时，看板分组 PATCH 会被跳过，分组由黄金模板保留；请确保黄金模板中四个看板的分组字段已正确配置。",
+  "app_token": "",
+  "table_ids": {
+    "tasks": "",
+    "members": ""
+  },
+  "tables": [
+    {
+      "key": "tasks",
+      "views": [
+        {
+          "view_name": "项目状态看板",
+          "view_type": "kanban",
+          "skip_if_exists": true,
+          "patch": {
+            "kanban_group_field_name": "项目阶段"
+          }
+        },
+        {
+          "view_name": "任务状态看板",
+          "view_type": "kanban",
+          "skip_if_exists": true,
+          "patch": {
+            "kanban_group_field_name": "状态"
+          }
+        },
+        {
+          "view_name": "按任务优先级看板",
+          "view_type": "kanban",
+          "skip_if_exists": true,
+          "patch": {
+            "kanban_group_field_name": "优先级"
+          }
+        },
+        {
+          "view_name": "按负责人看板",
+          "view_type": "kanban",
+          "skip_if_exists": true,
+          "patch": {
+            "kanban_group_field_name": "负责人"
+          }
+        },
+        {
+          "view_name": "按项目阶段的进展甘特图",
+          "view_type": "gantt",
+          "skip_if_exists": true,
+          "patch": {}
+        }
+      ]
+    },
+    {
+      "key": "members",
+      "views": [
+        {
+          "view_name": "职责",
+          "view_type": "grid",
+          "skip_if_exists": true,
+          "patch": {
+            "property": {
+              "filter_info": {
+                "conjunction": "and",
+                "conditions": [
+                  {
+                    "field_name": "角色",
+                    "operator": "isNotEmpty"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "description": "【项目总管理】项目「项目登记」+ 成员「成员信息收集」+ 任务「任务提交表单」+ 周报「周报提交表单」。项目登记表提交后在「项目」表新增一行，任务/周报/成员表中「所属项目」关联字段的下拉选项会自动包含新项目。form_id 即 view_id。",
+  "app_token": "",
+  "table_ids": {
+    "projects": "",
+    "members": "",
+    "tasks": "",
+    "weekly": ""
+  },
+  "tables": [
+    {
+      "key": "projects",
+      "forms": [
+        {
+          "view_name": "项目登记",
+          "skip_if_exists": true
+        }
+      ]
+    },
+    {
+      "key": "members",
+      "forms": [
+        {
+          "view_name": "成员信息收集",
+          "skip_if_exists": true
+        }
+      ]
+    },
+    {
+      "key": "tasks",
+      "forms": [
+        {
+          "view_name": "任务提交表单",
+          "skip_if_exists": true
+        }
+      ]
+    },
+    {
+      "key": "weekly",
+      "forms": [
+        {
+          "view_name": "周报提交表单",
+          "skip_if_exists": true
+        }
+      ]
+    }
+  ]
+}

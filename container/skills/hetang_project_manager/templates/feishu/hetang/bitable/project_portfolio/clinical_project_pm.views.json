@@ -1,0 +1,247 @@
+{
+  "schema_version": 1,
+  "description": "【项目总管理】项目表：保留默认「所有项目」网格；「项目状态看板」按「状态」（推进中/未启动/已完成）分组；+「进展甘特图」「已关联任务」「按负责人查看」「截止日历」。任务表六视图；周报四视图；成员「职责」。表单见 *.forms.json。",
+  "app_token": "",
+  "table_ids": {
+    "projects": "",
+    "members": "",
+    "tasks": "",
+    "weekly": ""
+  },
+  "tables": [
+    {
+      "key": "projects",
+      "views": [
+        {
+          "view_name": "项目状态看板",
+          "view_type": "kanban",
+          "skip_if_exists": true,
+          "patch": {
+            "kanban_group_field_name": "状态"
+          }
+        },
+        {
+          "view_name": "进展甘特图",
+          "view_type": "gantt",
+          "skip_if_exists": true,
+          "patch": {}
+        },
+        {
+          "view_name": "已关联任务",
+          "view_type": "grid",
+          "skip_if_exists": true,
+          "patch": {
+            "property": {
+              "filter_info": {
+                "conjunction": "and",
+                "conditions": [
+                  {
+                    "field_name": "关联任务",
+                    "operator": "isNotEmpty"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "view_name": "按负责人查看",
+          "view_type": "grid",
+          "skip_if_exists": true,
+          "patch": {
+            "property": {
+              "filter_info": {
+                "conjunction": "and",
+                "conditions": [
+                  {
+                    "field_name": "总负责人",
+                    "operator": "isNotEmpty"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "view_name": "截止日历",
+          "view_type": "grid",
+          "skip_if_exists": true,
+          "patch": {
+            "property": {
+              "filter_info": {
+                "conjunction": "and",
+                "conditions": [
+                  {
+                    "field_name": "项目截止时间",
+                    "operator": "isNotEmpty"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "key": "members",
+      "views": [
+        {
+          "view_name": "职责",
+          "view_type": "grid",
+          "skip_if_exists": true,
+          "patch": {
+            "property": {
+              "filter_info": {
+                "conjunction": "and",
+                "conditions": [
+                  {
+                    "field_name": "角色",
+                    "operator": "isNotEmpty"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "key": "tasks",
+      "views": [
+        {
+          "view_name": "任务状态看板",
+          "view_type": "kanban",
+          "skip_if_exists": true,
+          "patch": {
+            "kanban_group_field_name": "状态"
+          }
+        },
+        {
+          "view_name": "进展甘特图",
+          "view_type": "gantt",
+          "skip_if_exists": true,
+          "patch": {}
+        },
+        {
+          "view_name": "按项目查看",
+          "view_type": "grid",
+          "skip_if_exists": true,
+          "patch": {
+            "property": {
+              "filter_info": {
+                "conjunction": "and",
+                "conditions": [
+                  {
+                    "field_name": "所属项目",
+                    "operator": "isNotEmpty"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "view_name": "按优先级查看",
+          "view_type": "grid",
+          "skip_if_exists": true,
+          "patch": {
+            "property": {
+              "filter_info": {
+                "conjunction": "and",
+                "conditions": [
+                  {
+                    "field_name": "优先级",
+                    "operator": "isNotEmpty"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "view_name": "截止日历",
+          "view_type": "grid",
+          "skip_if_exists": true,
+          "patch": {
+            "property": {
+              "filter_info": {
+                "conjunction": "and",
+                "conditions": [
+                  {
+                    "field_name": "截止时间",
+                    "operator": "isNotEmpty"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "key": "weekly",
+      "views": [
+        {
+          "view_name": "按每周进度查看",
+          "view_type": "grid",
+          "skip_if_exists": true,
+          "patch": {
+            "property": {
+              "filter_info": {
+                "conjunction": "and",
+                "conditions": [
+                  {
+                    "field_name": "日期",
+                    "operator": "isNotEmpty"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "view_name": "按成员查看",
+          "view_type": "grid",
+          "skip_if_exists": true,
+          "patch": {
+            "property": {
+              "filter_info": {
+                "conjunction": "and",
+                "conditions": [
+                  {
+                    "field_name": "汇报人",
+                    "operator": "isNotEmpty"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "view_name": "按项目查看",
+          "view_type": "grid",
+          "skip_if_exists": true,
+          "patch": {
+            "property": {
+              "filter_info": {
+                "conjunction": "and",
+                "conditions": [
+                  {
+                    "field_name": "所属项目",
+                    "operator": "isNotEmpty"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "view_name": "按部门查看",
+          "view_type": "grid",
+          "skip_if_exists": true,
+          "patch": {}
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "description": "【单独项目管理】仅「任务」「成员」两张表；黄金模板复制（cockpit_source_app_token）。hetang skill 创建时**必须**传 --bitable-name。成功后写入 memory/feishu_bitable_links.md，可多份；同名须先问用户是否删旧记忆行。由 feishu.bitable.provision 执行。",
+  "cockpit_source_app_token": "H1F1brmm3auBP6seDvtcfAJcnde",
+  "time_zone": "Asia/Shanghai",
+  "delete_default_table": true,
+  "tables": [
+    {
+      "key": "tasks",
+      "name": "任务",
+      "default_view_name": "所有任务",
+      "fields": [
+        { "name": "任务名称", "type": "text" },
+        { "name": "任务描述", "type": "text" },
+        {
+          "name": "项目阶段",
+          "type": "single_select",
+          "description": "划分为八个阶段；创建 Base 时会预置对应里程碑任务及子任务。",
+          "options": [
+            { "name": "第一阶段", "color": 0 },
+            { "name": "第二阶段", "color": 1 },
+            { "name": "第三阶段", "color": 2 },
+            { "name": "第四阶段", "color": 3 },
+            { "name": "第五阶段", "color": 4 },
+            { "name": "第六阶段", "color": 5 },
+            { "name": "第七阶段", "color": 6 },
+            { "name": "第八阶段", "color": 7 }
+          ]
+        },
+        {
+          "name": "优先级",
+          "type": "single_select",
+          "options": [
+            { "name": "P0", "color": 0 },
+            { "name": "P1", "color": 1 },
+            { "name": "P2", "color": 2 },
+            { "name": "P3", "color": 3 }
+          ]
+        },
+        {
+          "name": "责任方",
+          "type": "text",
+          "description": "责任部门或对接方说明，由录入人填写"
+        },
+        {
+          "name": "状态",
+          "type": "single_select",
+          "options": [
+            { "name": "未开始", "color": 5 },
+            { "name": "进行中", "color": 6 },
+            { "name": "已完成", "color": 7 },
+            { "name": "已停滞", "color": 8 }
+          ]
+        },
+        {
+          "name": "开始时间",
+          "type": "date",
+          "date_formatter": "yyyy/MM/dd"
+        },
+        {
+          "name": "截止时间",
+          "type": "date",
+          "date_formatter": "yyyy/MM/dd"
+        },
+        {
+          "name": "完成时间",
+          "type": "date",
+          "date_formatter": "yyyy/MM/dd"
+        }
+      ],
+      "post_fields": [
+        {
+          "name": "父子任务",
+          "type": "single_link",
+          "link_table_key": "tasks",
+          "multiple": false,
+          "description": "关联到本表其他任务，形成子任务层级"
+        },
+        {
+          "name": "负责人",
+          "type": "duplex_link",
+          "link_table_key": "members",
+          "back_field_name": "负责任务",
+          "multiple": true,
+          "description": "只能从成员表已录入的成员中选择"
+        },
+        {
+          "name": "任务执行人",
+          "type": "duplex_link",
+          "link_table_key": "members",
+          "back_field_name": "执行任务",
+          "multiple": true,
+          "description": "只能从成员表已录入的成员中选择"
+        }
+      ],
+      "initial_records": [
+        {
+          "fields": {
+            "任务名称": "前期拓客·BD开发",
+            "项目阶段": "第一阶段",
+            "状态": "未开始"
+          }
+        },
+        {
+          "fields": {
+            "任务名称": "需求交流·PI多轮沟通",
+            "项目阶段": "第二阶段",
+            "状态": "未开始"
+          }
+        },
+        {
+          "fields": {
+            "任务名称": "内部立项评估",
+            "项目阶段": "第三阶段",
+            "状态": "未开始"
+          }
+        },
+        {
+          "fields": {
+            "任务名称": "材料准备·20+ 模块逐一撰写",
+            "项目阶段": "第四阶段",
+            "状态": "未开始"
+          }
+        },
+        {
+          "fields": {
+            "任务名称": "外部立项·医院三线并行审批",
+            "项目阶段": "第五阶段",
+            "状态": "未开始"
+          }
+        },
+        {
+          "fields": {
+            "任务名称": "临床实施·患者运营",
+            "项目阶段": "第六阶段",
+            "状态": "未开始"
+          }
+        },
+        {
+          "fields": {
+            "任务名称": "数据分析·结题发表",
+            "项目阶段": "第七阶段",
+            "状态": "未开始"
+          }
+        },
+        {
+          "fields": {
+            "任务名称": "资料归档与关闭",
+            "项目阶段": "第八阶段",
+            "状态": "未开始"
+          }
+        }
+      ]
+    },
+    {
+      "key": "members",
+      "name": "成员",
+      "default_view_name": "所有成员",
+      "default_view_type": "gallery",
+      "fields": [
+        { "name": "账号", "type": "user", "multiple": false },
+        {
+          "name": "角色",
+          "type": "multi_select",
+          "description": "成员信息收集表单等视图共用；选项与荷塘单独项目约定一致。",
+          "options": [
+            { "name": "客户负责人", "color": 0 },
+            { "name": "解决方案负责人", "color": 1 },
+            { "name": "交付负责人", "color": 2 },
+            { "name": "项目负责人", "color": 3 },
+            { "name": "总体负责人", "color": 4 }
+          ]
+        },
+        {
+          "name": "负责阶段",
+          "type": "multi_select",
+          "description": "该成员负责的项目阶段；填写后可批量同步到任务表对应阶段的负责人字段。",
+          "options": [
+            { "name": "第一阶段", "color": 0 },
+            { "name": "第二阶段", "color": 1 },
+            { "name": "第三阶段", "color": 2 },
+            { "name": "第四阶段", "color": 3 },
+            { "name": "第五阶段", "color": 4 },
+            { "name": "第六阶段", "color": 5 },
+            { "name": "第七阶段", "color": 6 },
+            { "name": "第八阶段", "color": 7 }
+          ]
+        },
+        {
+          "name": "成员序号",
+          "type": "auto_number",
+          "auto_serial_type": "auto_increment_number"
+        }
+      ]
+    }
+  ]
+}
