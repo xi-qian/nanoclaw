@@ -1,4 +1,5 @@
-// Same types as monitor, for consistency
+// Types for reporter -> monitor communication
+// InstanceInfo is a subset (registration data) - status/lastHeartbeat are managed by the monitor
 export interface InstanceInfo {
   instanceId: string;
   hostname: string;
