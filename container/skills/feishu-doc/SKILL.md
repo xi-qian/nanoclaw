@@ -62,8 +62,8 @@ description: |
 - 多维表格链接使用 `/base/`：`https://feishu.cn/base/xxxxxxxxxx`
 
 ### 操作方式
-- **文档操作**：使用 `feishu_create_doc`、`feishu_fetch_doc`、`feishu_update_doc`、`feishu_search_docs` 工具
-- **多维表格操作**：使用 `feishu_create_bitable`、`feishu_create_bitable_table`、`feishu_list_bitable_fields`、`feishu_list_bitable_records`、`feishu_add_bitable_records`、`feishu_update_bitable_record`、`feishu_delete_bitable_record` 工具
+- **文档操作**：使用 `feishu_create_doc`、`feishu_fetch_doc`、`feishu_update_doc`、`feishu_delete_doc`、`feishu_search_docs` 工具
+- **多维表格操作**：使用 `feishu_create_bitable`、`feishu_create_bitable_table`、`feishu_list_bitable_fields`、`feishu_list_bitable_records`、`feishu_add_bitable_records`、`feishu_update_bitable_record`、`feishu_delete_bitable_record`、`feishu_delete_bitable` 工具
 - **文件下载**：用户发送的图片/文件/语音/视频，使用 `feishu_download_resource` 工具下载后分析
 - **文件发送**：向用户发送文件，使用 `feishu_send_file` 工具
 - **不要使用 Bash 命令**，使用对应的 MCP 工具
@@ -84,6 +84,7 @@ description: |
 | 创建文档 | `feishu_create_doc` | 从 Markdown 创建飞书文档 |
 | 获取文档 | `feishu_fetch_doc` | 获取文档内容 |
 | 更新文档 | `feishu_update_doc` | 更新文档内容 |
+| **删除文档** | `feishu_delete_doc` | 删除文档（移到回收站） |
 | 搜索文档 | `feishu_search_docs` | 搜索飞书文档 |
 | 创建多维表格 | `feishu_create_bitable` | 创建多维表格应用 |
 | 创建数据表 | `feishu_create_bitable_table` | 在多维表格中创建数据表 |
@@ -93,6 +94,7 @@ description: |
 | 添加记录 | `feishu_add_bitable_records` | 批量添加记录 |
 | 更新记录 | `feishu_update_bitable_record` | 更新指定记录 |
 | 删除记录 | `feishu_delete_bitable_record` | 删除指定记录 |
+| **删除多维表格** | `feishu_delete_bitable` | 删除整个多维表格（移到回收站） |
 | **下载附件** | `feishu_download_resource` | 下载用户发送的图片/文件/语音/视频 |
 | **发送文件** | `feishu_send_file` | 发送文件给用户（文件必须在 /workspace/ipc/downloads/） |
 
@@ -236,6 +238,20 @@ feishu_send_file(
 - `query`: 搜索关键词
 - `limit`: 返回结果数量（可选）
 
+### 5. 删除文档
+
+使用 `feishu_delete_doc` 工具：
+- `doc_id`: 文档 ID 或完整 URL
+
+**注意**：删除操作会将文档移到回收站，可以从回收站恢复。
+
+**示例**：
+```
+feishu_delete_doc(doc_id="OxkvdjrtZoOnrRxP4q9cnvlwnid")
+# 或使用完整 URL
+feishu_delete_doc(doc_id="https://feishu.cn/docx/OxkvdjrtZoOnrRxP4q9cnvlwnid")
+```
+
 ---
 
 ## 📊 多维表格操作
@@ -355,6 +371,18 @@ CurrentValue.[客户名称]="字节跳动"
 - `app_token`: 多维表格 app_token
 - `table_id`: 数据表 table_id
 - `record_id`: 要删除的记录 ID
+
+### 9. 删除整个多维表格
+
+使用 `feishu_delete_bitable` 工具：
+- `app_token`: 多维表格 app_token
+
+**注意**：此操作会删除整个多维表格（包括所有数据表和记录），移到回收站后可恢复。
+
+**示例**：
+```
+feishu_delete_bitable(app_token="DqYJb8ZqAanC08sP7otcLrHJnyf")
+```
 
 ---
 
