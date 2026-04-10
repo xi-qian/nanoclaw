@@ -201,3 +201,37 @@ export function getConnectedInstanceIds(): string[] {
     .filter(([_, ws]) => ws.readyState === WebSocket.OPEN)
     .map(([id]) => id);
 }
+
+// Heartbeat timeout checker
+let heartbeatChecker: NodeJS.Timeout | null = null;
+
+export function startHeartbeatChecker(timeoutSeconds: number): void {
+  if (heartbeatChecker) {
+    clearInterval(heartbeatChecker);
+  }
+
+  heartbeatChecker = setInterval(() => {
+    const db = getDb();
+    const stmt = db.prepare(`
+      SELECT instance_id FROM instances
+      WHERE status != 'offline'
+      AND datetime(last_heartbeat) < datetime('now', '-' || ? || ' seconds')
+    `);
+    const expired = stmt.all(timeoutSeconds) as { instance_id: string }[];
+
+    for (const row of expired) {
+      console.log('[Heartbeat] Instance timed out:', row.instance_id);
+      setInstanceOffline(row.instance_id);
+      connections.delete(row.instance_id);
+    }
+  }, 30000); // Check every 30 seconds
+
+  console.log('[Heartbeat] Checker started, timeout:', timeoutSeconds, 'seconds');
+}
+
+export function stopHeartbeatChecker(): void {
+  if (heartbeatChecker) {
+    clearInterval(heartbeatChecker);
+    heartbeatChecker = null;
+  }
+}
