@@ -42,7 +42,9 @@ export function formatMessages(messages: any[], timezone: string): string {
       const content = escapeXml(msg.content);
 
       // Include sender_id for unique user identification
-      const senderId = msg.sender ? ` sender_id="${escapeXml(msg.sender)}"` : '';
+      const senderId = msg.sender
+        ? ` sender_id="${escapeXml(msg.sender)}"`
+        : '';
 
       // Include attachment info if present
       let attachmentInfo = '';

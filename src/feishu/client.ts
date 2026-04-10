@@ -208,10 +208,7 @@ export class FeishuClient {
 
       // 检查 JSON-RPC 错误
       if (data.error) {
-        log.error(
-          { toolName, error: data.error },
-          'MCP tool returned error',
-        );
+        log.error({ toolName, error: data.error }, 'MCP tool returned error');
         throw new Error(
           `MCP tool ${toolName} error: ${data.error.message || JSON.stringify(data.error)}`,
         );
@@ -664,7 +661,10 @@ export class FeishuClient {
 
       const url = result.doc_url || this.buildDocUrl(documentId, this.brand);
 
-      log.info({ documentId, title, url }, 'Document created successfully via MCP');
+      log.info(
+        { documentId, title, url },
+        'Document created successfully via MCP',
+      );
 
       return {
         doc_id: documentId,
