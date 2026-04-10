@@ -1,0 +1,2 @@
+# feishu 包已改为仅用 Python 标准库发 HTTP，无需 PyPI 依赖。
+# 若你在其它脚本里仍使用 requests，可自行添加： requests>=2.28.0,<3

@@ -1,0 +1,314 @@
+{
+  "schema_version": 1,
+  "description": "【项目总管理】荷塘临床试验场景：项目 ⇄ 任务 / 周报 / 成员。由 feishu.bitable.provision 解释执行。",
+  "bitable_name": "项目总管理",
+  "time_zone": "Asia/Shanghai",
+  "delete_default_table": true,
+  "after_provision": {
+    "views_template": "templates/feishu/hetang/bitable/project_portfolio/clinical_project_pm.views.json",
+    "forms_template": "templates/feishu/hetang/bitable/project_portfolio/clinical_project_pm.forms.json"
+  },
+  "tables": [
+    {
+      "key": "projects",
+      "name": "项目",
+      "default_view_name": "所有项目",
+      "fields": [
+        {
+          "name": "项目编号",
+          "type": "text",
+          "description": "项目唯一编号，可作为主键索引"
+        },
+        {
+          "name": "项目名称",
+          "type": "text",
+          "description": "项目显示名称，由录入人填写"
+        },
+        {
+          "name": "医院",
+          "type": "text",
+          "description": "合作或牵头医院名称，由录入人填写"
+        },
+        { "name": "总负责人", "type": "user", "multiple": false },
+        {
+          "name": "项目截止时间",
+          "type": "date",
+          "date_formatter": "yyyy/MM/dd"
+        },
+        {
+          "name": "项目预算",
+          "type": "currency",
+          "currency_code": "CNY"
+        },
+        {
+          "name": "状态",
+          "type": "single_select",
+          "description": "项目推进状态；总表「项目状态看板」按本列分组（列：推进中/未启动/已完成）。",
+          "options": [
+            { "name": "推进中", "color": 5 },
+            { "name": "未启动", "color": 6 },
+            { "name": "已完成", "color": 7 }
+          ]
+        },
+        {
+          "name": "项目阶段",
+          "type": "single_select",
+          "description": "项目当前所处阶段，与任务表「项目阶段」七阶段对齐。",
+          "options": [
+            { "name": "第一阶段", "color": 0 },
+            { "name": "第二阶段", "color": 1 },
+            { "name": "第三阶段", "color": 2 },
+            { "name": "第四阶段", "color": 3 },
+            { "name": "第五阶段", "color": 4 },
+            { "name": "第六阶段", "color": 5 },
+            { "name": "第七阶段", "color": 6 }
+          ]
+        },
+        {
+          "name": "风险",
+          "type": "multi_select",
+          "options": [
+            { "name": "进度超期", "color": 8 },
+            { "name": "预算超期", "color": 9 }
+          ]
+        }
+      ],
+      "post_fields": [
+        {
+          "name": "任务完成度",
+          "type": "progress",
+          "min": 0,
+          "max": 100,
+          "description": "飞书 OpenAPI 难以稳定写入「按关联子表状态比例」类公式；请在本字段用界面配置公式/汇总，或配合自动化：已完成任务数÷关联任务总数。"
+        }
+      ],
+      "formula_fields": [
+        {
+          "name": "任务数量",
+          "formula_kind": "counta_same_table",
+          "source_field_name": "关联任务",
+          "result": { "data_type": 2, "ui_type": "Number" }
+        }
+      ]
+    },
+    {
+      "key": "tasks",
+      "name": "任务",
+      "default_view_name": "所有任务",
+      "fields": [
+        { "name": "任务名称", "type": "text" },
+        { "name": "任务描述", "type": "text" },
+        {
+          "name": "所属项目",
+          "type": "duplex_link",
+          "link_table_key": "projects",
+          "back_field_name": "关联任务",
+          "multiple": false
+        },
+        {
+          "name": "项目阶段",
+          "type": "single_select",
+          "description": "划分为七个阶段；创建 Base 时会预置对应里程碑任务各一条。",
+          "options": [
+            { "name": "第一阶段", "color": 0 },
+            { "name": "第二阶段", "color": 1 },
+            { "name": "第三阶段", "color": 2 },
+            { "name": "第四阶段", "color": 3 },
+            { "name": "第五阶段", "color": 4 },
+            { "name": "第六阶段", "color": 5 },
+            { "name": "第七阶段", "color": 6 }
+          ]
+        },
+        {
+          "name": "优先级",
+          "type": "single_select",
+          "options": [
+            { "name": "P0", "color": 0 },
+            { "name": "P1", "color": 1 },
+            { "name": "P2", "color": 2 },
+            { "name": "P3", "color": 3 }
+          ]
+        },
+        {
+          "name": "责任方",
+          "type": "text",
+          "description": "责任部门或对接方说明，由录入人填写"
+        },
+        { "name": "负责人", "type": "user", "multiple": true },
+        {
+          "name": "状态",
+          "type": "single_select",
+          "options": [
+            { "name": "未开始", "color": 5 },
+            { "name": "进行中", "color": 6 },
+            { "name": "已完成", "color": 7 },
+            { "name": "已停滞", "color": 8 }
+          ]
+        },
+        {
+          "name": "开始时间",
+          "type": "date",
+          "date_formatter": "yyyy/MM/dd"
+        },
+        {
+          "name": "截止时间",
+          "type": "date",
+          "date_formatter": "yyyy/MM/dd"
+        },
+        {
+          "name": "完成时间",
+          "type": "date",
+          "date_formatter": "yyyy/MM/dd"
+        },
+        { "name": "任务执行人", "type": "user", "multiple": true }
+      ],
+      "post_fields": [
+        {
+          "name": "父子任务",
+          "type": "single_link",
+          "link_table_key": "tasks",
+          "multiple": false,
+          "description": "关联到本表其他任务，形成子任务层级"
+        }
+      ],
+      "initial_records": [
+        {
+          "fields": {
+            "任务名称": "前期拓客·BD开发",
+            "项目阶段": "第一阶段",
+            "状态": "未开始"
+          }
+        },
+        {
+          "fields": {
+            "任务名称": "需求交流·PI多轮沟通",
+            "项目阶段": "第二阶段",
+            "状态": "未开始"
+          }
+        },
+        {
+          "fields": {
+            "任务名称": "内部立项评估",
+            "项目阶段": "第三阶段",
+            "状态": "未开始"
+          }
+        },
+        {
+          "fields": {
+            "任务名称": "材料准备·20+ 模块逐一撰写",
+            "项目阶段": "第四阶段",
+            "状态": "未开始"
+          }
+        },
+        {
+          "fields": {
+            "任务名称": "外部立项·医院三线并行审批",
+            "项目阶段": "第五阶段",
+            "状态": "未开始"
+          }
+        },
+        {
+          "fields": {
+            "任务名称": "临床实施·患者运营",
+            "项目阶段": "第六阶段",
+            "状态": "未开始"
+          }
+        },
+        {
+          "fields": {
+            "任务名称": "数据分析·结题发表",
+            "项目阶段": "第七阶段",
+            "状态": "未开始"
+          }
+        }
+      ]
+    },
+    {
+      "key": "weekly",
+      "name": "周报",
+      "default_view_name": "全部周报",
+      "fields": [
+        {
+          "name": "日期",
+          "type": "date",
+          "date_formatter": "yyyy/MM/dd"
+        },
+        { "name": "汇报人", "type": "user", "multiple": false },
+        { "name": "汇报部门", "type": "group_chat", "multiple": false },
+        {
+          "name": "所属项目",
+          "type": "duplex_link",
+          "link_table_key": "projects",
+          "back_field_name": "项目周报",
+          "multiple": false,
+          "description": "与项目表双向关联；项目侧自动生成「项目周报」列（多条周报指向同一项目）。"
+        },
+        { "name": "进度内容", "type": "text" },
+        { "name": "下周计划", "type": "text" },
+        { "name": "协调支持", "type": "text" },
+        {
+          "name": "风险提示",
+          "type": "multi_select",
+          "options": [
+            { "name": "低风险", "color": 0 },
+            { "name": "中风险", "color": 1 },
+            { "name": "高风险", "color": 2 }
+          ]
+        }
+      ],
+      "formula_fields": [
+        {
+          "name": "汇报标题",
+          "formula_kind": "concat_date_text_user",
+          "date_field_name": "日期",
+          "user_field_name": "汇报人",
+          "result": { "data_type": 1, "ui_type": "Text" }
+        }
+      ]
+    },
+    {
+      "key": "members",
+      "name": "成员",
+      "default_view_name": "所有成员",
+      "default_view_type": "gallery",
+      "fields": [
+        {
+          "name": "成员序号",
+          "type": "auto_number",
+          "auto_serial_type": "auto_increment_number"
+        },
+        { "name": "账号", "type": "user", "multiple": false },
+        {
+          "name": "角色",
+          "type": "multi_select",
+          "options": [
+            { "name": "开发", "color": 0 },
+            { "name": "测试", "color": 1 },
+            { "name": "产品", "color": 2 },
+            { "name": "项目经理", "color": 3 },
+            { "name": "需求", "color": 4 },
+            { "name": "总体负责人", "color": 5 },
+            { "name": "统筹", "color": 6 },
+            { "name": "客户代表", "color": 7 },
+            { "name": "其他", "color": 8 }
+          ]
+        },
+        {
+          "name": "所属项目",
+          "type": "duplex_link",
+          "link_table_key": "projects",
+          "back_field_name": "项目成员",
+          "multiple": true
+        }
+      ],
+      "formula_fields": [
+        {
+          "name": "姓名",
+          "formula_kind": "user_field_display",
+          "user_field_name": "账号",
+          "result": { "data_type": 1, "ui_type": "Text" }
+        }
+      ]
+    }
+  ]
+}
