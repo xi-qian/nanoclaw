@@ -485,13 +485,17 @@ export class FeishuChannel implements Channel {
         const lastMessageId = this.lastReceivedMessageIds.get(chatId);
 
         if (lastMessageId) {
-          const reactionId = await this.client.addTypingIndicator(lastMessageId);
+          const reactionId =
+            await this.client.addTypingIndicator(lastMessageId);
           if (reactionId) {
             this.typingIndicators.set(chatId, {
               messageId: lastMessageId,
               reactionId,
             });
-            log.debug({ chatId, messageId: lastMessageId }, 'Typing indicator added');
+            log.debug(
+              { chatId, messageId: lastMessageId },
+              'Typing indicator added',
+            );
           }
         }
       } else {
@@ -508,7 +512,11 @@ export class FeishuChannel implements Channel {
       }
     } catch (error) {
       log.warn(
-        { jid, typing, error: error instanceof Error ? error.message : String(error) },
+        {
+          jid,
+          typing,
+          error: error instanceof Error ? error.message : String(error),
+        },
         'Failed to set typing indicator',
       );
     }
