@@ -7,6 +7,8 @@ import {
   AUTO_REGISTER_GROUPS,
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
+  MONITOR_ENABLED,
+  INSTANCE_ID,
   POLL_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
@@ -68,6 +70,12 @@ import {
   CardActionData,
 } from './types.js';
 import { logger } from './logger.js';
+import {
+  startReporter,
+  stopReporter,
+  notifyContainerStarted,
+  notifyContainerStopped,
+} from './reporter/index.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -123,6 +131,13 @@ function loadState(): void {
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+}
+
+// Helper to get running containers
+function getRunningContainers(): any[] {
+  // This will be called from container-runner
+  // For now, return empty - will integrate with container state
+  return [];
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -630,6 +645,28 @@ async function main(): Promise<void> {
   loadState();
   restoreRemoteControl();
 
+  // Start reporter if enabled
+  if (MONITOR_ENABLED) {
+    startReporter({
+      instanceId: INSTANCE_ID || undefined,
+      mainGroup: Object.values(registeredGroups).find((g) => g.isMain)?.name,
+      getContainers: () => getRunningContainers(),
+      getGroups: () =>
+        Object.values(registeredGroups).map((g) => ({
+          jid:
+            Object.keys(registeredGroups).find(
+              (jid) => registeredGroups[jid] === g,
+            ) || '',
+          name: g.name,
+          folder: g.folder,
+          isMain: g.isMain || false,
+          trigger: g.trigger,
+          requiresTrigger: g.requiresTrigger ?? true,
+        })),
+      getChannels: () => channels.map((c) => c.name),
+    });
+  }
+
   // Start credential proxy (containers route API calls through this)
   const proxyServer = await startCredentialProxy(
     CREDENTIAL_PROXY_PORT,
@@ -639,6 +676,7 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    stopReporter();
     proxyServer.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();

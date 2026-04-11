@@ -14,6 +14,7 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  MONITOR_ENABLED,
   TIMEZONE,
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
@@ -359,6 +360,20 @@ export async function runContainerAgent(
 
     onProcess(container, containerName);
 
+    // Notify monitor if enabled
+    if (MONITOR_ENABLED) {
+      import('./reporter/index.js').then(({ notifyContainerStarted }) => {
+        notifyContainerStarted({
+          containerId: containerName,
+          name: containerName,
+          groupFolder: input.groupFolder,
+          chatJid: input.chatJid,
+          status: 'running',
+          startTime: new Date().toISOString(),
+        });
+      });
+    }
+
     let stdout = '';
     let stderr = '';
     let stdoutTruncated = false;
@@ -481,6 +496,13 @@ export async function runContainerAgent(
     container.on('close', (code) => {
       clearTimeout(timeout);
       const duration = Date.now() - startTime;
+
+      // Notify monitor if enabled
+      if (MONITOR_ENABLED) {
+        import('./reporter/index.js').then(({ notifyContainerStopped }) => {
+          notifyContainerStopped(containerName);
+        });
+      }
 
       if (timedOut) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
