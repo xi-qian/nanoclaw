@@ -68,6 +68,8 @@ server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 
+PERSISTENCE - Tasks are stored in SQLite database and persist across service restarts. They do NOT expire automatically. A task continues running until explicitly cancelled via cancel_task, or if it encounters repeated errors that cause it to be paused.
+
 CONTEXT MODE - Choose based on task type:
 \u2022 "group": Task runs in the group's conversation context, with access to chat history. Use for tasks that need context about ongoing discussions, user preferences, or recent interactions.
 \u2022 "isolated": Task runs in a fresh session with no conversation history. Use for independent tasks that don't need prior context. When using isolated mode, include all necessary context in the prompt itself.
