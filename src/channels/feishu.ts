@@ -45,6 +45,9 @@ export class FeishuChannel implements Channel {
     { messageId: string; reactionId: string }
   > = new Map();
 
+  // 追踪每个 chat 最后收到的消息 ID（用于 typing indicator）
+  private lastReceivedMessageIds: Map<string, string> = new Map();
+
   constructor(opts: ChannelOpts, credentials: FeishuCredentials) {
     this.credentials = credentials;
     this.client = new FeishuClient(credentials);
@@ -149,16 +152,12 @@ export class FeishuChannel implements Channel {
         // 通知消息处理器（会被存储到 SQLite）
         this.onMessage(jid, newMessage);
 
-        // 添加 typing indicator（通过 emoji reaction）
-        // 使用 chatId 作为 key，方便后续删除
-        this.client.addTypingIndicator(msg.message_id).then((reactionId) => {
-          if (reactionId) {
-            this.typingIndicators.set(chatId, {
-              messageId: msg.message_id,
-              reactionId,
-            });
-          }
-        });
+        // 保存最后收到的消息 ID（用于 typing indicator）
+        this.lastReceivedMessageIds.set(chatId, msg.message_id);
+
+        // 不在这里添加 typing indicator
+        // typing indicator 由 index.ts 在检测到需要机器人回复时添加
+        // 这样可以避免在非 trigger 消息上显示 typing
 
         log.debug(
           {
@@ -469,6 +468,50 @@ export class FeishuChannel implements Channel {
    */
   isConnected(): boolean {
     return this.client.isConnected();
+  }
+
+  /**
+   * 设置 typing 指示器
+   * 只有在需要机器人回复时才调用此方法
+   * @param jid 聊天 JID
+   * @param typing true 显示 typing，false 移除 typing
+   */
+  async setTyping(jid: string, typing: boolean): Promise<void> {
+    try {
+      const chatId = jid.replace(/^feishu:/, '');
+
+      if (typing) {
+        // Use saved last message ID to add typing reaction
+        const lastMessageId = this.lastReceivedMessageIds.get(chatId);
+
+        if (lastMessageId) {
+          const reactionId = await this.client.addTypingIndicator(lastMessageId);
+          if (reactionId) {
+            this.typingIndicators.set(chatId, {
+              messageId: lastMessageId,
+              reactionId,
+            });
+            log.debug({ chatId, messageId: lastMessageId }, 'Typing indicator added');
+          }
+        }
+      } else {
+        // 移除 typing indicator
+        const typingState = this.typingIndicators.get(chatId);
+        if (typingState) {
+          await this.client.removeTypingIndicator(
+            typingState.messageId,
+            typingState.reactionId,
+          );
+          this.typingIndicators.delete(chatId);
+          log.debug({ chatId }, 'Typing indicator removed');
+        }
+      }
+    } catch (error) {
+      log.warn(
+        { jid, typing, error: error instanceof Error ? error.message : String(error) },
+        'Failed to set typing indicator',
+      );
+    }
   }
 
   /**
