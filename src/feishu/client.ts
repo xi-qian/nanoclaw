@@ -208,10 +208,7 @@ export class FeishuClient {
 
       // 检查 JSON-RPC 错误
       if (data.error) {
-        log.error(
-          { toolName, error: data.error },
-          'MCP tool returned error',
-        );
+        log.error({ toolName, error: data.error }, 'MCP tool returned error');
         throw new Error(
           `MCP tool ${toolName} error: ${data.error.message || JSON.stringify(data.error)}`,
         );
@@ -664,7 +661,10 @@ export class FeishuClient {
 
       const url = result.doc_url || this.buildDocUrl(documentId, this.brand);
 
-      log.info({ documentId, title, url }, 'Document created successfully via MCP');
+      log.info(
+        { documentId, title, url },
+        'Document created successfully via MCP',
+      );
 
       return {
         doc_id: documentId,
@@ -898,6 +898,124 @@ export class FeishuClient {
   private userInfoCache: Map<string, { name: string; expireAt: number }> =
     new Map();
   private readonly USER_CACHE_TTL = 3600000; // 1 hour in ms
+
+  /**
+   * 用户部门信息缓存
+   */
+  private userDepartmentCache: Map<
+    string,
+    { departments: string[]; expireAt: number }
+  > = new Map();
+  private readonly DEPARTMENT_CACHE_TTL = 3600000; // 1 hour in ms
+
+  /**
+   * 获取用户的部门名称列表
+   * 通过 user open_id 查询用户所属部门
+   * 需权限：contact:user.base:readonly, contact:department.base:readonly
+   *
+   * @param openId 用户的 open_id
+   * @returns 部门名称列表
+   */
+  async getUserDepartments(openId: string): Promise<string[]> {
+    if (!openId) return [];
+
+    // Check cache first
+    const cached = this.userDepartmentCache.get(openId);
+    if (cached && cached.expireAt > Date.now()) {
+      return cached.departments;
+    }
+
+    try {
+      // 使用批量获取员工信息接口，直接获取部门信息
+      const userResponse = (await this.client.request({
+        url: '/open-apis/directory/v1/employees/mget',
+        method: 'POST',
+        params: {
+          employee_id_type: 'open_id',
+        },
+        data: {
+          employee_ids: [openId],
+          required_fields: ['base_info.departments'],
+        },
+      })) as {
+        code?: number;
+        msg?: string;
+        data?: {
+          employees?: Array<{
+            base_info?: {
+              departments?: Array<{
+                name?: {
+                  default_value?: string;
+                };
+              }>;
+            };
+          }>;
+        };
+      };
+
+      log.debug(
+        {
+          openId,
+          code: userResponse.code,
+          msg: userResponse.msg,
+          employees: userResponse.data?.employees,
+        },
+        'Employee API response for department query',
+      );
+
+      if (userResponse.code !== 0 || !userResponse.data?.employees?.[0]?.base_info?.departments) {
+        log.warn(
+          {
+            openId,
+            code: userResponse.code,
+            msg: userResponse.msg,
+          },
+          'Failed to get employee department info',
+        );
+        return [];
+      }
+
+      const employee = userResponse.data.employees[0];
+      const departments = employee.base_info?.departments;
+
+      if (!departments) {
+        log.debug({ openId }, 'User has no departments');
+        return [];
+      }
+
+      // 直接从 departments 字段获取部门名称
+      const departmentNames = departments
+        .map((d) => d.name?.default_value)
+        .filter((name): name is string => name !== undefined);
+
+      if (departmentNames.length === 0) {
+        log.debug({ openId, departments }, 'User has no department names');
+        return [];
+      }
+
+      // Cache the result
+      this.userDepartmentCache.set(openId, {
+        departments: departmentNames,
+        expireAt: Date.now() + this.DEPARTMENT_CACHE_TTL,
+      });
+
+      log.info(
+        { openId, departmentNames },
+        'User departments fetched successfully',
+      );
+
+      return departmentNames;
+    } catch (error) {
+      log.error(
+        {
+          openId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Failed to get user departments',
+      );
+      return [];
+    }
+  }
 
   /**
    * 获取用户信息（通讯录）

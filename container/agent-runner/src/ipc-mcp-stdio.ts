@@ -1415,6 +1415,83 @@ server.tool(
   },
 );
 
+server.tool(
+  'feishu_get_user_department',
+  `获取飞书用户的部门名称列表。
+
+使用场景：
+- 根据用户消息中的 sender_id 查询用户所属部门
+- 了解用户的组织架构信息
+- 根据部门进行权限判断或分组处理
+
+参数说明：
+- open_id: 用户的 open_id（格式如 "ou_xxx"）
+
+返回值：
+- 用户所属的部门名称列表（可能有多个部门）
+
+注意：
+- 需要飞书应用有通讯录相关权限（contact:user.base:readonly, contact:department.base:readonly）
+- 如果用户不存在或无权限，返回空列表`,
+  {
+    open_id: z.string().describe('用户的 open_id（格式如 "ou_xxx"，可以从消息的 sender_id 属性获取）'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'get_user_department',
+      open_id: args.open_id,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        const departments = result.departments || [];
+        if (departments.length === 0) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `用户 ${args.open_id} 没有部门信息，或无法获取部门信息（可能缺少权限）`,
+              },
+            ],
+          };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `用户 ${args.open_id} 所属部门:\n${departments.map((d: string, i: number) => `${i + 1}. ${d}`).join('\n')}`,
+            },
+          ],
+        };
+      } else {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `获取用户部门失败: ${result.error || '未知错误'}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `获取用户部门超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
 // Start the stdio server transport
 const transport = new StdioServerTransport();
 await server.connect(transport);
