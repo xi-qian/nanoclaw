@@ -39,6 +39,7 @@ import {
   getRegisteredGroup,
   getRouterState,
   initDatabase,
+  deleteSession,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -489,6 +490,18 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
+
+      // Detect "No conversation found" error and clear the invalid session
+      // so the next request will start a fresh session
+      if (output.error?.includes('No conversation found')) {
+        logger.warn(
+          { group: group.name, folder: group.folder, oldSessionId: sessionId },
+          'Session not found in SDK, clearing invalid session ID',
+        );
+        deleteSession(group.folder);
+        delete sessions[group.folder];
+      }
+
       return 'error';
     }
 
