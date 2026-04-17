@@ -92,7 +92,8 @@ export const TIMEZONE =
 // Reporter configuration
 export const MONITOR_ENABLED = process.env.NANOCLAW_MONITOR_ENABLED === 'true';
 export const MONITOR_URL = process.env.NANOCLAW_MONITOR_URL || '';
-export const INSTANCE_ID = process.env.NANOCLAW_INSTANCE_ID || '';
+export const INSTANCE_ID =
+  process.env.NANOCLAW_INSTANCE_ID || os.userInfo().username;
 export const LOCAL_API_PORT = parseInt(
   process.env.NANOCLAW_LOCAL_API_PORT || String(CREDENTIAL_PROXY_PORT),
   10,

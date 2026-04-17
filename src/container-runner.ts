@@ -14,6 +14,7 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  INSTANCE_ID,
   MONITOR_ENABLED,
   TIMEZONE,
 } from './config.js';
@@ -242,6 +243,9 @@ function buildContainerArgs(
   containerName: string,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+
+  // Add instance label to identify containers from this nanoclaw instance
+  args.push('--label', `nanoclaw.instance=${INSTANCE_ID}`);
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
