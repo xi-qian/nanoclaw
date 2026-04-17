@@ -97,6 +97,7 @@ description: |
 | **删除多维表格** | `feishu_delete_bitable` | 删除整个多维表格（移到回收站） |
 | **下载附件** | `feishu_download_resource` | 下载用户发送的图片/文件/语音/视频 |
 | **发送文件** | `feishu_send_file` | 发送文件给用户（文件必须在 /workspace/ipc/downloads/） |
+| **获取用户部门** | `feishu_get_user_department` | 根据用户 open_id 查询所属部门名称 |
 
 ---
 
@@ -429,3 +430,45 @@ feishu_delete_bitable(app_token="DqYJb8ZqAanC08sP7otcLrHJnyf")
 | `1254064` | 日期格式错误 | 使用毫秒时间戳 |
 | `1254066` | 人员字段格式错误 | 使用 `[{id: "ou_xxx"}]` 格式 |
 | `1254104` | 批量操作超限 | 每批不超过 500 条 |
+
+---
+
+## 👤 用户部门查询
+
+### 获取用户所属部门
+
+使用 `feishu_get_user_department` 工具查询用户所属的部门名称列表。
+
+**参数**：
+- `open_id`: 用户的 open_id（可以从消息的 `sender_id` 属性获取）
+
+**消息格式识别**：
+
+当用户发送消息时，消息会带有 sender_id 属性：
+```xml
+<message sender="用户名" sender_id="ou_xxx" timestamp="...">消息内容</message>
+```
+
+使用 sender_id 来查询用户部门：
+```
+feishu_get_user_department(open_id="ou_xxx")
+```
+
+**返回值**：
+- 用户所属的部门名称列表（用户可能属于多个部门）
+
+**示例**：
+```
+用户 ou_12abf5d96c1cd0de83408ac21549ebc9 所属部门:
+1. 产品部
+2. 技术中心
+```
+
+**使用场景**：
+- 根据用户部门进行权限判断
+- 了解用户的组织架构信息
+- 按部门分组处理任务
+
+**注意事项**：
+- 需要飞书应用有通讯录权限：`contact:user.base:readonly` 和 `contact:department.base:readonly`
+- 如果用户没有部门信息或缺少权限，返回空列表

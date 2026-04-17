@@ -425,6 +425,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     };
                     break;
                   }
+                  // 获取用户部门信息
+                  case 'get_user_department':
+                    const departments = await feishuChannel.getUserDepartments(
+                      request.open_id,
+                    );
+                    result = { departments };
+                    break;
                   default:
                     throw new Error(
                       `Unknown feishu request type: ${request.type}`,
