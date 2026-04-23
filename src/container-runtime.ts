@@ -7,6 +7,7 @@ import fs from 'fs';
 import os from 'os';
 
 import { logger } from './logger.js';
+import { INSTANCE_ID } from './config.js';
 
 /** The container runtime binary name. */
 export const CONTAINER_RUNTIME_BIN = 'docker';
@@ -103,8 +104,10 @@ export function ensureContainerRuntimeRunning(): void {
 /** Kill orphaned NanoClaw containers from previous runs. */
 export function cleanupOrphans(): void {
   try {
+    // Only cleanup containers belonging to this instance (identified by label)
+    // This prevents accidentally stopping containers from other users/instances
     const output = execSync(
-      `${CONTAINER_RUNTIME_BIN} ps --filter name=nanoclaw- --format '{{.Names}}'`,
+      `${CONTAINER_RUNTIME_BIN} ps --filter "name=nanoclaw-" --filter "label=nanoclaw.instance=${INSTANCE_ID}" --format '{{.Names}}'`,
       { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
     );
     const orphans = output.trim().split('\n').filter(Boolean);
