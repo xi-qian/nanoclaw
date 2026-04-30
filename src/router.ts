@@ -30,7 +30,7 @@ export function stripInternalTags(text: string): string {
 export function formatMessages(messages: any[], timezone: string): string {
   const formattedMessages = messages
     .map((msg) => {
-      const timestamp = new Date(msg.timestamp).toLocaleString('en-US', {
+      const timestamp = new Date(Number(msg.timestamp)).toLocaleString('en-US', {
         timeZone: timezone,
         month: 'short',
         day: 'numeric',

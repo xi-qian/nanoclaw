@@ -77,7 +77,7 @@ function connect(mainGroup?: string): void {
     setTimeout(() => connect(mainGroup), 5000);
   });
 
-  ws.on('error', (err) => {
+  ws.on('error', (err: Error) => {
     logger.error({ err }, 'Reporter connection error');
   });
 }
