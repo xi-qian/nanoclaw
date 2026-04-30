@@ -1,0 +1,28 @@
+{
+  "app_id": "cli_xxxxxxxxxxxx",
+  "app_secret": "optional_same_as_card_bot_only_for_im_token",
+  "default_profile": "pm-agent",
+  "profiles": {
+    "pm-agent": {
+      "app_id": "cli_xxxxxxxxxxxx",
+      "app_secret": "your_app_secret_here",
+      "card_receive_ids": [
+        "ou_xxxxxxxx_optional_user_open_id",
+        "oc_xxxxxxxx_optional_group_chat_id"
+      ],
+      "activity_bitable_url": "https://example.feishu.cn/base/<app_token>?table=...&view=...",
+      "app_usage_target_app_id": "cli_xxxxxxxxxxxx",
+      "activity_exclude_user_ids": [],
+      "activity_exclude_user_names": [],
+      "activity_exclude_chat_ids": []
+    },
+    "other-app": {
+      "app_id": "cli_yyyyyyyyyyyy",
+      "app_secret": "another_secret"
+    },
+    "scheme-agent": {
+      "app_id": "cli_zzzzzzzzzzzz",
+      "app_secret": "scheme_agent_secret_optional_card_bitable_keys"
+    }
+  }
+}
