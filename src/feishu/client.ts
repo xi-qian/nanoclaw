@@ -2074,6 +2074,486 @@ export class FeishuClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Task (飞书任务) Operations — Task v2 API
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 创建任务
+   * POST /open-apis/task/v2/tasks
+   */
+  async createTask(params: {
+    summary: string;
+    description?: string;
+    due?: { timestamp: string; is_all_day: boolean };
+    members?: Array<{ id: string; role: string; type: string }>;
+    tasklists?: Array<{ tasklist_guid: string }>;
+    client_token?: string;
+  }): Promise<any> {
+    const response = await this.client.request({
+      url: '/open-apis/task/v2/tasks',
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: params,
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to create task: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ summary: params.summary, guid: response.data?.task?.guid }, 'Task created');
+    return response.data?.task;
+  }
+
+  /**
+   * 获取任务详情
+   * GET /open-apis/task/v2/tasks/{taskId}
+   */
+  async getTask(taskId: string): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/task/v2/tasks/${taskId}`,
+      method: 'GET',
+      params: { user_id_type: 'open_id' },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to get task: ${response.msg} (code: ${response.code})`);
+    }
+    return response.data?.task;
+  }
+
+  /**
+   * 更新任务
+   * PATCH /open-apis/task/v2/tasks/{taskId}
+   */
+  async updateTask(
+    taskId: string,
+    task: {
+      summary?: string;
+      description?: string;
+      due?: { timestamp: string; is_all_day: boolean };
+    },
+    updateFields: string[],
+  ): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/task/v2/tasks/${taskId}`,
+      method: 'PATCH',
+      params: { user_id_type: 'open_id' },
+      data: { task, update_fields: updateFields },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to update task: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ taskId, updateFields }, 'Task updated');
+    return response.data?.task;
+  }
+
+  /**
+   * 完成任务
+   * PATCH /open-apis/task/v2/tasks/{taskId} with completed_at
+   */
+  async completeTask(taskId: string): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/task/v2/tasks/${taskId}`,
+      method: 'PATCH',
+      params: { user_id_type: 'open_id' },
+      data: {
+        task: { completed_at: String(Date.now()) },
+        update_fields: ['completed_at'],
+      },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to complete task: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ taskId }, 'Task completed');
+    return response.data?.task;
+  }
+
+  /**
+   * 重开任务
+   * PATCH /open-apis/task/v2/tasks/{taskId} with completed_at=0
+   */
+  async reopenTask(taskId: string): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/task/v2/tasks/${taskId}`,
+      method: 'PATCH',
+      params: { user_id_type: 'open_id' },
+      data: {
+        task: { completed_at: '0' },
+        update_fields: ['completed_at'],
+      },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to reopen task: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ taskId }, 'Task reopened');
+    return response.data?.task;
+  }
+
+  /**
+   * 搜索任务（使用 v1 API，Bot 身份可用）
+   * GET /open-apis/task/v1/tasks
+   */
+  async searchTask(params: {
+    query?: string;
+    page_size?: number;
+    page_token?: string;
+    start_time?: string;
+    end_time?: string;
+    is_completed?: boolean;
+  }): Promise<{ tasks: any[]; has_more: boolean; page_token?: string }> {
+    const queryParams: Record<string, any> = {};
+    if (params.page_size) queryParams.page_size = params.page_size;
+    if (params.page_token) queryParams.page_token = params.page_token;
+    if (params.start_time) queryParams.start_time = params.start_time;
+    if (params.end_time) queryParams.end_time = params.end_time;
+
+    const response = await this.client.request({
+      url: '/open-apis/task/v1/tasks',
+      method: 'GET',
+      params: queryParams,
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to search tasks: ${response.msg} (code: ${response.code})`);
+    }
+
+    let tasks = response.data?.items || [];
+    // Client-side filter if params provided
+    if (params.is_completed !== undefined) {
+      tasks = tasks.filter((t: any) =>
+        params.is_completed ? t.complete_time !== '0' : t.complete_time === '0',
+      );
+    }
+
+    return {
+      tasks,
+      has_more: response.data?.has_more || false,
+      page_token: response.data?.page_token,
+    };
+  }
+
+  /**
+   * 获取 Bot 的任务列表（使用 v1 API，Bot 身份可用）
+   * GET /open-apis/task/v1/tasks
+   */
+  async getMyTasks(params?: {
+    page_size?: number;
+    page_token?: string;
+  }): Promise<{ tasks: any[]; has_more: boolean; page_token?: string }> {
+    const queryParams: Record<string, any> = {};
+    if (params?.page_size) queryParams.page_size = params.page_size;
+    if (params?.page_token) queryParams.page_token = params.page_token;
+
+    const response = await this.client.request({
+      url: '/open-apis/task/v1/tasks',
+      method: 'GET',
+      params: queryParams,
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to get my tasks: ${response.msg} (code: ${response.code})`);
+    }
+    return {
+      tasks: response.data?.items || [],
+      has_more: response.data?.has_more || false,
+      page_token: response.data?.page_token,
+    };
+  }
+
+  /**
+   * 获取关联任务（使用 v1 API，Bot 身份可用）
+   * 复用 GET /open-apis/task/v1/tasks
+   */
+  async getRelatedTasks(params?: {
+    page_size?: number;
+    page_token?: string;
+  }): Promise<{ tasks: any[]; has_more: boolean; page_token?: string }> {
+    return this.getMyTasks(params);
+  }
+
+  /**
+   * 添加任务成员（执行人/关注者）
+   * POST /open-apis/task/v2/tasks/{taskId}/add_members
+   */
+  async addTaskMembers(
+    taskId: string,
+    members: Array<{ id: string; role: string; type: string }>,
+  ): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/task/v2/tasks/${taskId}/add_members`,
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: { members },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to add task members: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ taskId, memberCount: members.length }, 'Task members added');
+    return response.data;
+  }
+
+  /**
+   * 移除任务成员
+   * POST /open-apis/task/v2/tasks/{taskId}/remove_members
+   */
+  async removeTaskMembers(
+    taskId: string,
+    members: Array<{ id: string; role: string; type: string }>,
+  ): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/task/v2/tasks/${taskId}/remove_members`,
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: { members },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to remove task members: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ taskId, memberCount: members.length }, 'Task members removed');
+    return response.data;
+  }
+
+  /**
+   * 添加任务提醒
+   * POST /open-apis/task/v2/tasks/{taskId}/add_reminders
+   */
+  async addTaskReminders(
+    taskId: string,
+    reminders: Array<{ relative_fire_minute?: number; absolute_time?: string; timezone?: string }>,
+  ): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/task/v2/tasks/${taskId}/add_reminders`,
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: { reminders },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to add task reminders: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ taskId }, 'Task reminders added');
+    return response.data;
+  }
+
+  /**
+   * 移除任务提醒
+   * POST /open-apis/task/v2/tasks/{taskId}/remove_reminders
+   */
+  async removeTaskReminders(
+    taskId: string,
+    reminderIds: string[],
+  ): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/task/v2/tasks/${taskId}/remove_reminders`,
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: { reminder_ids: reminderIds },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to remove task reminders: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ taskId }, 'Task reminders removed');
+    return response.data;
+  }
+
+  /**
+   * 设置父任务（子任务关系）
+   * POST /open-apis/task/v2/tasks/{taskId}/set_ancestor_task
+   */
+  async setTaskAncestor(
+    taskId: string,
+    ancestorTaskId?: string,
+  ): Promise<any> {
+    const data: Record<string, string> = {};
+    if (ancestorTaskId) {
+      data.ancestor_task_id = ancestorTaskId;
+    }
+    const response = await this.client.request({
+      url: `/open-apis/task/v2/tasks/${taskId}/set_ancestor_task`,
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data,
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to set task ancestor: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ taskId, ancestorTaskId }, 'Task ancestor set');
+    return response.data?.task;
+  }
+
+  /**
+   * 添加任务评论
+   * POST /open-apis/task/v2/comments
+   */
+  async addTaskComment(
+    taskId: string,
+    content: string,
+  ): Promise<any> {
+    const response = await this.client.request({
+      url: '/open-apis/task/v2/comments',
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: {
+        content,
+        resource_id: taskId,
+        resource_type: 'task',
+      },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to add task comment: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ taskId }, 'Task comment added');
+    return response.data?.comment;
+  }
+
+  /**
+   * 订阅任务事件
+   * POST /open-apis/task/v2/task_v2/task_subscription
+   */
+  async subscribeTaskEvent(
+    taskId: string,
+    eventTypes: string[],
+  ): Promise<any> {
+    const response = await this.client.request({
+      url: '/open-apis/task/v2/task_v2/task_subscription',
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: {
+        task_id: taskId,
+        event_types: eventTypes,
+      },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to subscribe task event: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ taskId, eventTypes }, 'Task event subscribed');
+    return response.data;
+  }
+
+  /**
+   * 添加任务到任务列表
+   * POST /open-apis/task/v2/tasks/{taskId}/add_tasklist
+   */
+  async addTaskToTasklist(
+    taskId: string,
+    tasklistGuid: string,
+  ): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/task/v2/tasks/${taskId}/add_tasklist`,
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: { tasklist_guid: tasklistGuid },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to add task to tasklist: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ taskId, tasklistGuid }, 'Task added to tasklist');
+    return response.data;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tasklist (任务列表) Operations
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 创建任务列表
+   * POST /open-apis/task/v2/tasklists
+   */
+  async createTasklist(params: {
+    name: string;
+    members?: Array<{ id: string; type: string }>;
+  }): Promise<any> {
+    const response = await this.client.request({
+      url: '/open-apis/task/v2/tasklists',
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: params,
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to create tasklist: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ name: params.name, guid: response.data?.tasklist?.guid }, 'Tasklist created');
+    return response.data?.tasklist;
+  }
+
+  /**
+   * 获取任务列表详情
+   * GET /open-apis/task/v2/tasklists/{tasklistId}
+   */
+  async getTasklist(tasklistId: string): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/task/v2/tasklists/${tasklistId}`,
+      method: 'GET',
+      params: { user_id_type: 'open_id' },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to get tasklist: ${response.msg} (code: ${response.code})`);
+    }
+    return response.data?.tasklist;
+  }
+
+  /**
+   * 搜索任务列表
+   * POST /open-apis/task/v2/tasklists/search
+   */
+  async searchTasklist(params: {
+    query?: string;
+    page_size?: number;
+    page_token?: string;
+  }): Promise<{ tasklists: any[]; has_more: boolean; page_token?: string }> {
+    const response = await this.client.request({
+      url: '/open-apis/task/v2/tasklists/search',
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: params,
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to search tasklists: ${response.msg} (code: ${response.code})`);
+    }
+    return {
+      tasklists: response.data?.tasklists || [],
+      has_more: response.data?.has_more || false,
+      page_token: response.data?.page_token,
+    };
+  }
+
+  /**
+   * 管理任务列表成员
+   * POST /open-apis/task/v2/tasklists/{tasklistId}/add_members
+   */
+  async addTasklistMembers(
+    tasklistId: string,
+    members: Array<{ id: string; type: string }>,
+  ): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/task/v2/tasklists/${tasklistId}/add_members`,
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: { members },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to add tasklist members: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ tasklistId, memberCount: members.length }, 'Tasklist members added');
+    return response.data;
+  }
+
+  /**
+   * 移除任务列表成员
+   * POST /open-apis/task/v2/tasklists/{tasklistId}/remove_members
+   */
+  async removeTasklistMembers(
+    tasklistId: string,
+    members: Array<{ id: string; type: string }>,
+  ): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/task/v2/tasklists/${tasklistId}/remove_members`,
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: { members },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to remove tasklist members: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ tasklistId }, 'Tasklist members removed');
+    return response.data;
+  }
+
+  // ---------------------------------------------------------------------------
   // File Upload and Send Operations
   // ---------------------------------------------------------------------------
 

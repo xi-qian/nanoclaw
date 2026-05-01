@@ -38,6 +38,7 @@ Single Node.js process with skill-based channel system. Channels (Feishu, WhatsA
 | `status` | Container status reporting |
 | `pm-persona` | Project manager persona |
 | `feishu-doc` | Feishu document operations |
+| `feishu-task` | Feishu task operations (Task v2 API) |
 | `hetang_project_manager` | Hetang project management |
 | `hetang_task_update` | Hetang task updates |
 | `pptx` | PowerPoint generation |

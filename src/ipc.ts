@@ -432,6 +432,105 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                     result = { departments };
                     break;
+
+                  // ==================== 飞书任务操作 ====================
+                  case 'task_create':
+                    result = await feishuChannel.createTask(request.params);
+                    break;
+                  case 'task_get':
+                    result = await feishuChannel.getTask(request.task_id);
+                    break;
+                  case 'task_update':
+                    result = await feishuChannel.updateTask(
+                      request.task_id,
+                      request.task,
+                      request.update_fields,
+                    );
+                    break;
+                  case 'task_complete':
+                    result = await feishuChannel.completeTask(request.task_id);
+                    break;
+                  case 'task_reopen':
+                    result = await feishuChannel.reopenTask(request.task_id);
+                    break;
+                  case 'task_search':
+                    result = await feishuChannel.searchTask(request.params);
+                    break;
+                  case 'task_get_my_tasks':
+                    result = await feishuChannel.getMyTasks(request.params);
+                    break;
+                  case 'task_get_related_tasks':
+                    result = await feishuChannel.getRelatedTasks(request.params);
+                    break;
+                  case 'task_add_members':
+                    result = await feishuChannel.addTaskMembers(
+                      request.task_id,
+                      request.members,
+                    );
+                    break;
+                  case 'task_remove_members':
+                    result = await feishuChannel.removeTaskMembers(
+                      request.task_id,
+                      request.members,
+                    );
+                    break;
+                  case 'task_add_reminders':
+                    result = await feishuChannel.addTaskReminders(
+                      request.task_id,
+                      request.reminders,
+                    );
+                    break;
+                  case 'task_remove_reminders':
+                    result = await feishuChannel.removeTaskReminders(
+                      request.task_id,
+                      request.reminder_ids,
+                    );
+                    break;
+                  case 'task_set_ancestor':
+                    result = await feishuChannel.setTaskAncestor(
+                      request.task_id,
+                      request.ancestor_task_id,
+                    );
+                    break;
+                  case 'task_comment':
+                    result = await feishuChannel.addTaskComment(
+                      request.task_id,
+                      request.content,
+                    );
+                    break;
+                  case 'task_subscribe_event':
+                    result = await feishuChannel.subscribeTaskEvent(
+                      request.task_id,
+                      request.event_types,
+                    );
+                    break;
+                  case 'task_add_tasklist':
+                    result = await feishuChannel.addTaskToTasklist(
+                      request.task_id,
+                      request.tasklist_guid,
+                    );
+                    break;
+                  case 'tasklist_create':
+                    result = await feishuChannel.createTasklist(request.params);
+                    break;
+                  case 'tasklist_get':
+                    result = await feishuChannel.getTasklist(request.tasklist_id);
+                    break;
+                  case 'tasklist_search':
+                    result = await feishuChannel.searchTasklist(request.params);
+                    break;
+                  case 'tasklist_add_members':
+                    result = await feishuChannel.addTasklistMembers(
+                      request.tasklist_id,
+                      request.members,
+                    );
+                    break;
+                  case 'tasklist_remove_members':
+                    result = await feishuChannel.removeTasklistMembers(
+                      request.tasklist_id,
+                      request.members,
+                    );
+                    break;
                   default:
                     throw new Error(
                       `Unknown feishu request type: ${request.type}`,

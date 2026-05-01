@@ -1492,6 +1492,680 @@ server.tool(
   },
 );
 
+// ==================== 飞书任务工具 ====================
+
+server.tool(
+  'feishu_task_create',
+  '创建飞书任务。可设置标题、描述、截止日期、执行人等。',
+  {
+    summary: z.string().describe('任务标题（必填）'),
+    description: z.string().optional().describe('任务描述'),
+    due: z.object({
+      timestamp: z.string().describe('毫秒时间戳'),
+      is_all_day: z.boolean().optional().describe('是否全天'),
+    }).optional().describe('截止日期'),
+    members: z.array(z.object({
+      id: z.string().describe('用户 open_id'),
+      role: z.enum(['assignee', 'follower']).describe('角色：assignee=执行人, follower=关注者'),
+      type: z.string().describe('类型，通常为 user'),
+    })).optional().describe('成员列表'),
+    tasklists: z.array(z.object({
+      tasklist_guid: z.string().describe('任务列表 GUID'),
+    })).optional().describe('所属任务列表'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_create',
+      params: args,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        const task = result.task || result;
+        return {
+          content: [{ type: 'text' as const, text: `任务创建成功!\n\n标题: ${task.summary || args.summary}\n任务 ID: ${task.guid || task.id}\n链接: ${task.url || '(无链接)'}` }],
+        };
+      } else {
+        return { content: [{ type: 'text' as const, text: `创建任务失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `创建任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_get',
+  '获取飞书任务详情。',
+  {
+    task_id: z.string().describe('任务 GUID'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_get',
+      task_id: args.task_id,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result.task || result, null, 2) }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `获取任务失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `获取任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_update',
+  '更新飞书任务。可修改标题、描述、截止日期等。',
+  {
+    task_id: z.string().describe('任务 GUID'),
+    task: z.object({
+      summary: z.string().optional().describe('新标题'),
+      description: z.string().optional().describe('新描述'),
+      due: z.object({
+        timestamp: z.string(),
+        is_all_day: z.boolean().optional(),
+      }).optional().describe('新截止日期'),
+    }).describe('要更新的字段'),
+    update_fields: z.array(z.string()).describe('指定更新的字段名，如 ["summary", "description", "due"]'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_update',
+      task_id: args.task_id,
+      task: args.task,
+      update_fields: args.update_fields,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: `任务更新成功!` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `更新任务失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `更新任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_complete',
+  '标记飞书任务为已完成。',
+  {
+    task_id: z.string().describe('任务 GUID'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_complete',
+      task_id: args.task_id,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: `任务已完成!` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `完成任务失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `完成任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_reopen',
+  '重新打开已完成的飞书任务。',
+  {
+    task_id: z.string().describe('任务 GUID'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_reopen',
+      task_id: args.task_id,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: `任务已重新打开!` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `重开任务失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `重开任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_search',
+  '搜索飞书任务。支持按关键词、创建者、执行人、完成状态等条件搜索。使用 v1 API，Bot 身份可用。',
+  {
+    query: z.string().optional().describe('搜索关键词'),
+    creator_ids: z.array(z.string()).optional().describe('创建者 open_id 列表'),
+    assignee_ids: z.array(z.string()).optional().describe('执行人 open_id 列表'),
+    follower_ids: z.array(z.string()).optional().describe('关注者 open_id 列表'),
+    is_completed: z.boolean().optional().describe('是否已完成'),
+    due_time: z.object({
+      start: z.string().optional(),
+      end: z.string().optional(),
+    }).optional().describe('截止日期范围'),
+    page_size: z.number().optional().describe('每页数量，默认 20'),
+    page_token: z.string().optional().describe('分页 token'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_search',
+      params: args,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        const tasks = result.tasks || [];
+        const total = result.total || tasks.length;
+        const lines = tasks.map((t: any, i: number) =>
+          `${i + 1}. [${t.id || t.guid}] ${t.summary || t.title} (完成: ${t.complete_time ? '是' : '否'})`
+        );
+        return { content: [{ type: 'text' as const, text: `搜索到 ${total} 个任务:\n${lines.join('\n') || '(无结果)'}` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `搜索任务失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `搜索任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_get_my_tasks',
+  '获取分配给我的飞书任务列表。使用 v1 API，Bot 身份可用。',
+  {
+    page_size: z.number().optional().describe('每页数量，默认 20'),
+    page_token: z.string().optional().describe('分页 token'),
+    completed: z.boolean().optional().describe('是否已完成，不传则返回全部'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_get_my_tasks',
+      params: args,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        const tasks = result.tasks || [];
+        const total = result.total || tasks.length;
+        const lines = tasks.map((t: any, i: number) =>
+          `${i + 1}. [${t.id || t.guid}] ${t.summary || t.title} (完成: ${t.complete_time ? '是' : '否'})`
+        );
+        return { content: [{ type: 'text' as const, text: `共 ${total} 个任务:\n${lines.join('\n') || '(无任务)'}` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `获取我的任务失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `获取我的任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_get_related_tasks',
+  '获取与当前用户相关的飞书任务。使用 v1 API。',
+  {
+    page_size: z.number().optional().describe('每页数量，默认 20'),
+    page_token: z.string().optional().describe('分页 token'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_get_related_tasks',
+      params: args,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        const tasks = result.tasks || [];
+        const total = result.total || tasks.length;
+        const lines = tasks.map((t: any, i: number) =>
+          `${i + 1}. [${t.id || t.guid}] ${t.summary || t.title} (完成: ${t.complete_time ? '是' : '否'})`
+        );
+        return { content: [{ type: 'text' as const, text: `共 ${total} 个相关任务:\n${lines.join('\n') || '(无任务)'}` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `获取相关任务失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `获取相关任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_add_members',
+  '给飞书任务添加成员（执行人或关注者）。',
+  {
+    task_id: z.string().describe('任务 GUID'),
+    members: z.array(z.object({
+      id: z.string().describe('用户 open_id'),
+      role: z.enum(['assignee', 'follower']).describe('角色：assignee=执行人, follower=关注者'),
+      type: z.string().describe('类型，通常为 user'),
+    })).describe('成员列表'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_add_members',
+      task_id: args.task_id,
+      members: args.members,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: `成员添加成功!` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `添加成员失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `添加成员超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_remove_members',
+  '移除飞书任务的成员。',
+  {
+    task_id: z.string().describe('任务 GUID'),
+    members: z.array(z.object({
+      id: z.string().describe('用户 open_id'),
+      role: z.string().describe('角色'),
+      type: z.string().describe('类型'),
+    })).describe('要移除的成员列表'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_remove_members',
+      task_id: args.task_id,
+      members: args.members,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: `成员移除成功!` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `移除成员失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `移除成员超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_add_reminders',
+  '给飞书任务添加提醒。',
+  {
+    task_id: z.string().describe('任务 GUID'),
+    reminders: z.array(z.object({
+      relative_fire_minute: z.number().optional().describe('截止前多少分钟提醒'),
+      absolute_time: z.string().optional().describe('绝对时间（毫秒时间戳）'),
+      timezone: z.string().optional().describe('时区'),
+    })).describe('提醒列表'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_add_reminders',
+      task_id: args.task_id,
+      reminders: args.reminders,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: `提醒添加成功!` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `添加提醒失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `添加提醒超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_remove_reminders',
+  '移除飞书任务的提醒。',
+  {
+    task_id: z.string().describe('任务 GUID'),
+    reminder_ids: z.array(z.string()).describe('要移除的提醒 ID 列表'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_remove_reminders',
+      task_id: args.task_id,
+      reminder_ids: args.reminder_ids,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: `提醒移除成功!` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `移除提醒失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `移除提醒超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_set_ancestor',
+  '设置飞书任务的父任务（建立子任务关系）。',
+  {
+    task_id: z.string().describe('子任务 GUID'),
+    ancestor_task_id: z.string().optional().describe('父任务 GUID，不传则取消父子关系'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_set_ancestor',
+      task_id: args.task_id,
+      ancestor_task_id: args.ancestor_task_id,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: `父子任务关系设置成功!` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `设置父任务失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `设置父任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_comment',
+  '给飞书任务添加评论。',
+  {
+    task_id: z.string().describe('任务 GUID'),
+    content: z.string().describe('评论内容'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_comment',
+      task_id: args.task_id,
+      content: args.content,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: `评论添加成功!` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `添加评论失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `添加评论超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_subscribe_event',
+  '订阅飞书任务变更事件。',
+  {
+    task_id: z.string().describe('任务 GUID'),
+    event_types: z.array(z.string()).describe('事件类型列表，如 ["task:updated", "task:completed"]'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_subscribe_event',
+      task_id: args.task_id,
+      event_types: args.event_types,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: `事件订阅成功!` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `订阅事件失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `订阅事件超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_task_add_tasklist',
+  '将飞书任务添加到任务列表。',
+  {
+    task_id: z.string().describe('任务 GUID'),
+    tasklist_guid: z.string().describe('任务列表 GUID'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'task_add_tasklist',
+      task_id: args.task_id,
+      tasklist_guid: args.tasklist_guid,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: `任务已添加到列表!` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `添加到列表失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `添加到列表超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_tasklist_create',
+  '创建飞书任务列表。',
+  {
+    name: z.string().describe('列表名称'),
+    members: z.array(z.object({
+      id: z.string().describe('用户 open_id'),
+      type: z.string().describe('类型，通常为 user'),
+    })).optional().describe('成员列表'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'tasklist_create',
+      params: args,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        const tasklist = result.tasklist || result;
+        return { content: [{ type: 'text' as const, text: `任务列表创建成功!\n\n名称: ${tasklist.name || args.name}\n列表 ID: ${tasklist.guid || tasklist.id}` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `创建任务列表失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `创建任务列表超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_tasklist_get',
+  '获取飞书任务列表详情。',
+  {
+    tasklist_id: z.string().describe('任务列表 GUID'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'tasklist_get',
+      tasklist_id: args.tasklist_id,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result.tasklist || result, null, 2) }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `获取任务列表失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `获取任务列表超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_tasklist_search',
+  '搜索飞书任务列表。',
+  {
+    query: z.string().optional().describe('搜索关键词'),
+    page_size: z.number().optional().describe('每页数量，默认 20'),
+    page_token: z.string().optional().describe('分页 token'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'tasklist_search',
+      params: args,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        const items = result.tasklists || [];
+        const lines = items.map((t: any, i: number) =>
+          `${i + 1}. [${t.guid || t.id}] ${t.name}`
+        );
+        return { content: [{ type: 'text' as const, text: `搜索到 ${items.length} 个任务列表:\n${lines.join('\n') || '(无结果)'}` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `搜索任务列表失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `搜索任务列表超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_tasklist_add_members',
+  '给飞书任务列表添加成员。',
+  {
+    tasklist_id: z.string().describe('任务列表 GUID'),
+    members: z.array(z.object({
+      id: z.string().describe('用户 open_id'),
+      type: z.string().describe('类型，通常为 user'),
+      role: z.enum(['editor', 'viewer']).optional().describe('角色：editor 或 viewer'),
+    })).describe('成员列表'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'tasklist_add_members',
+      tasklist_id: args.tasklist_id,
+      members: args.members,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: `列表成员添加成功!` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `添加列表成员失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `添加列表成员超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_tasklist_remove_members',
+  '移除飞书任务列表的成员。',
+  {
+    tasklist_id: z.string().describe('任务列表 GUID'),
+    members: z.array(z.object({
+      id: z.string().describe('用户 open_id'),
+      type: z.string().describe('类型，通常为 user'),
+    })).describe('要移除的成员列表'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'tasklist_remove_members',
+      tasklist_id: args.tasklist_id,
+      members: args.members,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return { content: [{ type: 'text' as const, text: `列表成员移除成功!` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `移除列表成员失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `移除列表成员超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
 // Start the stdio server transport
 const transport = new StdioServerTransport();
 await server.connect(transport);
