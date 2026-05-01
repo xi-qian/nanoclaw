@@ -797,6 +797,92 @@ export class FeishuChannel implements Channel {
     return await this.client.getUserDepartments(openId);
   }
 
+  // ==================== 任务操作方法（供 Host IPC 调用） ====================
+
+  async createTask(params: any): Promise<any> {
+    return await this.client.createTask(params);
+  }
+
+  async getTask(taskId: string): Promise<any> {
+    return await this.client.getTask(taskId);
+  }
+
+  async updateTask(taskId: string, task: any, updateFields: string[]): Promise<any> {
+    return await this.client.updateTask(taskId, task, updateFields);
+  }
+
+  async completeTask(taskId: string): Promise<any> {
+    return await this.client.completeTask(taskId);
+  }
+
+  async reopenTask(taskId: string): Promise<any> {
+    return await this.client.reopenTask(taskId);
+  }
+
+  async searchTask(params: any): Promise<any> {
+    return await this.client.searchTask(params);
+  }
+
+  async getMyTasks(params: any): Promise<any> {
+    return await this.client.getMyTasks(params);
+  }
+
+  async getRelatedTasks(params: any): Promise<any> {
+    return await this.client.getRelatedTasks(params);
+  }
+
+  async addTaskMembers(taskId: string, members: any[]): Promise<any> {
+    return await this.client.addTaskMembers(taskId, members);
+  }
+
+  async removeTaskMembers(taskId: string, members: any[]): Promise<any> {
+    return await this.client.removeTaskMembers(taskId, members);
+  }
+
+  async addTaskReminders(taskId: string, reminders: any[]): Promise<any> {
+    return await this.client.addTaskReminders(taskId, reminders);
+  }
+
+  async removeTaskReminders(taskId: string, reminderIds: string[]): Promise<any> {
+    return await this.client.removeTaskReminders(taskId, reminderIds);
+  }
+
+  async setTaskAncestor(taskId: string, ancestorTaskId?: string): Promise<any> {
+    return await this.client.setTaskAncestor(taskId, ancestorTaskId);
+  }
+
+  async addTaskComment(taskId: string, content: string): Promise<any> {
+    return await this.client.addTaskComment(taskId, content);
+  }
+
+  async subscribeTaskEvent(taskId: string, eventTypes: string[]): Promise<any> {
+    return await this.client.subscribeTaskEvent(taskId, eventTypes);
+  }
+
+  async addTaskToTasklist(taskId: string, tasklistGuid: string): Promise<any> {
+    return await this.client.addTaskToTasklist(taskId, tasklistGuid);
+  }
+
+  async createTasklist(params: any): Promise<any> {
+    return await this.client.createTasklist(params);
+  }
+
+  async getTasklist(tasklistId: string): Promise<any> {
+    return await this.client.getTasklist(tasklistId);
+  }
+
+  async searchTasklist(params: any): Promise<any> {
+    return await this.client.searchTasklist(params);
+  }
+
+  async addTasklistMembers(tasklistId: string, members: any[]): Promise<any> {
+    return await this.client.addTasklistMembers(tasklistId, members);
+  }
+
+  async removeTasklistMembers(tasklistId: string, members: any[]): Promise<any> {
+    return await this.client.removeTasklistMembers(tasklistId, members);
+  }
+
   /**
    * 执行 OAuth 认证流程
    */
