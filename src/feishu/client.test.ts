@@ -58,6 +58,9 @@ vi.mock('@larksuiteoapi/node-sdk', () => ({
 
 import { FeishuClient } from './client.js';
 
+// Reference to the mock request function injected by the MockClient
+const mockRequest = vi.fn();
+
 describe('FeishuClient', () => {
   let client: FeishuClient;
 
@@ -67,6 +70,8 @@ describe('FeishuClient', () => {
       { appId: 'test_app_id', appSecret: 'test_app_secret' },
       'feishu',
     );
+    // Bind mockRequest to the client's internal Lark Client.request
+    (client as any).client.request = mockRequest;
   });
 
   afterEach(() => {
@@ -319,6 +324,199 @@ describe('FeishuClient', () => {
 
       expect(result.message_id).toBe('test_message_id');
       expect(result.chat_id).toBeUndefined();
+    });
+  });
+
+  // ==================== Drive Permission Operations ====================
+
+  describe('addCollaborator', () => {
+    it('should add a user collaborator successfully', async () => {
+      mockRequest.mockResolvedValueOnce({
+        code: 0,
+        data: { member: { member_id: 'ou_test', perm: 'edit' } },
+      });
+
+      const result = await client.addCollaborator(
+        'test_token', 'bitable', 'openid', 'ou_test', 'edit', 'user',
+      );
+
+      expect(result).toEqual({ member_id: 'ou_test', perm: 'edit' });
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: '/open-apis/drive/v1/permissions/test_token/members',
+        method: 'POST',
+        params: { type: 'bitable' },
+        data: {
+          member_type: 'openid',
+          member_id: 'ou_test',
+          perm: 'edit',
+          type: 'user',
+        },
+      });
+    });
+
+    it('should add a chat collaborator', async () => {
+      mockRequest.mockResolvedValueOnce({
+        code: 0,
+        data: { member: { member_id: 'oc_chat', perm: 'full_access' } },
+      });
+
+      const result = await client.addCollaborator(
+        'test_token', 'docx', 'openchat', 'oc_chat', 'full_access', 'chat',
+      );
+
+      expect(result).toEqual({ member_id: 'oc_chat', perm: 'full_access' });
+    });
+
+    it('should throw on API error', async () => {
+      mockRequest.mockResolvedValueOnce({
+        code: 99991663,
+        msg: 'no permission',
+      });
+
+      await expect(
+        client.addCollaborator('test_token', 'docx', 'openid', 'ou_test', 'edit', 'user'),
+      ).rejects.toThrow('Failed to add collaborator: no permission');
+    });
+  });
+
+  describe('updateCollaborator', () => {
+    it('should update collaborator permission', async () => {
+      mockRequest.mockResolvedValueOnce({
+        code: 0,
+        data: { member: { member_id: 'ou_test', perm: 'view' } },
+      });
+
+      const result = await client.updateCollaborator(
+        'test_token', 'bitable', 'ou_test', 'view',
+      );
+
+      expect(result).toEqual({ member_id: 'ou_test', perm: 'view' });
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: '/open-apis/drive/v1/permissions/test_token/members/ou_test',
+        method: 'PUT',
+        params: { type: 'bitable' },
+        data: { perm: 'view' },
+      });
+    });
+
+    it('should throw on API error', async () => {
+      mockRequest.mockResolvedValueOnce({ code: 99991663, msg: 'forbidden' });
+
+      await expect(
+        client.updateCollaborator('test_token', 'docx', 'ou_test', 'edit'),
+      ).rejects.toThrow('Failed to update collaborator: forbidden');
+    });
+  });
+
+  describe('listCollaborators', () => {
+    it('should list collaborators', async () => {
+      const members = [
+        { member_id: 'ou_user1', perm: 'full_access', type: 'user' },
+        { member_id: 'oc_chat1', perm: 'edit', type: 'chat' },
+      ];
+      mockRequest.mockResolvedValueOnce({ code: 0, data: { members } });
+
+      const result = await client.listCollaborators('test_token', 'docx');
+
+      expect(result).toEqual(members);
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: '/open-apis/drive/v1/permissions/test_token/members',
+        method: 'GET',
+        params: { type: 'docx' },
+      });
+    });
+
+    it('should return empty array when no members', async () => {
+      mockRequest.mockResolvedValueOnce({ code: 0, data: {} });
+
+      const result = await client.listCollaborators('test_token', 'bitable');
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('removeCollaborator', () => {
+    it('should remove collaborator successfully', async () => {
+      mockRequest.mockResolvedValueOnce({ code: 0 });
+
+      await client.removeCollaborator('test_token', 'docx', 'ou_test');
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: '/open-apis/drive/v1/permissions/test_token/members/ou_test',
+        method: 'DELETE',
+        params: { type: 'docx' },
+      });
+    });
+
+    it('should throw on API error', async () => {
+      mockRequest.mockResolvedValueOnce({ code: 99991663, msg: 'no permission' });
+
+      await expect(
+        client.removeCollaborator('test_token', 'docx', 'ou_test'),
+      ).rejects.toThrow('Failed to remove collaborator: no permission');
+    });
+  });
+
+  describe('transferOwner', () => {
+    it('should transfer owner with default options', async () => {
+      mockRequest.mockResolvedValueOnce({
+        code: 0,
+        data: { success: true },
+      });
+
+      const result = await client.transferOwner(
+        'test_token', 'bitable', 'openid', 'ou_new_owner',
+      );
+
+      expect(result).toEqual({ success: true });
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: '/open-apis/drive/v1/permissions/test_token/members/transfer_owner',
+        method: 'POST',
+        params: { type: 'bitable', remove_old_owner: 'false' },
+        data: { member_type: 'openid', member_id: 'ou_new_owner' },
+      });
+    });
+
+    it('should transfer owner with remove_old_owner and old_owner_perm', async () => {
+      mockRequest.mockResolvedValueOnce({ code: 0, data: {} });
+
+      await client.transferOwner(
+        'test_token', 'docx', 'openid', 'ou_new_owner', true, 'edit',
+      );
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: '/open-apis/drive/v1/permissions/test_token/members/transfer_owner',
+        method: 'POST',
+        params: { type: 'docx', remove_old_owner: 'true' },
+        data: { member_type: 'openid', member_id: 'ou_new_owner' },
+      });
+    });
+
+    it('should include old_owner_perm when remove_old_owner is false', async () => {
+      mockRequest.mockResolvedValueOnce({ code: 0, data: {} });
+
+      await client.transferOwner(
+        'test_token', 'bitable', 'openid', 'ou_new', false, 'view',
+      );
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: '/open-apis/drive/v1/permissions/test_token/members/transfer_owner',
+        method: 'POST',
+        params: {
+          type: 'bitable',
+          remove_old_owner: 'false',
+          old_owner_perm: 'view',
+        },
+        data: { member_type: 'openid', member_id: 'ou_new' },
+      });
+    });
+
+    it('should throw on API error', async () => {
+      mockRequest.mockResolvedValueOnce({ code: 99991663, msg: 'no permission' });
+
+      await expect(
+        client.transferOwner('test_token', 'docx', 'openid', 'ou_new'),
+      ).rejects.toThrow('Failed to transfer owner: no permission');
     });
   });
 });

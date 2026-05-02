@@ -1010,6 +1010,227 @@ server.tool(
   },
 );
 
+// ==================== 云文档权限管理工具 ====================
+
+server.tool(
+  'feishu_add_collaborator',
+  '添加飞书云文档或多维表格的协作者。可给用户或群组授予编辑、查看等权限。',
+  {
+    token: z.string().describe('文档/多维表格 token（从 URL 中提取）'),
+    file_type: z.string().describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
+    member_type: z.string().describe('成员标识类型：openid, userid, openchat'),
+    member_id: z.string().describe('成员 ID：ou_xxx（用户）或 oc_xxx（群组）'),
+    perm: z.string().describe('权限：full_access, edit, comment, view'),
+    collaborator_type: z.string().describe('协作者类型：user 或 chat'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'add_collaborator',
+      token: args.token,
+      file_type: args.file_type,
+      member_type: args.member_type,
+      member_id: args.member_id,
+      perm: args.perm,
+      collaborator_type: args.collaborator_type,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: `协作者添加成功!\n\n成员: ${args.member_id}\n权限: ${args.perm}` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `添加协作者失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `添加协作者超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_update_collaborator',
+  '更新飞书云文档或多维表格协作者的权限。',
+  {
+    token: z.string().describe('文档/多维表格 token'),
+    file_type: z.string().describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
+    member_id: z.string().describe('协作者成员 ID（从 list_collaborators 获取）'),
+    perm: z.string().describe('新权限：full_access, edit, comment, view'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'update_collaborator',
+      token: args.token,
+      file_type: args.file_type,
+      member_id: args.member_id,
+      perm: args.perm,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: `协作者权限更新成功!\n\n成员 ID: ${args.member_id}\n新权限: ${args.perm}` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `更新协作者权限失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `更新协作者权限超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_list_collaborators',
+  '列出飞书云文档或多维表格的所有协作者。',
+  {
+    token: z.string().describe('文档/多维表格 token'),
+    file_type: z.string().describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'list_collaborators',
+      token: args.token,
+      file_type: args.file_type,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        const members = (result as any).members || [];
+        if (members.length === 0) {
+          return {
+            content: [{ type: 'text' as const, text: '当前没有协作者。' }],
+          };
+        }
+        const lines = members.map((m: any) => {
+          const name = m.name || m.member_id || '未知';
+          const perm = m.perm || '未知';
+          const type = m.type || '未知';
+          return `- ${name} (${type}, 权限: ${perm})`;
+        });
+        return {
+          content: [{ type: 'text' as const, text: `协作者列表 (${members.length} 人):\n${lines.join('\n')}` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `获取协作者列表失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `获取协作者列表超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_remove_collaborator',
+  '删除飞书云文档或多维表格的协作者。',
+  {
+    token: z.string().describe('文档/多维表格 token'),
+    file_type: z.string().describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
+    member_id: z.string().describe('协作者成员 ID（从 list_collaborators 获取）'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'remove_collaborator',
+      token: args.token,
+      file_type: args.file_type,
+      member_id: args.member_id,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: `协作者删除成功!\n\n成员 ID: ${args.member_id}` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `删除协作者失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `删除协作者超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'feishu_transfer_owner',
+  '转让飞书云文档或多维表格的所有者。Bot 必须是当前所有者或拥有管理权限。',
+  {
+    token: z.string().describe('文档/多维表格 token'),
+    file_type: z.string().describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
+    new_member_type: z.string().describe('新所有者标识类型：openid 或 userid'),
+    new_member_id: z.string().describe('新所有者 ID（ou_xxx）'),
+    remove_old_owner: z.boolean().optional().describe('是否移除原所有者（默认 false，原所有者保留 full_access）'),
+    old_owner_perm: z.string().optional().describe('原所有者保留的权限（默认 full_access，仅在 remove_old_owner=false 时有效）'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'transfer_owner',
+      token: args.token,
+      file_type: args.file_type,
+      new_member_type: args.new_member_type,
+      new_member_id: args.new_member_id,
+      remove_old_owner: args.remove_old_owner || false,
+      old_owner_perm: args.old_owner_perm,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: `所有者转让成功!\n\n新所有者: ${args.new_member_id}` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `转让所有者失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `转让所有者超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 // ==================== 卡片消息工具 ====================
 
 server.tool(
