@@ -883,6 +883,51 @@ export class FeishuChannel implements Channel {
     return await this.client.removeTasklistMembers(tasklistId, members);
   }
 
+  // ==================== 云文档权限操作方法 ====================
+
+  async addCollaborator(
+    token: string,
+    type: string,
+    memberType: string,
+    memberId: string,
+    perm: string,
+    collaboratorType: string,
+  ): Promise<any> {
+    return await this.client.addCollaborator(token, type, memberType, memberId, perm, collaboratorType);
+  }
+
+  async updateCollaborator(
+    token: string,
+    type: string,
+    memberId: string,
+    perm: string,
+  ): Promise<any> {
+    return await this.client.updateCollaborator(token, type, memberId, perm);
+  }
+
+  async listCollaborators(token: string, type: string): Promise<any[]> {
+    return await this.client.listCollaborators(token, type);
+  }
+
+  async removeCollaborator(
+    token: string,
+    type: string,
+    memberId: string,
+  ): Promise<void> {
+    return await this.client.removeCollaborator(token, type, memberId);
+  }
+
+  async transferOwner(
+    token: string,
+    type: string,
+    newMemberType: string,
+    newMemberId: string,
+    removeOldOwner: boolean = false,
+    oldOwnerPerm?: string,
+  ): Promise<any> {
+    return await this.client.transferOwner(token, type, newMemberType, newMemberId, removeOldOwner, oldOwnerPerm);
+  }
+
   /**
    * 执行 OAuth 认证流程
    */

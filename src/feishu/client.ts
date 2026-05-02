@@ -2074,6 +2074,138 @@ export class FeishuClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Drive Permission (云文档权限) Operations
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 添加协作者
+   * POST /open-apis/drive/v1/permissions/:token/members
+   */
+  async addCollaborator(
+    token: string,
+    type: string,
+    memberType: string,
+    memberId: string,
+    perm: string,
+    collaboratorType: string,
+  ): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/drive/v1/permissions/${encodeURIComponent(token)}/members`,
+      method: 'POST',
+      params: { type },
+      data: {
+        member_type: memberType,
+        member_id: memberId,
+        perm,
+        type: collaboratorType,
+      },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to add collaborator: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ token, type, memberType, memberId, perm }, 'Collaborator added');
+    return response.data?.member;
+  }
+
+  /**
+   * 更新协作者权限
+   * PUT /open-apis/drive/v1/permissions/:token/members/:member_id
+   */
+  async updateCollaborator(
+    token: string,
+    type: string,
+    memberId: string,
+    perm: string,
+  ): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/drive/v1/permissions/${encodeURIComponent(token)}/members/${encodeURIComponent(memberId)}`,
+      method: 'PUT',
+      params: { type },
+      data: { perm },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to update collaborator: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ token, type, memberId, perm }, 'Collaborator updated');
+    return response.data?.member;
+  }
+
+  /**
+   * 列出协作者
+   * GET /open-apis/drive/v1/permissions/:token/members
+   */
+  async listCollaborators(
+    token: string,
+    type: string,
+  ): Promise<any[]> {
+    const response = await this.client.request({
+      url: `/open-apis/drive/v1/permissions/${encodeURIComponent(token)}/members`,
+      method: 'GET',
+      params: { type },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to list collaborators: ${response.msg} (code: ${response.code})`);
+    }
+    return response.data?.members || [];
+  }
+
+  /**
+   * 删除协作者
+   * DELETE /open-apis/drive/v1/permissions/:token/members/:member_id
+   */
+  async removeCollaborator(
+    token: string,
+    type: string,
+    memberId: string,
+  ): Promise<void> {
+    const response = await this.client.request({
+      url: `/open-apis/drive/v1/permissions/${encodeURIComponent(token)}/members/${encodeURIComponent(memberId)}`,
+      method: 'DELETE',
+      params: { type },
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to remove collaborator: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ token, type, memberId }, 'Collaborator removed');
+  }
+
+  /**
+   * 转让所有者
+   * POST /open-apis/drive/v1/permissions/:token/members/transfer_owner
+   */
+  async transferOwner(
+    token: string,
+    type: string,
+    newMemberType: string,
+    newMemberId: string,
+    removeOldOwner: boolean = false,
+    oldOwnerPerm?: string,
+  ): Promise<any> {
+    const data: Record<string, unknown> = {
+      member_type: newMemberType,
+      member_id: newMemberId,
+    };
+    const params: Record<string, unknown> = {
+      type,
+      remove_old_owner: String(removeOldOwner),
+    };
+    if (!removeOldOwner && oldOwnerPerm) {
+      params.old_owner_perm = oldOwnerPerm;
+    }
+    const response = await this.client.request({
+      url: `/open-apis/drive/v1/permissions/${encodeURIComponent(token)}/members/transfer_owner`,
+      method: 'POST',
+      params,
+      data,
+    });
+    if (response.code !== 0) {
+      throw new Error(`Failed to transfer owner: ${response.msg} (code: ${response.code})`);
+    }
+    log.info({ token, type, newMemberType, newMemberId }, 'Owner transferred');
+    return response.data;
+  }
+
+  // ---------------------------------------------------------------------------
   // Task (飞书任务) Operations — Task v2 API
   // ---------------------------------------------------------------------------
 

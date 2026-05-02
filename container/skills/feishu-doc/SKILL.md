@@ -11,6 +11,8 @@ description: |
   (5) 需要批量导入数据到飞书表格
   (6) 用户发送了文件/图片/语音/视频，需要分析内容
   (7) **需要发送文件给用户**
+  (8) **需要管理文档/多维表格的协作者权限**
+  (9) **需要转让文档/多维表格的所有者**
 
   **重要说明**：
   - 此 Skill 使用 MCP 工具与飞书 API 交互
@@ -95,6 +97,11 @@ description: |
 | 更新记录 | `feishu_update_bitable_record` | 更新指定记录 |
 | 删除记录 | `feishu_delete_bitable_record` | 删除指定记录 |
 | **删除多维表格** | `feishu_delete_bitable` | 删除整个多维表格（移到回收站） |
+| **添加协作者** | `feishu_add_collaborator` | 给文档/多维表格添加协作者 |
+| **列出协作者** | `feishu_list_collaborators` | 列出文档/多维表格的所有协作者 |
+| **更新权限** | `feishu_update_collaborator` | 更新协作者权限 |
+| **删除协作者** | `feishu_remove_collaborator` | 删除协作者 |
+| **转让所有者** | `feishu_transfer_owner` | 转让文档/多维表格所有者 |
 | **下载附件** | `feishu_download_resource` | 下载用户发送的图片/文件/语音/视频 |
 | **发送文件** | `feishu_send_file` | 发送文件给用户（文件必须在 /workspace/ipc/downloads/） |
 | **获取用户部门** | `feishu_get_user_department` | 根据用户 open_id 查询所属部门名称 |
@@ -418,6 +425,143 @@ feishu_delete_bitable(app_token="DqYJb8ZqAanC08sP7otcLrHJnyf")
     {"fields": {"客户名称": "字节跳动", "状态": "进行中", "签约日期": 1674206443000}},
     {"fields": {"客户名称": "腾讯", "状态": "已完成", "签约日期": 1675416243000}}
   ]
+```
+
+---
+
+## 🔐 权限管理
+
+管理飞书云文档和多维表格的协作者权限。Bot 必须是文档创建者或拥有管理权限。
+
+### 通用参数
+
+| 参数 | 说明 | 示例 |
+|------|------|------|
+| `token` | 文档/多维表格 token | 从 URL 中提取，如 `https://feishu.cn/docx/xxx` 中的 `xxx` |
+| `file_type` | 资源类型 | `docx`（文档）、`bitable`（多维表格）、`sheet`、`wiki`、`slides` 等 |
+
+### 权限级别
+
+| 权限 | 说明 |
+|------|------|
+| `full_access` | 完全访问（管理权限） |
+| `edit` | 可编辑 |
+| `comment` | 可评论 |
+| `view` | 仅查看 |
+
+### 添加协作者
+
+```
+feishu_add_collaborator(
+  token: "文档/多维表格 token",
+  file_type: "docx",              // 或 "bitable"
+  member_type: "openid",           // openid, userid, openchat
+  member_id: "ou_xxx",             // 用户 open_id 或群组 open_chat_id
+  perm: "edit",                    // full_access, edit, comment, view
+  collaborator_type: "user"        // user 或 chat
+)
+```
+
+**member_type 对照表**：
+
+| member_type | 说明 | member_id 格式 |
+|-------------|------|---------------|
+| `openid` | 用户 open_id | `ou_xxx` |
+| `userid` | 用户 user_id | `xxx` |
+| `openchat` | 群组 open_chat_id | `oc_xxx` |
+
+### 列出协作者
+
+```
+feishu_list_collaborators(
+  token: "文档/多维表格 token",
+  file_type: "docx"
+)
+```
+
+### 更新协作者权限
+
+```
+feishu_update_collaborator(
+  token: "文档/多维表格 token",
+  file_type: "docx",
+  member_id: "协作者 ID（从 list_collaborators 获取）",
+  perm: "view"                     // 新权限
+)
+```
+
+### 删除协作者
+
+```
+feishu_remove_collaborator(
+  token: "文档/多维表格 token",
+  file_type: "docx",
+  member_id: "协作者 ID（从 list_collaborators 获取）"
+)
+```
+
+### 转让所有者
+
+```
+feishu_transfer_owner(
+  token: "文档/多维表格 token",
+  file_type: "bitable",
+  new_member_type: "openid",       // openid 或 userid
+  new_member_id: "ou_xxx",         // 新所有者 ID
+  remove_old_owner: false,          // 可选，是否移除原所有者（默认 false）
+  old_owner_perm: "full_access"     // 可选，原所有者保留的权限（默认 full_access）
+)
+```
+
+**注意**：转让所有者后，原所有者默认保留 `full_access` 权限（除非 `remove_old_owner=true`）。
+
+### 常见场景
+
+**场景1：创建多维表格并分享给群组**
+
+```
+// 步骤1：创建多维表格
+feishu_create_bitable(name: "项目进度表")
+
+// 步骤2：给群组添加编辑权限
+feishu_add_collaborator(
+  token: "app_token",
+  file_type: "bitable",
+  member_type: "openchat",
+  member_id: "oc_xxx",
+  perm: "edit",
+  collaborator_type: "chat"
+)
+
+// 步骤3：转让所有者给项目负责人
+feishu_transfer_owner(
+  token: "app_token",
+  file_type: "bitable",
+  new_member_type: "openid",
+  new_member_id: "ou_xxx"
+)
+```
+
+**场景2：查看并管理协作者**
+
+```
+// 步骤1：列出当前协作者
+feishu_list_collaborators(token: "xxx", file_type: "docx")
+
+// 步骤2：将某个协作者权限降为只读
+feishu_update_collaborator(
+  token: "xxx",
+  file_type: "docx",
+  member_id: "member_id",
+  perm: "view"
+)
+
+// 步骤3：移除协作者
+feishu_remove_collaborator(
+  token: "xxx",
+  file_type: "docx",
+  member_id: "member_id"
+)
 ```
 
 ---

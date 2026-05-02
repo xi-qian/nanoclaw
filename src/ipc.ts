@@ -281,6 +281,51 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     await feishuChannel.deleteBitable(request.app_token);
                     result = { deleted: true };
                     break;
+                  // 云文档权限操作
+                  case 'add_collaborator':
+                    result = await feishuChannel.addCollaborator(
+                      request.token,
+                      request.file_type,
+                      request.member_type,
+                      request.member_id,
+                      request.perm,
+                      request.collaborator_type,
+                    );
+                    break;
+                  case 'update_collaborator':
+                    result = await feishuChannel.updateCollaborator(
+                      request.token,
+                      request.file_type,
+                      request.member_id,
+                      request.perm,
+                    );
+                    break;
+                  case 'list_collaborators':
+                    result = {
+                      members: await feishuChannel.listCollaborators(
+                        request.token,
+                        request.file_type,
+                      ),
+                    };
+                    break;
+                  case 'remove_collaborator':
+                    await feishuChannel.removeCollaborator(
+                      request.token,
+                      request.file_type,
+                      request.member_id,
+                    );
+                    result = { removed: true };
+                    break;
+                  case 'transfer_owner':
+                    result = await feishuChannel.transferOwner(
+                      request.token,
+                      request.file_type,
+                      request.new_member_type,
+                      request.new_member_id,
+                      request.remove_old_owner,
+                      request.old_owner_perm,
+                    );
+                    break;
                   // 卡片消息发送
                   case 'send_card':
                     await feishuChannel.sendCard(
