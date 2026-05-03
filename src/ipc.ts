@@ -505,7 +505,9 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     result = await feishuChannel.getMyTasks(request.params);
                     break;
                   case 'task_get_related_tasks':
-                    result = await feishuChannel.getRelatedTasks(request.params);
+                    result = await feishuChannel.getRelatedTasks(
+                      request.params,
+                    );
                     break;
                   case 'task_add_members':
                     result = await feishuChannel.addTaskMembers(
@@ -559,7 +561,9 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     result = await feishuChannel.createTasklist(request.params);
                     break;
                   case 'tasklist_get':
-                    result = await feishuChannel.getTasklist(request.tasklist_id);
+                    result = await feishuChannel.getTasklist(
+                      request.tasklist_id,
+                    );
                     break;
                   case 'tasklist_search':
                     result = await feishuChannel.searchTasklist(request.params);

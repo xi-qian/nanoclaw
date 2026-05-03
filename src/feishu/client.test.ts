@@ -337,7 +337,12 @@ describe('FeishuClient', () => {
       });
 
       const result = await client.addCollaborator(
-        'test_token', 'bitable', 'openid', 'ou_test', 'edit', 'user',
+        'test_token',
+        'bitable',
+        'openid',
+        'ou_test',
+        'edit',
+        'user',
       );
 
       expect(result).toEqual({ member_id: 'ou_test', perm: 'edit' });
@@ -361,7 +366,12 @@ describe('FeishuClient', () => {
       });
 
       const result = await client.addCollaborator(
-        'test_token', 'docx', 'openchat', 'oc_chat', 'full_access', 'chat',
+        'test_token',
+        'docx',
+        'openchat',
+        'oc_chat',
+        'full_access',
+        'chat',
       );
 
       expect(result).toEqual({ member_id: 'oc_chat', perm: 'full_access' });
@@ -374,7 +384,14 @@ describe('FeishuClient', () => {
       });
 
       await expect(
-        client.addCollaborator('test_token', 'docx', 'openid', 'ou_test', 'edit', 'user'),
+        client.addCollaborator(
+          'test_token',
+          'docx',
+          'openid',
+          'ou_test',
+          'edit',
+          'user',
+        ),
       ).rejects.toThrow('Failed to add collaborator: no permission');
     });
   });
@@ -387,7 +404,10 @@ describe('FeishuClient', () => {
       });
 
       const result = await client.updateCollaborator(
-        'test_token', 'bitable', 'ou_test', 'view',
+        'test_token',
+        'bitable',
+        'ou_test',
+        'view',
       );
 
       expect(result).toEqual({ member_id: 'ou_test', perm: 'view' });
@@ -449,7 +469,10 @@ describe('FeishuClient', () => {
     });
 
     it('should throw on API error', async () => {
-      mockRequest.mockResolvedValueOnce({ code: 99991663, msg: 'no permission' });
+      mockRequest.mockResolvedValueOnce({
+        code: 99991663,
+        msg: 'no permission',
+      });
 
       await expect(
         client.removeCollaborator('test_token', 'docx', 'ou_test'),
@@ -465,7 +488,10 @@ describe('FeishuClient', () => {
       });
 
       const result = await client.transferOwner(
-        'test_token', 'bitable', 'openid', 'ou_new_owner',
+        'test_token',
+        'bitable',
+        'openid',
+        'ou_new_owner',
       );
 
       expect(result).toEqual({ success: true });
@@ -481,7 +507,12 @@ describe('FeishuClient', () => {
       mockRequest.mockResolvedValueOnce({ code: 0, data: {} });
 
       await client.transferOwner(
-        'test_token', 'docx', 'openid', 'ou_new_owner', true, 'edit',
+        'test_token',
+        'docx',
+        'openid',
+        'ou_new_owner',
+        true,
+        'edit',
       );
 
       expect(mockRequest).toHaveBeenCalledWith({
@@ -496,7 +527,12 @@ describe('FeishuClient', () => {
       mockRequest.mockResolvedValueOnce({ code: 0, data: {} });
 
       await client.transferOwner(
-        'test_token', 'bitable', 'openid', 'ou_new', false, 'view',
+        'test_token',
+        'bitable',
+        'openid',
+        'ou_new',
+        false,
+        'view',
       );
 
       expect(mockRequest).toHaveBeenCalledWith({
@@ -512,7 +548,10 @@ describe('FeishuClient', () => {
     });
 
     it('should throw on API error', async () => {
-      mockRequest.mockResolvedValueOnce({ code: 99991663, msg: 'no permission' });
+      mockRequest.mockResolvedValueOnce({
+        code: 99991663,
+        msg: 'no permission',
+      });
 
       await expect(
         client.transferOwner('test_token', 'docx', 'openid', 'ou_new'),

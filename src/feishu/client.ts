@@ -3065,7 +3065,10 @@ export class FeishuClient {
     try {
       body = JSON.parse(rawBody);
     } catch {
-      log.error({ rawBody: rawBody.slice(0, 200) }, 'Failed to parse webhook body as JSON');
+      log.error(
+        { rawBody: rawBody.slice(0, 200) },
+        'Failed to parse webhook body as JSON',
+      );
       return null;
     }
 
@@ -3095,7 +3098,10 @@ export class FeishuClient {
       return { type: body.event.type, event: body.event };
     }
 
-    log.warn({ body: JSON.stringify(body).slice(0, 200) }, 'Unknown webhook body format');
+    log.warn(
+      { body: JSON.stringify(body).slice(0, 200) },
+      'Unknown webhook body format',
+    );
     return null;
   }
 }

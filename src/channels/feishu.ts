@@ -807,7 +807,11 @@ export class FeishuChannel implements Channel {
     return await this.client.getTask(taskId);
   }
 
-  async updateTask(taskId: string, task: any, updateFields: string[]): Promise<any> {
+  async updateTask(
+    taskId: string,
+    task: any,
+    updateFields: string[],
+  ): Promise<any> {
     return await this.client.updateTask(taskId, task, updateFields);
   }
 
@@ -843,7 +847,10 @@ export class FeishuChannel implements Channel {
     return await this.client.addTaskReminders(taskId, reminders);
   }
 
-  async removeTaskReminders(taskId: string, reminderIds: string[]): Promise<any> {
+  async removeTaskReminders(
+    taskId: string,
+    reminderIds: string[],
+  ): Promise<any> {
     return await this.client.removeTaskReminders(taskId, reminderIds);
   }
 
@@ -879,7 +886,10 @@ export class FeishuChannel implements Channel {
     return await this.client.addTasklistMembers(tasklistId, members);
   }
 
-  async removeTasklistMembers(tasklistId: string, members: any[]): Promise<any> {
+  async removeTasklistMembers(
+    tasklistId: string,
+    members: any[],
+  ): Promise<any> {
     return await this.client.removeTasklistMembers(tasklistId, members);
   }
 
@@ -893,7 +903,14 @@ export class FeishuChannel implements Channel {
     perm: string,
     collaboratorType: string,
   ): Promise<any> {
-    return await this.client.addCollaborator(token, type, memberType, memberId, perm, collaboratorType);
+    return await this.client.addCollaborator(
+      token,
+      type,
+      memberType,
+      memberId,
+      perm,
+      collaboratorType,
+    );
   }
 
   async updateCollaborator(
@@ -925,7 +942,14 @@ export class FeishuChannel implements Channel {
     removeOldOwner: boolean = false,
     oldOwnerPerm?: string,
   ): Promise<any> {
-    return await this.client.transferOwner(token, type, newMemberType, newMemberId, removeOldOwner, oldOwnerPerm);
+    return await this.client.transferOwner(
+      token,
+      type,
+      newMemberType,
+      newMemberId,
+      removeOldOwner,
+      oldOwnerPerm,
+    );
   }
 
   /**

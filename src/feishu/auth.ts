@@ -74,7 +74,10 @@ export function loadCredentials(): FeishuCredentials | null {
       if (envMode === 'websocket' || envMode === 'webhook') {
         credentials.mode = envMode;
       } else {
-        log.warn({ mode: envMode }, 'Invalid FEISHU_MODE, ignoring. Must be "websocket" or "webhook"');
+        log.warn(
+          { mode: envMode },
+          'Invalid FEISHU_MODE, ignoring. Must be "websocket" or "webhook"',
+        );
       }
     }
 

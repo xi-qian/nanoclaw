@@ -199,7 +199,11 @@ async function runTask(
           // Detect "No conversation found" error and clear the invalid session
           if (streamedOutput.error?.includes('No conversation found')) {
             logger.warn(
-              { taskId: task.id, groupFolder: task.group_folder, oldSessionId: sessionId },
+              {
+                taskId: task.id,
+                groupFolder: task.group_folder,
+                oldSessionId: sessionId,
+              },
               'Session not found in SDK, clearing invalid session ID',
             );
             deleteSession(task.group_folder);
@@ -215,7 +219,11 @@ async function runTask(
       // Detect "No conversation found" error and clear the invalid session
       if (output.error?.includes('No conversation found')) {
         logger.warn(
-          { taskId: task.id, groupFolder: task.group_folder, oldSessionId: sessionId },
+          {
+            taskId: task.id,
+            groupFolder: task.group_folder,
+            oldSessionId: sessionId,
+          },
           'Session not found in SDK, clearing invalid session ID',
         );
         deleteSession(task.group_folder);
