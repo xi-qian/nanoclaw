@@ -259,6 +259,13 @@ export class FeishuClient {
    * 建立 WebSocket 长连接
    */
   async connect(): Promise<void> {
+    const mode = this.credentials.mode || 'websocket';
+
+    if (mode === 'webhook') {
+      await this.startWebhookServer();
+      return;
+    }
+
     try {
       log.info('Starting WebSocket connection...');
 
@@ -1328,6 +1335,12 @@ export class FeishuClient {
    * 检查连接状态
    */
   isConnected(): boolean {
+    const mode = this.credentials.mode || 'websocket';
+
+    if (mode === 'webhook') {
+      return this.webhookServer?.listening ?? false;
+    }
+
     return this.wsClient !== null && this.credentials.accessToken !== undefined;
   }
 
@@ -1335,6 +1348,22 @@ export class FeishuClient {
    * 断开连接
    */
   async disconnect(): Promise<void> {
+    const mode = this.credentials.mode || 'websocket';
+
+    if (mode === 'webhook') {
+      if (this.webhookServer) {
+        await new Promise<void>((resolve, reject) => {
+          this.webhookServer!.close((err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+        this.webhookServer = null;
+        log.info('Feishu Webhook HTTP server stopped');
+      }
+      return;
+    }
+
     if (this.wsClient) {
       try {
         await this.wsClient.close();
