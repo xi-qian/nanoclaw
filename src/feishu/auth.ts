@@ -70,7 +70,12 @@ export function loadCredentials(): FeishuCredentials | null {
 
     // --- webhook 配置：环境变量优先 ---
     if (process.env.FEISHU_MODE) {
-      credentials.mode = process.env.FEISHU_MODE as 'websocket' | 'webhook';
+      const envMode = process.env.FEISHU_MODE;
+      if (envMode === 'websocket' || envMode === 'webhook') {
+        credentials.mode = envMode;
+      } else {
+        log.warn({ mode: envMode }, 'Invalid FEISHU_MODE, ignoring. Must be "websocket" or "webhook"');
+      }
     }
 
     const envHost = process.env.FEISHU_WEBHOOK_HOST;
@@ -79,13 +84,35 @@ export function loadCredentials(): FeishuCredentials | null {
     const envEncryptKey = process.env.FEISHU_WEBHOOK_ENCRYPT_KEY;
     const envVerificationToken = process.env.FEISHU_WEBHOOK_VERIFICATION_TOKEN;
 
-    if (envHost || envPort || envPath || envEncryptKey || envVerificationToken) {
+    let parsedPort: number | undefined;
+    if (envPort) {
+      const p = parseInt(envPort, 10);
+      if (!isNaN(p)) {
+        parsedPort = p;
+      } else {
+        log.warn({ port: envPort }, 'Invalid FEISHU_WEBHOOK_PORT, ignoring');
+      }
+    }
+
+    if (
+      envHost ||
+      envPort ||
+      envPath ||
+      envEncryptKey ||
+      envVerificationToken
+    ) {
       credentials.webhook = {
         host: envHost || credentials.webhook?.host || '127.0.0.1',
-        port: envPort ? parseInt(envPort, 10) : (credentials.webhook?.port || 8080),
+        port: parsedPort ?? credentials.webhook?.port ?? 8080,
         path: envPath || credentials.webhook?.path || '/feishu/webhook',
-        encryptKey: envEncryptKey !== undefined ? envEncryptKey : (credentials.webhook?.encryptKey || ''),
-        verificationToken: envVerificationToken !== undefined ? envVerificationToken : (credentials.webhook?.verificationToken || ''),
+        encryptKey:
+          envEncryptKey !== undefined
+            ? envEncryptKey
+            : credentials.webhook?.encryptKey || '',
+        verificationToken:
+          envVerificationToken !== undefined
+            ? envVerificationToken
+            : credentials.webhook?.verificationToken || '',
       };
     }
 
