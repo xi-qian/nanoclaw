@@ -3163,12 +3163,18 @@ export class FeishuClient {
         // 1. URL verification request
         if (jsonBody.type === 'url_verification') {
           if (verificationToken && jsonBody.token !== verificationToken) {
-            log.warn({ token: jsonBody.token }, 'URL verification token mismatch');
+            log.warn(
+              { token: jsonBody.token },
+              'URL verification token mismatch',
+            );
             res.writeHead(403);
             res.end(JSON.stringify({ error: 'token mismatch' }));
             return;
           }
-          log.info({ challenge: jsonBody.challenge }, 'URL verification succeeded');
+          log.info(
+            { challenge: jsonBody.challenge },
+            'URL verification succeeded',
+          );
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ challenge: jsonBody.challenge }));
           return;
