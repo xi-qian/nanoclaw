@@ -362,7 +362,7 @@ export class FeishuChannel implements Channel {
   async connect(): Promise<void> {
     try {
       await this.client.connect();
-      log.info('Feishu channel connected via WebSocket');
+      log.info('Feishu channel connected');
     } catch (error) {
       log.error(
         { error: error instanceof Error ? error.message : String(error) },
