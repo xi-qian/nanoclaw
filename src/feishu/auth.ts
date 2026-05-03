@@ -33,6 +33,14 @@ export interface FeishuCredentials {
   refreshToken?: string;
   expiresAt?: string;
   tenantKey?: string;
+  mode?: 'websocket' | 'webhook';
+  webhook?: {
+    host?: string;
+    port?: number;
+    path?: string;
+    encryptKey?: string;
+    verificationToken?: string;
+  };
 }
 
 /**
@@ -58,6 +66,57 @@ export function loadCredentials(): FeishuCredentials | null {
         log.warn({ expiresAt: credentials.expiresAt }, 'Access token expired');
         // TODO: 实现刷新逻辑
       }
+    }
+
+    // --- webhook 配置：环境变量优先 ---
+    if (process.env.FEISHU_MODE) {
+      const envMode = process.env.FEISHU_MODE;
+      if (envMode === 'websocket' || envMode === 'webhook') {
+        credentials.mode = envMode;
+      } else {
+        log.warn(
+          { mode: envMode },
+          'Invalid FEISHU_MODE, ignoring. Must be "websocket" or "webhook"',
+        );
+      }
+    }
+
+    const envHost = process.env.FEISHU_WEBHOOK_HOST;
+    const envPort = process.env.FEISHU_WEBHOOK_PORT;
+    const envPath = process.env.FEISHU_WEBHOOK_PATH;
+    const envEncryptKey = process.env.FEISHU_WEBHOOK_ENCRYPT_KEY;
+    const envVerificationToken = process.env.FEISHU_WEBHOOK_VERIFICATION_TOKEN;
+
+    let parsedPort: number | undefined;
+    if (envPort) {
+      const p = parseInt(envPort, 10);
+      if (!isNaN(p)) {
+        parsedPort = p;
+      } else {
+        log.warn({ port: envPort }, 'Invalid FEISHU_WEBHOOK_PORT, ignoring');
+      }
+    }
+
+    if (
+      envHost ||
+      envPort ||
+      envPath ||
+      envEncryptKey ||
+      envVerificationToken
+    ) {
+      credentials.webhook = {
+        host: envHost || credentials.webhook?.host || '127.0.0.1',
+        port: parsedPort ?? credentials.webhook?.port ?? 8080,
+        path: envPath || credentials.webhook?.path || '/feishu/webhook',
+        encryptKey:
+          envEncryptKey !== undefined
+            ? envEncryptKey
+            : credentials.webhook?.encryptKey || '',
+        verificationToken:
+          envVerificationToken !== undefined
+            ? envVerificationToken
+            : credentials.webhook?.verificationToken || '',
+      };
     }
 
     return credentials;

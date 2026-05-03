@@ -19,6 +19,21 @@ export interface FeishuCredentials {
   refreshToken?: string;
   expiresAt?: string;
   tenantKey?: string;
+  /** 连接模式：websocket（默认）或 webhook */
+  mode?: 'websocket' | 'webhook';
+  /** webhook 模式配置 */
+  webhook?: {
+    /** HTTP Server 监听地址，默认 127.0.0.1 */
+    host?: string;
+    /** HTTP Server 监听端口，默认 8080 */
+    port?: number;
+    /** 回调 URL 路径，默认 /feishu/webhook */
+    path?: string;
+    /** 加密密钥，为空则明文模式 */
+    encryptKey?: string;
+    /** URL 验证 Token */
+    verificationToken?: string;
+  };
 }
 
 /**
