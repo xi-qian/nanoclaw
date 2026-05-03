@@ -3146,14 +3146,19 @@ export class FeishuClient {
   ): void {
     // Only accept POST to the configured path
     if (req.method !== 'POST' || req.url !== path) {
-      res.writeHead(404);
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('Not Found');
       return;
     }
 
+    const MAX_BODY_SIZE = 1 * 1024 * 1024; // 1 MB
     let body = '';
     req.on('data', (chunk) => {
       body += chunk;
+      if (body.length > MAX_BODY_SIZE) {
+        req.destroy();
+        return;
+      }
     });
 
     req.on('end', () => {
@@ -3182,11 +3187,11 @@ export class FeishuClient {
 
         // 2. Event callback
         this.handleEventCallback(body);
-        res.writeHead(200);
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('ok');
       } catch (err) {
         log.error({ err }, 'Failed to process webhook request');
-        res.writeHead(400);
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
         res.end('Bad Request');
       }
     });
