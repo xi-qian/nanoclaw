@@ -6,6 +6,7 @@
  */
 
 import * as crypto from 'crypto';
+import http from 'http';
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -130,6 +131,7 @@ export class FeishuClient {
   private wsClient: any = null; // WSClient 类型待确认
   private brand: LarkBrand;
   private credentials: FeishuCredentials;
+  private webhookServer: http.Server | null = null;
   private eventHandlers: Map<string, EventHandler[]> = new Map();
 
   // 速率限制延迟（毫秒）- 飞书文档 API 每秒最多 5 次请求
@@ -3103,5 +3105,102 @@ export class FeishuClient {
       'Unknown webhook body format',
     );
     return null;
+  }
+
+  /**
+   * Start webhook HTTP Server
+   */
+  private startWebhookServer(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const cfg = this.credentials.webhook || {};
+      const host = cfg.host || '127.0.0.1';
+      const port = cfg.port || 8080;
+      const path = cfg.path || '/feishu/webhook';
+      const verificationToken = cfg.verificationToken || '';
+
+      this.webhookServer = http.createServer((req, res) => {
+        this.handleWebhookRequest(req, res, path, verificationToken);
+      });
+
+      this.webhookServer.on('error', (err) => {
+        log.error({ err }, 'Webhook HTTP server error');
+      });
+
+      this.webhookServer.listen(port, host, () => {
+        log.info({ host, port, path }, 'Webhook HTTP server started');
+        resolve();
+      });
+
+      this.webhookServer.once('error', reject);
+    });
+  }
+
+  /**
+   * Handle incoming webhook HTTP request
+   */
+  private handleWebhookRequest(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    path: string,
+    verificationToken: string,
+  ): void {
+    // Only accept POST to the configured path
+    if (req.method !== 'POST' || req.url !== path) {
+      res.writeHead(404);
+      res.end('Not Found');
+      return;
+    }
+
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+    });
+
+    req.on('end', () => {
+      try {
+        const jsonBody = JSON.parse(body);
+
+        // 1. URL verification request
+        if (jsonBody.type === 'url_verification') {
+          if (verificationToken && jsonBody.token !== verificationToken) {
+            log.warn({ token: jsonBody.token }, 'URL verification token mismatch');
+            res.writeHead(403);
+            res.end(JSON.stringify({ error: 'token mismatch' }));
+            return;
+          }
+          log.info({ challenge: jsonBody.challenge }, 'URL verification succeeded');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ challenge: jsonBody.challenge }));
+          return;
+        }
+
+        // 2. Event callback
+        this.handleEventCallback(body);
+        res.writeHead(200);
+        res.end('ok');
+      } catch (err) {
+        log.error({ err }, 'Failed to process webhook request');
+        res.writeHead(400);
+        res.end('Bad Request');
+      }
+    });
+  }
+
+  /**
+   * Handle event callback — parse body and dispatch to registered handlers
+   */
+  private handleEventCallback(rawBody: string): void {
+    const parsed = this.parseWebhookBody(rawBody);
+    if (!parsed) return; // URL verification or unknown format, skip
+
+    const { type, event } = parsed;
+
+    // Construct FeishuEvent structure consistent with WebSocket EventDispatcher
+    const feishuEvent = { type, event };
+
+    log.info({ type }, 'Webhook event received');
+
+    // Dispatch via existing emit mechanism (identical to WebSocket path)
+    this.emit(type, feishuEvent);
   }
 }
