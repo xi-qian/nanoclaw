@@ -1352,12 +1352,19 @@ export class FeishuClient {
 
     if (mode === 'webhook') {
       if (this.webhookServer) {
-        await new Promise<void>((resolve, reject) => {
-          this.webhookServer!.close((err) => {
-            if (err) reject(err);
-            else resolve();
+        try {
+          await new Promise<void>((resolve, reject) => {
+            this.webhookServer!.close((err) => {
+              if (err) reject(err);
+              else resolve();
+            });
           });
-        });
+        } catch (error) {
+          log.error(
+            { error: error instanceof Error ? error.message : String(error) },
+            'Failed to stop webhook server',
+          );
+        }
         this.webhookServer = null;
         log.info('Feishu Webhook HTTP server stopped');
       }
