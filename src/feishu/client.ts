@@ -5,7 +5,7 @@
  * 使用 HTTP 请求直接调用飞书 API
  */
 
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -3028,7 +3028,7 @@ export class FeishuClient {
   /**
    * Decrypt Feishu webhook encrypted event body
    * Algorithm: AES-256-CBC
-   * - key: First 16 bytes of SHA256(encryptKey)
+   * - key: Full 32-byte SHA256(encryptKey)
    * - iv: First 16 bytes of the ciphertext (after base64 decode)
    * - ciphertext: Remaining bytes from offset 16
    */
@@ -3043,7 +3043,7 @@ export class FeishuClient {
     const ciphertext = encrypted.subarray(16);
 
     const hash = crypto.createHash('sha256').update(encryptKey).digest();
-    const key = hash.subarray(0, 16);
+    const key = hash; // Full 32-byte SHA256 hash for AES-256-CBC
 
     const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
     let decrypted = decipher.update(ciphertext);
