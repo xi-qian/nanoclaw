@@ -5,6 +5,7 @@
  * 使用 HTTP 请求直接调用飞书 API
  */
 
+import crypto from 'crypto';
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -963,7 +964,10 @@ export class FeishuClient {
         'Employee API response for department query',
       );
 
-      if (userResponse.code !== 0 || !userResponse.data?.employees?.[0]?.base_info?.departments) {
+      if (
+        userResponse.code !== 0 ||
+        !userResponse.data?.employees?.[0]?.base_info?.departments
+      ) {
         log.warn(
           {
             openId,
@@ -2101,7 +2105,9 @@ export class FeishuClient {
       },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to add collaborator: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to add collaborator: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ token, type, memberType, memberId, perm }, 'Collaborator added');
     return response.data?.member;
@@ -2124,7 +2130,9 @@ export class FeishuClient {
       data: { perm },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to update collaborator: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to update collaborator: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ token, type, memberId, perm }, 'Collaborator updated');
     return response.data?.member;
@@ -2134,17 +2142,16 @@ export class FeishuClient {
    * 列出协作者
    * GET /open-apis/drive/v1/permissions/:token/members
    */
-  async listCollaborators(
-    token: string,
-    type: string,
-  ): Promise<any[]> {
+  async listCollaborators(token: string, type: string): Promise<any[]> {
     const response = await this.client.request({
       url: `/open-apis/drive/v1/permissions/${encodeURIComponent(token)}/members`,
       method: 'GET',
       params: { type },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to list collaborators: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to list collaborators: ${response.msg} (code: ${response.code})`,
+      );
     }
     return response.data?.members || [];
   }
@@ -2164,7 +2171,9 @@ export class FeishuClient {
       params: { type },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to remove collaborator: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to remove collaborator: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ token, type, memberId }, 'Collaborator removed');
   }
@@ -2199,7 +2208,9 @@ export class FeishuClient {
       data,
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to transfer owner: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to transfer owner: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ token, type, newMemberType, newMemberId }, 'Owner transferred');
     return response.data;
@@ -2228,9 +2239,14 @@ export class FeishuClient {
       data: params,
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to create task: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to create task: ${response.msg} (code: ${response.code})`,
+      );
     }
-    log.info({ summary: params.summary, guid: response.data?.task?.guid }, 'Task created');
+    log.info(
+      { summary: params.summary, guid: response.data?.task?.guid },
+      'Task created',
+    );
     return response.data?.task;
   }
 
@@ -2245,7 +2261,9 @@ export class FeishuClient {
       params: { user_id_type: 'open_id' },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to get task: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to get task: ${response.msg} (code: ${response.code})`,
+      );
     }
     return response.data?.task;
   }
@@ -2270,7 +2288,9 @@ export class FeishuClient {
       data: { task, update_fields: updateFields },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to update task: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to update task: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ taskId, updateFields }, 'Task updated');
     return response.data?.task;
@@ -2291,7 +2311,9 @@ export class FeishuClient {
       },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to complete task: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to complete task: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ taskId }, 'Task completed');
     return response.data?.task;
@@ -2312,7 +2334,9 @@ export class FeishuClient {
       },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to reopen task: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to reopen task: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ taskId }, 'Task reopened');
     return response.data?.task;
@@ -2342,7 +2366,9 @@ export class FeishuClient {
       params: queryParams,
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to search tasks: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to search tasks: ${response.msg} (code: ${response.code})`,
+      );
     }
 
     let tasks = response.data?.items || [];
@@ -2378,7 +2404,9 @@ export class FeishuClient {
       params: queryParams,
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to get my tasks: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to get my tasks: ${response.msg} (code: ${response.code})`,
+      );
     }
     return {
       tasks: response.data?.items || [],
@@ -2413,7 +2441,9 @@ export class FeishuClient {
       data: { members },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to add task members: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to add task members: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ taskId, memberCount: members.length }, 'Task members added');
     return response.data;
@@ -2434,7 +2464,9 @@ export class FeishuClient {
       data: { members },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to remove task members: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to remove task members: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ taskId, memberCount: members.length }, 'Task members removed');
     return response.data;
@@ -2446,7 +2478,11 @@ export class FeishuClient {
    */
   async addTaskReminders(
     taskId: string,
-    reminders: Array<{ relative_fire_minute?: number; absolute_time?: string; timezone?: string }>,
+    reminders: Array<{
+      relative_fire_minute?: number;
+      absolute_time?: string;
+      timezone?: string;
+    }>,
   ): Promise<any> {
     const response = await this.client.request({
       url: `/open-apis/task/v2/tasks/${taskId}/add_reminders`,
@@ -2455,7 +2491,9 @@ export class FeishuClient {
       data: { reminders },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to add task reminders: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to add task reminders: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ taskId }, 'Task reminders added');
     return response.data;
@@ -2476,7 +2514,9 @@ export class FeishuClient {
       data: { reminder_ids: reminderIds },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to remove task reminders: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to remove task reminders: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ taskId }, 'Task reminders removed');
     return response.data;
@@ -2486,10 +2526,7 @@ export class FeishuClient {
    * 设置父任务（子任务关系）
    * POST /open-apis/task/v2/tasks/{taskId}/set_ancestor_task
    */
-  async setTaskAncestor(
-    taskId: string,
-    ancestorTaskId?: string,
-  ): Promise<any> {
+  async setTaskAncestor(taskId: string, ancestorTaskId?: string): Promise<any> {
     const data: Record<string, string> = {};
     if (ancestorTaskId) {
       data.ancestor_task_id = ancestorTaskId;
@@ -2501,7 +2538,9 @@ export class FeishuClient {
       data,
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to set task ancestor: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to set task ancestor: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ taskId, ancestorTaskId }, 'Task ancestor set');
     return response.data?.task;
@@ -2511,10 +2550,7 @@ export class FeishuClient {
    * 添加任务评论
    * POST /open-apis/task/v2/comments
    */
-  async addTaskComment(
-    taskId: string,
-    content: string,
-  ): Promise<any> {
+  async addTaskComment(taskId: string, content: string): Promise<any> {
     const response = await this.client.request({
       url: '/open-apis/task/v2/comments',
       method: 'POST',
@@ -2526,7 +2562,9 @@ export class FeishuClient {
       },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to add task comment: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to add task comment: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ taskId }, 'Task comment added');
     return response.data?.comment;
@@ -2536,10 +2574,7 @@ export class FeishuClient {
    * 订阅任务事件
    * POST /open-apis/task/v2/task_v2/task_subscription
    */
-  async subscribeTaskEvent(
-    taskId: string,
-    eventTypes: string[],
-  ): Promise<any> {
+  async subscribeTaskEvent(taskId: string, eventTypes: string[]): Promise<any> {
     const response = await this.client.request({
       url: '/open-apis/task/v2/task_v2/task_subscription',
       method: 'POST',
@@ -2550,7 +2585,9 @@ export class FeishuClient {
       },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to subscribe task event: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to subscribe task event: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ taskId, eventTypes }, 'Task event subscribed');
     return response.data;
@@ -2560,10 +2597,7 @@ export class FeishuClient {
    * 添加任务到任务列表
    * POST /open-apis/task/v2/tasks/{taskId}/add_tasklist
    */
-  async addTaskToTasklist(
-    taskId: string,
-    tasklistGuid: string,
-  ): Promise<any> {
+  async addTaskToTasklist(taskId: string, tasklistGuid: string): Promise<any> {
     const response = await this.client.request({
       url: `/open-apis/task/v2/tasks/${taskId}/add_tasklist`,
       method: 'POST',
@@ -2571,7 +2605,9 @@ export class FeishuClient {
       data: { tasklist_guid: tasklistGuid },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to add task to tasklist: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to add task to tasklist: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ taskId, tasklistGuid }, 'Task added to tasklist');
     return response.data;
@@ -2596,9 +2632,14 @@ export class FeishuClient {
       data: params,
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to create tasklist: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to create tasklist: ${response.msg} (code: ${response.code})`,
+      );
     }
-    log.info({ name: params.name, guid: response.data?.tasklist?.guid }, 'Tasklist created');
+    log.info(
+      { name: params.name, guid: response.data?.tasklist?.guid },
+      'Tasklist created',
+    );
     return response.data?.tasklist;
   }
 
@@ -2613,7 +2654,9 @@ export class FeishuClient {
       params: { user_id_type: 'open_id' },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to get tasklist: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to get tasklist: ${response.msg} (code: ${response.code})`,
+      );
     }
     return response.data?.tasklist;
   }
@@ -2634,7 +2677,9 @@ export class FeishuClient {
       data: params,
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to search tasklists: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to search tasklists: ${response.msg} (code: ${response.code})`,
+      );
     }
     return {
       tasklists: response.data?.tasklists || [],
@@ -2658,9 +2703,14 @@ export class FeishuClient {
       data: { members },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to add tasklist members: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to add tasklist members: ${response.msg} (code: ${response.code})`,
+      );
     }
-    log.info({ tasklistId, memberCount: members.length }, 'Tasklist members added');
+    log.info(
+      { tasklistId, memberCount: members.length },
+      'Tasklist members added',
+    );
     return response.data;
   }
 
@@ -2679,7 +2729,9 @@ export class FeishuClient {
       data: { members },
     });
     if (response.code !== 0) {
-      throw new Error(`Failed to remove tasklist members: ${response.msg} (code: ${response.code})`);
+      throw new Error(
+        `Failed to remove tasklist members: ${response.msg} (code: ${response.code})`,
+      );
     }
     log.info({ tasklistId }, 'Tasklist members removed');
     return response.data;
@@ -2967,5 +3019,83 @@ export class FeishuClient {
       filePath.split('/').pop(),
     );
     return { file_key: fileKey, message_id: messageId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Webhook Event Decryption and Parsing
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Decrypt Feishu webhook encrypted event body
+   * Algorithm: AES-256-CBC
+   * - key: First 16 bytes of SHA256(encryptKey)
+   * - iv: First 16 bytes of the ciphertext (after base64 decode)
+   * - ciphertext: Remaining bytes from offset 16
+   */
+  private decryptWebhookEvent(encryptedBase64: string): string {
+    const encryptKey = this.credentials.webhook?.encryptKey || '';
+    if (!encryptKey) {
+      throw new Error('Webhook encryptKey not configured');
+    }
+
+    const encrypted = Buffer.from(encryptedBase64, 'base64');
+    const iv = encrypted.subarray(0, 16);
+    const ciphertext = encrypted.subarray(16);
+
+    const hash = crypto.createHash('sha256').update(encryptKey).digest();
+    const key = hash.subarray(0, 16);
+
+    const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+    let decrypted = decipher.update(ciphertext);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+
+    return decrypted.toString('utf-8');
+  }
+
+  /**
+   * Parse webhook request body, producing { type, event } structure.
+   * Supports both plaintext and encrypted formats:
+   * - Encrypted: {"encrypt": "base64..."}
+   * - Plaintext: {"schema": "2.0", "header": {"event_type": "..."}, "event": {...}}
+   */
+  private parseWebhookBody(
+    rawBody: string,
+  ): { type: string; event: any } | null {
+    let body: any;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      log.error({ rawBody: rawBody.slice(0, 200) }, 'Failed to parse webhook body as JSON');
+      return null;
+    }
+
+    // 1. Handle encrypted format
+    if (body.encrypt) {
+      try {
+        const decrypted = this.decryptWebhookEvent(body.encrypt);
+        body = JSON.parse(decrypted);
+      } catch (err) {
+        log.error({ err }, 'Failed to decrypt webhook event');
+        return null;
+      }
+    }
+
+    // 2. URL verification request (type: "url_verification") — not for event dispatch
+    if (body.type === 'url_verification') {
+      return null;
+    }
+
+    // 3. Extract schema 2.0 format events
+    if (body.schema && body.header?.event_type && body.event) {
+      return { type: body.header.event_type, event: body.event };
+    }
+
+    // 4. Legacy V1 format (directly nested in body)
+    if (body.event?.type) {
+      return { type: body.event.type, event: body.event };
+    }
+
+    log.warn({ body: JSON.stringify(body).slice(0, 200) }, 'Unknown webhook body format');
+    return null;
   }
 }
