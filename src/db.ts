@@ -33,6 +33,7 @@ function createSchema(database: Database.Database): void {
       is_from_me INTEGER,
       is_bot_message INTEGER DEFAULT 0,
       card_action TEXT,
+      scheduled_task_id TEXT,
       PRIMARY KEY (id, chat_jid),
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
@@ -278,7 +279,7 @@ export function setLastGroupSync(): void {
  */
 export function storeMessage(msg: NewMessage): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, card_action, message_type, attachment) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, card_action, message_type, attachment, scheduled_task_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -291,6 +292,7 @@ export function storeMessage(msg: NewMessage): void {
     msg.card_action ? JSON.stringify(msg.card_action) : null,
     msg.message_type || null,
     msg.attachment ? JSON.stringify(msg.attachment) : null,
+    msg.scheduled_task_id || null,
   );
 }
 
@@ -306,9 +308,10 @@ export function storeMessageDirect(msg: {
   timestamp: string;
   is_from_me: boolean;
   is_bot_message?: boolean;
+  scheduled_task_id?: string;
 }): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, scheduled_task_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -318,6 +321,7 @@ export function storeMessageDirect(msg: {
     msg.timestamp,
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
+    msg.scheduled_task_id || null,
   );
 }
 
@@ -335,11 +339,12 @@ export function getNewMessages(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, card_action, message_type, attachment
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, card_action, message_type, attachment, scheduled_task_id
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
         AND is_bot_message = 0 AND content NOT LIKE ?
         AND content != '' AND content IS NOT NULL
+        AND scheduled_task_id IS NULL
       ORDER BY timestamp DESC
       LIMIT ?
     ) ORDER BY timestamp
@@ -375,11 +380,12 @@ export function getMessagesSince(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, card_action, message_type, attachment
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, card_action, message_type, attachment, scheduled_task_id
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
         AND is_bot_message = 0 AND content NOT LIKE ?
         AND content != '' AND content IS NOT NULL
+        AND scheduled_task_id IS NULL
       ORDER BY timestamp DESC
       LIMIT ?
     ) ORDER BY timestamp
@@ -411,11 +417,12 @@ export function getMessagesBefore(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, card_action, message_type, attachment
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, card_action, message_type, attachment, scheduled_task_id
       FROM messages
       WHERE chat_jid = ? AND timestamp <= ?
         AND is_bot_message = 0 AND content NOT LIKE ?
         AND content != '' AND content IS NOT NULL
+        AND scheduled_task_id IS NULL
       ORDER BY timestamp DESC
       LIMIT ?
     ) ORDER BY timestamp
