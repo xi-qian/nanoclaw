@@ -729,7 +729,7 @@ export function writeTasksSnapshot(
 ): void {
   // Write filtered tasks to the group's IPC directory
   const groupIpcDir = resolveGroupIpcPath(groupFolder);
-  fs.mkdirSync(groupIpcDir, { recursive: true });
+  fs.mkdirSync(groupIpcDir, { recursive: true, mode: 0o777 });
 
   // Main sees all tasks, others only see their own
   const filteredTasks = isMain
@@ -737,7 +737,9 @@ export function writeTasksSnapshot(
     : tasks.filter((t) => t.groupFolder === groupFolder);
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
-  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
+  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2), {
+    mode: 0o666,
+  });
 }
 
 export interface AvailableGroup {
@@ -759,7 +761,7 @@ export function writeGroupsSnapshot(
   registeredJids: Set<string>,
 ): void {
   const groupIpcDir = resolveGroupIpcPath(groupFolder);
-  fs.mkdirSync(groupIpcDir, { recursive: true });
+  fs.mkdirSync(groupIpcDir, { recursive: true, mode: 0o777 });
 
   // Main sees all groups; others see nothing (they can't activate groups)
   const visibleGroups = isMain ? groups : [];
@@ -775,5 +777,6 @@ export function writeGroupsSnapshot(
       null,
       2,
     ),
+    { mode: 0o666 },
   );
 }

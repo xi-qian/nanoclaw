@@ -43,7 +43,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
   ipcWatcherRunning = true;
 
   const ipcBaseDir = path.join(DATA_DIR, 'ipc');
-  fs.mkdirSync(ipcBaseDir, { recursive: true });
+  fs.mkdirSync(ipcBaseDir, { recursive: true, mode: 0o777 });
 
   const processIpcFiles = async () => {
     // Scan all group IPC directories (identity determined by directory)
@@ -165,7 +165,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
           const resultsDir = path.join(feishuDir, 'results');
 
           // 确保结果目录存在
-          fs.mkdirSync(resultsDir, { recursive: true });
+          fs.mkdirSync(resultsDir, { recursive: true, mode: 0o777 });
 
           if (fs.existsSync(requestsDir)) {
             const requestFiles = fs
@@ -591,6 +591,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 fs.writeFileSync(
                   resultFile,
                   JSON.stringify({ success: true, ...result }),
+                  { mode: 0o666 },
                 );
 
                 logger.debug(
@@ -611,6 +612,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     success: false,
                     error: err instanceof Error ? err.message : String(err),
                   }),
+                  { mode: 0o666 },
                 );
               } finally {
                 // 删除请求文件
