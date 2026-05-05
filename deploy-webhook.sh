@@ -91,12 +91,24 @@ rm -f "/tmp/$(basename "$TARBALL")"
 # 安装依赖 (跳过 husky 等 dev 脚本)
 npm install --production --ignore-scripts 2>&1 | tail -1
 
+# 重建 native 模块 (适配服务器 Node 版本)
+npm rebuild better-sqlite3 2>&1 | tail -1
+
 # 恢复旧数据
 [ -f /tmp/nanoclaw-env.bak ] && cp /tmp/nanoclaw-env.bak "$REMOTE_DIR/.env" && rm -f /tmp/nanoclaw-env.bak
 [ -d /tmp/nanoclaw-store.bak ] && cp -a /tmp/nanoclaw-store.bak "$REMOTE_DIR/store" && rm -rf /tmp/nanoclaw-store.bak
 
 # 创建运行时目录
 mkdir -p data store
+
+# 数据库迁移 (幂等 — 列已存在则跳过)
+node -e "
+const D=require('better-sqlite3');
+const d=new D('store/messages.db');
+try { d.exec('ALTER TABLE messages ADD COLUMN scheduled_task_id TEXT'); console.log('  DB migration: scheduled_task_id added') }
+catch(e) { if(!e.message.includes('duplicate')) throw e; else console.log('  DB migration: column already exists') }
+d.close();
+"
 
 echo "  ✓ 安装完成"
 DEPLOY
