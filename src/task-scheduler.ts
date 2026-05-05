@@ -178,7 +178,6 @@ async function runTask(
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
         isMain,
-        isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
       },
       (proc, containerName) =>
