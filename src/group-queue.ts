@@ -181,7 +181,7 @@ export class GroupQueue {
     // 即使 state.active = false，只要进程还在运行就能复用
     const processAlive = state.process && state.process.exitCode === null;
 
-    if (processAlive && state.groupFolder && !state.isTaskContainer) {
+    if (processAlive && state.groupFolder) {
       state.idleWaiting = false; // Agent is about to receive work, no longer idle
       logger.debug(
         {
@@ -192,7 +192,7 @@ export class GroupQueue {
         },
         'sendMessage: reusing container by process state',
       );
-    } else if (state.active && state.groupFolder && !state.isTaskContainer) {
+    } else if (state.active && state.groupFolder) {
       state.idleWaiting = false;
       logger.debug(
         {
