@@ -400,11 +400,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     'Processing messages',
   );
 
-  const result = await processMessagesForGroup(
-    group,
-    chatJid,
-    missedMessages,
-  );
+  const result = await processMessagesForGroup(group, chatJid, missedMessages);
 
   // Return false only when agent failed without sending output — signals retry
   if (result.status === 'error' && !result.outputSentToUser) {
@@ -845,6 +841,9 @@ async function main(): Promise<void> {
       const text = formatOutbound(rawText);
       if (text) await channel.sendMessage(jid, text);
     },
+    processMessages: processMessagesForGroup,
+    getLastAgentTimestamp: (chatJid: string) =>
+      lastAgentTimestamp[chatJid] || '',
   });
   startIpcWatcher({
     sendMessage: (jid, text) => {
