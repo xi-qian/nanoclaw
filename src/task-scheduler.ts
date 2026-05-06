@@ -163,7 +163,7 @@ async function runTask(
         sender: 'system',
         sender_name: 'Scheduled Task',
         content: task.prompt,
-        timestamp: new Date().toISOString(),
+        timestamp: String(Date.now()),
         is_from_me: true,
         scheduled_task_id: task.id,
       };
