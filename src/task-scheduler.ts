@@ -3,24 +3,22 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
-import {
-  ContainerOutput,
-  runContainerAgent,
-  writeTasksSnapshot,
-} from './container-runner.js';
+import { runContainerAgent, writeTasksSnapshot } from './container-runner.js';
 import {
   deleteSession,
   getAllTasks,
   getDueTasks,
+  getMessagesSince,
   getTaskById,
   logTaskRun,
+  storeMessage,
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
-import { RegisteredGroup, ScheduledTask } from './types.js';
+import { NewMessage, RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -74,6 +72,12 @@ export interface SchedulerDependencies {
     groupFolder: string,
   ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
+  processMessages: (
+    group: RegisteredGroup,
+    chatJid: string,
+    messages: NewMessage[],
+  ) => Promise<{ status: 'success' | 'error'; outputSentToUser: boolean }>;
+  getLastAgentTimestamp: (chatJid: string) => string;
 }
 
 async function runTask(
@@ -86,7 +90,6 @@ async function runTask(
     groupDir = resolveGroupFolderPath(task.group_folder);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    // Stop retry churn for malformed legacy rows.
     updateTask(task.id, { status: 'paused' });
     logger.error(
       { taskId: task.id, groupFolder: task.group_folder, error },
@@ -105,7 +108,7 @@ async function runTask(
   fs.mkdirSync(groupDir, { recursive: true });
 
   logger.info(
-    { taskId: task.id, group: task.group_folder },
+    { taskId: task.id, group: task.group_folder, mode: task.context_mode },
     'Running scheduled task',
   );
 
@@ -130,8 +133,9 @@ async function runTask(
     return;
   }
 
-  // Update tasks snapshot for container to read (filtered by group)
   const isMain = group.isMain === true;
+
+  // Update tasks snapshot for container to read
   const tasks = getAllTasks();
   writeTasksSnapshot(
     task.group_folder,
@@ -150,87 +154,76 @@ async function runTask(
   let result: string | null = null;
   let error: string | null = null;
 
-  // For group context mode, use the group's current session
-  const sessions = deps.getSessions();
-  const sessionId =
-    task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
-
-  // After the task produces a result, close the container promptly.
-  // Tasks are single-turn — no need to wait IDLE_TIMEOUT (30 min) for the
-  // query loop to time out. A short delay handles any final MCP calls.
-  const TASK_CLOSE_DELAY_MS = 10000;
-  let closeTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const scheduleClose = () => {
-    if (closeTimer) return; // already scheduled
-    closeTimer = setTimeout(() => {
-      logger.debug({ taskId: task.id }, 'Closing task container after result');
-      deps.queue.closeStdin(task.chat_jid);
-    }, TASK_CLOSE_DELAY_MS);
-  };
-
   try {
-    const output = await runContainerAgent(
-      group,
-      {
-        prompt: task.prompt,
-        sessionId,
-        groupFolder: task.group_folder,
-        chatJid: task.chat_jid,
-        isMain,
-        isScheduledTask: true,
-        assistantName: ASSISTANT_NAME,
-      },
-      (proc, containerName) =>
-        deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
-      async (streamedOutput: ContainerOutput) => {
-        if (streamedOutput.result) {
-          result = streamedOutput.result;
-          // Forward result to user (sendMessage handles formatting)
-          await deps.sendMessage(task.chat_jid, streamedOutput.result);
-          scheduleClose();
-        }
-        if (streamedOutput.status === 'success') {
-          deps.queue.notifyIdle(task.chat_jid);
-          scheduleClose(); // Close promptly even when result is null (e.g. IPC-only tasks)
-        }
-        if (streamedOutput.status === 'error') {
-          error = streamedOutput.error || 'Unknown error';
-          // Detect "No conversation found" error and clear the invalid session
-          if (streamedOutput.error?.includes('No conversation found')) {
-            logger.warn(
-              {
-                taskId: task.id,
-                groupFolder: task.group_folder,
-                oldSessionId: sessionId,
-              },
-              'Session not found in SDK, clearing invalid session ID',
-            );
-            deleteSession(task.group_folder);
-          }
-        }
-      },
-    );
+    if (task.context_mode === 'group') {
+      // --- Unified path: synthetic message + history + shared helper ---
+      const taskMessage: NewMessage = {
+        id: `task_${task.id}_${Date.now()}`,
+        chat_jid: task.chat_jid,
+        sender: 'system',
+        sender_name: 'Scheduled Task',
+        content: task.prompt,
+        timestamp: String(Date.now()),
+        is_from_me: true,
+        scheduled_task_id: task.id,
+      };
+      storeMessage(taskMessage);
 
-    if (closeTimer) clearTimeout(closeTimer);
+      const sinceTimestamp = deps.getLastAgentTimestamp(task.chat_jid);
+      const historyMessages = getMessagesSince(
+        task.chat_jid,
+        sinceTimestamp,
+        ASSISTANT_NAME,
+      );
+      const allMessages = [...historyMessages, taskMessage];
 
-    if (output.status === 'error') {
-      error = output.error || 'Unknown error';
-      // Detect "No conversation found" error and clear the invalid session
-      if (output.error?.includes('No conversation found')) {
-        logger.warn(
-          {
-            taskId: task.id,
-            groupFolder: task.group_folder,
-            oldSessionId: sessionId,
-          },
-          'Session not found in SDK, clearing invalid session ID',
-        );
-        deleteSession(task.group_folder);
+      const { status } = await deps.processMessages(
+        group,
+        task.chat_jid,
+        allMessages,
+      );
+
+      if (status === 'error') {
+        error = 'Agent processing failed';
       }
-    } else if (output.result) {
-      // Result was already forwarded to the user via the streaming callback above
-      result = output.result;
+    } else {
+      // --- Isolated path: direct runAgent, fresh session, no history ---
+      const output = await runContainerAgent(
+        group,
+        {
+          prompt: task.prompt,
+          groupFolder: task.group_folder,
+          chatJid: task.chat_jid,
+          isMain,
+          assistantName: ASSISTANT_NAME,
+        },
+        (proc, containerName) =>
+          deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
+        async (streamedOutput) => {
+          if (streamedOutput.result) {
+            result = streamedOutput.result;
+            await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          }
+          if (streamedOutput.status === 'success') {
+            deps.queue.notifyIdle(task.chat_jid);
+          }
+          if (streamedOutput.status === 'error') {
+            error = streamedOutput.error || 'Unknown error';
+            if (streamedOutput.error?.includes('No conversation found')) {
+              deleteSession(task.group_folder);
+            }
+          }
+        },
+      );
+
+      if (output.status === 'error') {
+        error = output.error || 'Unknown error';
+        if (output.error?.includes('No conversation found')) {
+          deleteSession(task.group_folder);
+        }
+      } else if (output.result) {
+        result = output.result;
+      }
     }
 
     logger.info(
@@ -238,7 +231,6 @@ async function runTask(
       'Task completed',
     );
   } catch (err) {
-    if (closeTimer) clearTimeout(closeTimer);
     error = err instanceof Error ? err.message : String(err);
     logger.error({ taskId: task.id, error }, 'Task failed');
   }

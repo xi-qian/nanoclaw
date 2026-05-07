@@ -1,0 +1,19 @@
+[Unit]
+Description=NanoClaw Webhook Mode
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/nanoclaw-webhook
+ExecStart=/usr/bin/node /root/nanoclaw-webhook/dist/index.js
+Restart=always
+RestartSec=10
+UMask=0000
+KillMode=process
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/root
+Environment=ASSISTANT_NAME=Andy
+EnvironmentFile=/root/nanoclaw-webhook/.env
+
+[Install]
+WantedBy=multi-user.target

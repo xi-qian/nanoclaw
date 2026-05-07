@@ -181,7 +181,7 @@ export class GroupQueue {
     // 即使 state.active = false，只要进程还在运行就能复用
     const processAlive = state.process && state.process.exitCode === null;
 
-    if (processAlive && state.groupFolder && !state.isTaskContainer) {
+    if (processAlive && state.groupFolder) {
       state.idleWaiting = false; // Agent is about to receive work, no longer idle
       logger.debug(
         {
@@ -192,7 +192,7 @@ export class GroupQueue {
         },
         'sendMessage: reusing container by process state',
       );
-    } else if (state.active && state.groupFolder && !state.isTaskContainer) {
+    } else if (state.active && state.groupFolder) {
       state.idleWaiting = false;
       logger.debug(
         {
@@ -220,11 +220,14 @@ export class GroupQueue {
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
-      fs.mkdirSync(inputDir, { recursive: true });
+      fs.mkdirSync(inputDir, { recursive: true, mode: 0o777 });
       const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
       const filepath = path.join(inputDir, filename);
       const tempPath = `${filepath}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
+      // Atomic write: write to temp then rename to prevent reader from seeing partial file
+      fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }), {
+        mode: 0o666,
+      });
       fs.renameSync(tempPath, filepath);
 
       logger.debug(
@@ -250,8 +253,8 @@ export class GroupQueue {
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
-      fs.mkdirSync(inputDir, { recursive: true });
-      fs.writeFileSync(path.join(inputDir, '_close'), '');
+      fs.mkdirSync(inputDir, { recursive: true, mode: 0o777 });
+      fs.writeFileSync(path.join(inputDir, '_close'), '', { mode: 0o666 });
     } catch {
       // ignore
     }

@@ -274,87 +274,27 @@ export function _setRegisteredGroups(
 }
 
 /**
- * Process all pending messages for a group.
- * Called by the GroupQueue when it's this group's turn.
+ * Shared core: format messages, run agent, stream output to channel.
+ * Used by both message processing and scheduled task execution.
  */
-async function processGroupMessages(chatJid: string): Promise<boolean> {
-  const group = registeredGroups[chatJid];
-  if (!group) return true;
-
+async function processMessagesForGroup(
+  group: RegisteredGroup,
+  chatJid: string,
+  messages: NewMessage[],
+): Promise<{ status: 'success' | 'error'; outputSentToUser: boolean }> {
   const channel = findChannel(channels, chatJid);
   if (!channel) {
     logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
-    return true;
+    return { status: 'error', outputSentToUser: false };
   }
 
-  const isMainGroup = group.isMain === true;
-  const hasExistingSession = !!sessions[group.folder];
-
-  const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-  const missedMessages = getMessagesSince(
-    chatJid,
-    sinceTimestamp,
-    ASSISTANT_NAME,
-  );
-
-  if (missedMessages.length === 0) return true;
-
-  // For non-main groups, check if trigger is required and present
-  if (!isMainGroup && group.requiresTrigger !== false) {
-    const allowlistCfg = loadSenderAllowlist();
-    const hasTrigger = missedMessages.some(
-      (m) =>
-        TRIGGER_PATTERN.test(m.content.trim()) &&
-        (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
-    );
-    if (!hasTrigger) return true;
-  }
-
-  // TODO: SDK Session 机制已可恢复对话历史，历史消息功能暂时禁用
-  // 待验证 SDK Session 稳定后再决定是否保留
-  // Include history messages for new sessions to provide context
-  // let prompt: string;
-  // if (!hasExistingSession && CONTEXT_HISTORY_LIMIT > 0) {
-  //   // New session: include recent history for context
-  //   const historyMessages = getMessagesBefore(
-  //     chatJid,
-  //     sinceTimestamp,
-  //     ASSISTANT_NAME,
-  //     CONTEXT_HISTORY_LIMIT,
-  //   );
-  //   prompt = formatMessagesWithHistory(missedMessages, historyMessages, TIMEZONE);
-  //   logger.info(
-  //     { group: group.name, messageCount: missedMessages.length, historyCount: historyMessages.length },
-  //     'Processing messages with history context (new session)',
-  //   );
-  // } else {
-  //   // Existing session: SDK maintains context, no need for extra history
-  //   prompt = formatMessages(missedMessages, TIMEZONE);
-  //   logger.info(
-  //     { group: group.name, messageCount: missedMessages.length },
-  //     'Processing messages',
-  //   );
-  // }
-  const prompt = formatMessages(missedMessages, TIMEZONE);
-  logger.info(
-    {
-      group: group.name,
-      messageCount: missedMessages.length,
-      hasExistingSession,
-    },
-    'Processing messages',
-  );
-
-  // Advance cursor so the piping path in startMessageLoop won't re-fetch
-  // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] =
-    missedMessages[missedMessages.length - 1].timestamp;
+  lastAgentTimestamp[chatJid] = messages[messages.length - 1].timestamp;
   saveState();
 
-  // Track idle timer for closing stdin when agent is idle
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const prompt = formatMessages(messages, TIMEZONE);
 
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const resetIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
@@ -370,67 +310,102 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
+  const result = await runAgent(group, prompt, chatJid, async (output) => {
     try {
-      // Streaming output callback — called for each agent result
-      if (result.result) {
+      if (output.result) {
         const raw =
-          typeof result.result === 'string'
-            ? result.result
-            : JSON.stringify(result.result);
-        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
+          typeof output.result === 'string'
+            ? output.result
+            : JSON.stringify(output.result);
         const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-        logger.info(
-          { group: group.name },
-          `Agent output: ${raw.slice(0, 200)}`,
-        );
         if (text) {
           await channel.sendMessage(chatJid, text);
           outputSentToUser = true;
         }
-        // Only reset idle timer on actual results, not session-update markers (result: null)
         resetIdleTimer();
       }
-
-      if (result.status === 'success') {
+      if (output.status === 'success') {
         queue.notifyIdle(chatJid);
       }
-
-      if (result.status === 'error') {
+      if (output.status === 'error') {
         hadError = true;
       }
     } catch (err) {
       logger.error(
         { group: group.name, chatJid, err },
-        'onOutput callback failed (sendMessage or other error)',
+        'onOutput callback failed',
       );
-      // Don't rethrow — let outputChain continue normally so container can exit
     }
   });
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
-  if (output === 'error' || hadError) {
-    // If we already sent output to the user, don't roll back the cursor —
-    // the user got their response and re-processing would send duplicates.
+  if (result === 'error' || hadError) {
     if (outputSentToUser) {
       logger.warn(
         { group: group.name },
-        'Agent error after output was sent, skipping cursor rollback to prevent duplicates',
+        'Agent error after output was sent, skipping cursor rollback',
       );
-      return true;
+      return { status: 'error', outputSentToUser: true };
     }
-    // Roll back cursor so retries can re-process these messages
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
     logger.warn(
       { group: group.name },
-      'Agent error, rolled back message cursor for retry',
+      'Agent error, rolled back cursor for retry',
     );
-    return false;
+    return { status: 'error', outputSentToUser: false };
   }
 
+  return { status: 'success', outputSentToUser };
+}
+
+/**
+ * Process all pending messages for a group.
+ * Called by the GroupQueue when it's this group's turn.
+ */
+async function processGroupMessages(chatJid: string): Promise<boolean> {
+  const group = registeredGroups[chatJid];
+  if (!group) return true;
+
+  const isMainGroup = group.isMain === true;
+  const hasExistingSession = !!sessions[group.folder];
+
+  const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
+  const missedMessages = getMessagesSince(
+    chatJid,
+    sinceTimestamp,
+    ASSISTANT_NAME,
+  );
+
+  if (missedMessages.length === 0) return true;
+
+  if (!isMainGroup && group.requiresTrigger !== false) {
+    const allowlistCfg = loadSenderAllowlist();
+    const hasTrigger = missedMessages.some(
+      (m) =>
+        TRIGGER_PATTERN.test(m.content.trim()) &&
+        (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
+    );
+    if (!hasTrigger) return true;
+  }
+
+  logger.info(
+    {
+      group: group.name,
+      messageCount: missedMessages.length,
+      hasExistingSession,
+    },
+    'Processing messages',
+  );
+
+  const result = await processMessagesForGroup(group, chatJid, missedMessages);
+
+  // Return false only when agent failed without sending output — signals retry
+  if (result.status === 'error' && !result.outputSentToUser) {
+    return false;
+  }
   return true;
 }
 
@@ -866,6 +841,9 @@ async function main(): Promise<void> {
       const text = formatOutbound(rawText);
       if (text) await channel.sendMessage(jid, text);
     },
+    processMessages: processMessagesForGroup,
+    getLastAgentTimestamp: (chatJid: string) =>
+      lastAgentTimestamp[chatJid] || '',
   });
   startIpcWatcher({
     sendMessage: (jid, text) => {

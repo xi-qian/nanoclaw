@@ -72,6 +72,7 @@ export interface NewMessage {
     | 'interactive';
   // 附件信息（图片、文件、音频、视频等）
   attachment?: MessageAttachment;
+  scheduled_task_id?: string;
 }
 
 /**

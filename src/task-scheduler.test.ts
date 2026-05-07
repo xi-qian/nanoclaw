@@ -44,6 +44,11 @@ describe('task scheduler', () => {
       queue: { enqueueTask } as any,
       onProcess: () => {},
       sendMessage: async () => {},
+      processMessages: async () => ({
+        status: 'success' as const,
+        outputSentToUser: false,
+      }),
+      getLastAgentTimestamp: () => '',
     });
 
     await vi.advanceTimersByTimeAsync(10);

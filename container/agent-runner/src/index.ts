@@ -83,7 +83,6 @@ interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
-  isScheduledTask?: boolean;
   assistantName?: string;
 }
 
@@ -601,9 +600,6 @@ async function main(): Promise<void> {
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
-  if (containerInput.isScheduledTask) {
-    prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
-  }
   const pending = drainIpcInput();
   if (pending.length > 0) {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);
