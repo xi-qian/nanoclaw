@@ -176,18 +176,18 @@ describe('SpawnLarkExecutor', () => {
     });
   });
 
-  it('executes lark-cli and parses JSON output', async () => {
+  it('executes lark-cli, injects json format for non-shortcut commands, and parses JSON output', async () => {
     spawnMock.mockReturnValue(createMockChild(0, '{"ok":true}\n', ''));
 
     const executor = new SpawnLarkExecutor();
     const result = await executor.run({
-      argv: ['docs', '+fetch', '--doc', 'token'],
+      argv: ['docs', 'search', '--query', 'token'],
       expectJson: true,
     });
 
     expect(spawnMock).toHaveBeenCalledWith(
       '/tmp/custom-lark-cli',
-      ['docs', '+fetch', '--doc', 'token', '--format', 'json'],
+      ['docs', 'search', '--query', 'token', '--format', 'json'],
       expect.objectContaining({
         stdio: ['ignore', 'pipe', 'pipe'],
       }),
@@ -217,6 +217,22 @@ describe('SpawnLarkExecutor', () => {
     );
   });
 
+  it('does not add --format for shortcut commands', async () => {
+    spawnMock.mockReturnValue(createMockChild(0, '{"ok":true}\n', ''));
+
+    const executor = new SpawnLarkExecutor();
+    await executor.run({
+      argv: ['docs', '+create', '--title', 'Test'],
+      expectJson: true,
+    });
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      '/tmp/custom-lark-cli',
+      ['docs', '+create', '--title', 'Test'],
+      expect.any(Object),
+    );
+  });
+
   it('returns stderr and non-zero exit codes without throwing', async () => {
     spawnMock.mockReturnValue(createMockChild(1, '', 'permission denied'));
 
@@ -229,6 +245,18 @@ describe('SpawnLarkExecutor', () => {
     expect(result.ok).toBe(false);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toBe('permission denied');
+  });
+
+  it('parses JSON output even when expectJson is false', async () => {
+    spawnMock.mockReturnValue(createMockChild(0, '{"ok":true}\n', ''));
+
+    const executor = new SpawnLarkExecutor();
+    const result = await executor.run({
+      argv: ['docs', '+fetch', '--doc', 'token'],
+      expectJson: false,
+    });
+
+    expect(result.json).toEqual({ ok: true });
   });
 
   it('rejects unsupported commands before spawning', async () => {

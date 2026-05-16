@@ -171,10 +171,6 @@ function buildVolumeMounts(
     path.join(process.cwd(), 'container', 'skills'),
     skillsDst,
   );
-  syncSkillDirectory(
-    path.join(process.cwd(), 'vendor', 'lark-cli', 'skills'),
-    skillsDst,
-  );
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',

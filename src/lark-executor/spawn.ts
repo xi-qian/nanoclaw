@@ -120,10 +120,17 @@ export function validateLarkCliArgv(argv: string[]): void {
 function withJsonFormat(argv: string[], expectJson: boolean): string[] {
   if (!expectJson) return [...argv];
 
+  // If --format is already explicitly specified, don't override
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--format') {
       return [...argv];
     }
+  }
+
+  // Shortcut commands (+verb) don't support --format; they output JSON by default
+  const subcommand = argv[1];
+  if (subcommand && subcommand.startsWith('+')) {
+    return [...argv];
   }
 
   return [...argv, '--format', 'json'];
@@ -192,17 +199,11 @@ export class SpawnLarkExecutor implements LarkExecutor {
         clearTimeout(timer);
 
         let json: unknown | undefined;
-        if ((req.expectJson ?? true) && stdout.trim()) {
+        if (stdout.trim()) {
           try {
             json = parseJson(stdout);
-          } catch (error) {
-            logger.warn(
-              {
-                err: error instanceof Error ? error.message : String(error),
-                stdout,
-              },
-              'Failed to parse lark-cli stdout as JSON',
-            );
+          } catch {
+            // Not JSON output — expected for --help, non-JSON formats, etc.
           }
         }
 
