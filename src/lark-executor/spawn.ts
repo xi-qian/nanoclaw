@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { LarkExecRequest, LarkExecResult, LarkExecutor } from './types.js';
 
@@ -29,6 +30,10 @@ const BLOCKED_TOP_LEVEL_COMMANDS = new Set([
 ]);
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const envFileConfig = readEnvFile([
+  'NANOCLAW_LARK_CLI_BIN',
+  'NANOCLAW_LARK_CLI_CONFIG_DIR',
+]);
 
 function defaultConfigDir(): string {
   return path.join(os.homedir(), '.config', 'nanoclaw', 'lark-cli');
@@ -59,7 +64,8 @@ function resolveFromPath(binaryName: string): string | null {
 }
 
 export function resolveLarkCliBin(): string {
-  const explicit = process.env.NANOCLAW_LARK_CLI_BIN;
+  const explicit =
+    process.env.NANOCLAW_LARK_CLI_BIN || envFileConfig.NANOCLAW_LARK_CLI_BIN;
   if (explicit && isExecutableFile(explicit)) {
     return explicit;
   }
@@ -89,7 +95,9 @@ export function buildLarkCliEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
     LARKSUITE_CLI_CONFIG_DIR:
-      process.env.NANOCLAW_LARK_CLI_CONFIG_DIR || defaultConfigDir(),
+      process.env.NANOCLAW_LARK_CLI_CONFIG_DIR ||
+      envFileConfig.NANOCLAW_LARK_CLI_CONFIG_DIR ||
+      defaultConfigDir(),
     LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1',
     LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1',
   };

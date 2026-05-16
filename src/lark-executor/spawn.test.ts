@@ -13,9 +13,15 @@ vi.mock('../logger.js', () => ({
   },
 }));
 
-const spawnMock = vi.fn();
+const { spawnMock, readEnvFileMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn(),
+  readEnvFileMock: vi.fn(() => ({})),
+}));
 vi.mock('child_process', () => ({
-  spawn: (...args: unknown[]) => spawnMock(...args),
+  spawn: (...args: any[]) => (spawnMock as any)(...args),
+}));
+vi.mock('../env.js', () => ({
+  readEnvFile: (...args: any[]) => (readEnvFileMock as any)(...args),
 }));
 
 import {
@@ -73,6 +79,8 @@ describe('validateLarkCliArgv', () => {
 describe('resolveLarkCliBin', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    readEnvFileMock.mockReset();
+    readEnvFileMock.mockReturnValue({});
   });
 
   it('uses explicit env override when executable', () => {
@@ -101,9 +109,31 @@ describe('resolveLarkCliBin', () => {
 
     expect(resolveLarkCliBin()).toBe(vendored);
   });
+
+  it('uses .env override when process env is absent', async () => {
+    vi.unstubAllEnvs();
+    readEnvFileMock.mockReturnValue({
+      NANOCLAW_LARK_CLI_BIN: '/tmp/from-dotenv-lark-cli',
+    });
+
+    vi.resetModules();
+    const { resolveLarkCliBin: resolveWithDotenv } = await import('./spawn.js');
+
+    vi.spyOn(fs, 'accessSync').mockImplementation((filePath) => {
+      if (filePath === '/tmp/from-dotenv-lark-cli') return undefined;
+      throw new Error('missing');
+    });
+
+    expect(resolveWithDotenv()).toBe('/tmp/from-dotenv-lark-cli');
+  });
 });
 
 describe('buildLarkCliEnv', () => {
+  beforeEach(() => {
+    readEnvFileMock.mockReset();
+    readEnvFileMock.mockReturnValue({});
+  });
+
   it('injects config dir and disables notices', () => {
     vi.stubEnv('NANOCLAW_LARK_CLI_CONFIG_DIR', '/tmp/lark-config');
     const env = buildLarkCliEnv();
@@ -120,6 +150,19 @@ describe('buildLarkCliEnv', () => {
     expect(env.LARKSUITE_CLI_CONFIG_DIR).toBe(
       path.join(os.homedir(), '.config', 'nanoclaw', 'lark-cli'),
     );
+  });
+
+  it('uses .env config dir when process env is absent', async () => {
+    vi.unstubAllEnvs();
+    readEnvFileMock.mockReturnValue({
+      NANOCLAW_LARK_CLI_CONFIG_DIR: '/tmp/lark-config-from-dotenv',
+    });
+
+    vi.resetModules();
+    const { buildLarkCliEnv: buildWithDotenv } = await import('./spawn.js');
+    const env = buildWithDotenv();
+
+    expect(env.LARKSUITE_CLI_CONFIG_DIR).toBe('/tmp/lark-config-from-dotenv');
   });
 });
 
