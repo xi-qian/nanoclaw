@@ -32,6 +32,7 @@ git stash pop                      # 恢复本地改动（手工解冲突）
 npm install --ignore-scripts       # 安装新依赖
 npm rebuild better-sqlite3         # 重建 native 模块
 npm run build                      # 编译
+npm run generate:lark-cli-config   # 由 NanoClaw 凭证生成 lark-cli bot 配置
 sudo systemctl restart nanoclaw    # 或 systemctl --user restart nanoclaw
 ```
 
@@ -55,7 +56,81 @@ git merge origin/main
 npm install --ignore-scripts
 npm rebuild better-sqlite3
 npm run build
+npm run generate:lark-cli-config
 sudo systemctl restart nanoclaw
+```
+
+## Lark CLI 配置生成
+
+当启用 `feature/lark-cli-host-spawn` 相关方案后，NanoClaw 的文档、任务、Drive、Base 等飞书业务能力会改为宿主机执行 `lark-cli`。  
+这里不再要求手工运行 `lark-cli config init`，而是在部署阶段由脚本根据 NanoClaw 自己的飞书凭证生成 `lark-cli` 的 bot 配置。
+
+### 前置条件
+
+服务器宿主机需要满足：
+
+1. `lark-cli` 二进制已安装，例如：
+   `/data/user/qianxi/bin/lark-cli`
+2. NanoClaw 飞书凭证文件已存在，例如：
+   `/data/user/qianxi/nanoclaw/store/auth/feishu/credentials.json`
+3. NanoClaw 部署目录 `.env` 已配置：
+
+```env
+NANOCLAW_LARK_CLI_BIN=/data/user/qianxi/bin/lark-cli
+NANOCLAW_LARK_CLI_CONFIG_DIR=/data/user/qianxi/nanoclaw/lark-cli-config
+NANOCLAW_FEISHU_CREDENTIALS_DIR=/data/user/qianxi/nanoclaw/store/auth/feishu
+```
+
+说明：
+
+- `NANOCLAW_LARK_CLI_BIN` / `NANOCLAW_LARK_CLI_CONFIG_DIR` 会被 NanoClaw 运行时读取
+- `NANOCLAW_FEISHU_CREDENTIALS_DIR` 主要供生成脚本读取；不配置时默认使用 `<project>/store/auth/feishu`
+
+### 生成命令
+
+在 NanoClaw 部署目录执行：
+
+```bash
+npm run generate:lark-cli-config
+```
+
+该命令会：
+
+1. 读取 NanoClaw 飞书凭证目录中的 `credentials.json`
+2. 在 `NANOCLAW_LARK_CLI_CONFIG_DIR` 下生成：
+   - `config.json`
+   - `nanoclaw.app_secret`
+3. 创建名为 `nanoclaw-bot` 的 `lark-cli` profile
+4. 将 `defaultAs` 固定为 `bot`
+
+也可以显式指定目录：
+
+```bash
+node scripts/generate-lark-cli-config.mjs \
+  --credentials-dir /data/user/qianxi/nanoclaw/store/auth/feishu \
+  --config-dir /data/user/qianxi/nanoclaw/lark-cli-config
+```
+
+建议在以下场景重新执行一次：
+
+1. 首次部署
+2. 更新 `appId` / `appSecret`
+3. 清空或迁移 `lark-cli-config` 目录
+
+### 验证
+
+生成后可直接验证输出文件：
+
+```bash
+ls -l /data/user/qianxi/nanoclaw/lark-cli-config
+cat /data/user/qianxi/nanoclaw/lark-cli-config/config.json
+```
+
+并验证 `lark-cli` 可读取配置：
+
+```bash
+LARKSUITE_CLI_CONFIG_DIR=/data/user/qianxi/nanoclaw/lark-cli-config \
+  /data/user/qianxi/bin/lark-cli config show
 ```
 
 ## 数据库迁移

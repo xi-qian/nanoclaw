@@ -128,6 +128,56 @@ EOF
    - `docx:document` - 读取文档
    - `docx:document:write` - 创建和编辑文档
 
+### 3.1 配置宿主机 lark-cli
+
+如果当前部署启用了 host 执行 `lark-cli` 的飞书业务链路，还需要在宿主机准备 `lark-cli` 二进制和配置目录。
+
+#### `.env` 配置
+
+在 NanoClaw 部署目录 `.env` 中加入：
+
+```env
+NANOCLAW_LARK_CLI_BIN=/data/user/qianxi/bin/lark-cli
+NANOCLAW_LARK_CLI_CONFIG_DIR=/data/user/qianxi/nanoclaw/lark-cli-config
+NANOCLAW_FEISHU_CREDENTIALS_DIR=/data/user/qianxi/nanoclaw/store/auth/feishu
+```
+
+其中：
+
+- `NANOCLAW_LARK_CLI_BIN`：宿主机 `lark-cli` 二进制路径
+- `NANOCLAW_LARK_CLI_CONFIG_DIR`：宿主机 `lark-cli` 配置目录
+- `NANOCLAW_FEISHU_CREDENTIALS_DIR`：NanoClaw 飞书凭证目录；默认可省略为 `<project>/store/auth/feishu`
+
+#### 根据 NanoClaw 凭证生成 lark-cli 配置
+
+在部署目录执行：
+
+```bash
+npm run generate:lark-cli-config
+```
+
+该脚本会：
+
+1. 读取 `store/auth/feishu/credentials.json`
+2. 生成 `lark-cli-config/config.json`
+3. 生成 `lark-cli-config/nanoclaw.app_secret`
+4. 创建 `nanoclaw-bot` profile，并固定 `defaultAs=bot`
+
+也可以手工指定目录：
+
+```bash
+node scripts/generate-lark-cli-config.mjs \
+  --credentials-dir ~/nanoclaw/store/auth/feishu \
+  --config-dir ~/nanoclaw/lark-cli-config
+```
+
+验证：
+
+```bash
+LARKSUITE_CLI_CONFIG_DIR=~/nanoclaw/lark-cli-config \
+  /data/user/qianxi/bin/lark-cli config show
+```
+
 ### 4. 启动服务
 
 #### 使用 systemd (推荐)
@@ -150,6 +200,7 @@ journalctl --user -u nanoclaw -f
 
 ```bash
 cd ~/nanoclaw
+npm run generate:lark-cli-config
 npm start
 ```
 
@@ -192,6 +243,7 @@ cd ~/nanoclaw
 git pull origin main
 npm install
 npm run build
+npm run generate:lark-cli-config
 systemctl --user restart nanoclaw
 ```
 

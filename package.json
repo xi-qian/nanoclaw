@@ -12,6 +12,7 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "sync:lark-cli": "bash scripts/sync-lark-cli-assets.sh",
+    "generate:lark-cli-config": "node scripts/generate-lark-cli-config.mjs",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:fix": "prettier --write \"src/**/*.ts\"",
