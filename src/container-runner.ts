@@ -58,6 +58,17 @@ interface VolumeMount {
   readonly: boolean;
 }
 
+function syncSkillDirectory(srcRoot: string, dstRoot: string): void {
+  if (!fs.existsSync(srcRoot)) return;
+
+  for (const entry of fs.readdirSync(srcRoot)) {
+    const srcDir = path.join(srcRoot, entry);
+    if (!fs.statSync(srcDir).isDirectory()) continue;
+    const dstDir = path.join(dstRoot, entry);
+    fs.cpSync(srcDir, dstDir, { recursive: true });
+  }
+}
+
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
@@ -155,17 +166,15 @@ function buildVolumeMounts(
     );
   }
 
-  // Sync skills from container/skills/ into each group's .claude/skills/
-  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
-  if (fs.existsSync(skillsSrc)) {
-    for (const skillDir of fs.readdirSync(skillsSrc)) {
-      const srcDir = path.join(skillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
-      const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true });
-    }
-  }
+  syncSkillDirectory(
+    path.join(process.cwd(), 'container', 'skills'),
+    skillsDst,
+  );
+  syncSkillDirectory(
+    path.join(process.cwd(), 'vendor', 'lark-cli', 'skills'),
+    skillsDst,
+  );
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
@@ -189,6 +198,14 @@ function buildVolumeMounts(
   });
   // Downloads directory for files to send to users
   fs.mkdirSync(path.join(groupIpcDir, 'downloads'), {
+    recursive: true,
+    mode: 0o777,
+  });
+  fs.mkdirSync(path.join(groupIpcDir, 'lark', 'requests'), {
+    recursive: true,
+    mode: 0o777,
+  });
+  fs.mkdirSync(path.join(groupIpcDir, 'lark', 'results'), {
     recursive: true,
     mode: 0o777,
   });

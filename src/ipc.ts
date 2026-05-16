@@ -13,6 +13,7 @@ import {
   updateTask,
 } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
+import { SpawnLarkExecutor } from './lark-executor/index.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -35,6 +36,19 @@ export interface IpcDeps {
 
 let ipcWatcherRunning = false;
 
+interface LarkIpcRequest {
+  type: 'lark_cli_run';
+  argv?: string[];
+  expect_json?: boolean;
+  timeout_ms?: number;
+}
+
+function writeJsonAtomic(filePath: string, data: unknown): void {
+  const tempPath = `${filePath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+  fs.renameSync(tempPath, filePath);
+}
+
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
     logger.debug('IPC watcher already running, skipping duplicate start');
@@ -44,6 +58,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
   const ipcBaseDir = path.join(DATA_DIR, 'ipc');
   fs.mkdirSync(ipcBaseDir, { recursive: true, mode: 0o777 });
+  const larkExecutor = new SpawnLarkExecutor();
 
   const processIpcFiles = async () => {
     // Scan all group IPC directories (identity determined by directory)
@@ -152,6 +167,76 @@ export function startIpcWatcher(deps: IpcDeps): void {
         }
       } catch (err) {
         logger.error({ err, sourceGroup }, 'Error reading IPC tasks directory');
+      }
+    }
+
+    for (const sourceGroup of groupFolders) {
+      const larkDir = path.join(ipcBaseDir, sourceGroup, 'lark');
+      try {
+        if (!fs.existsSync(larkDir)) continue;
+
+        const requestsDir = path.join(larkDir, 'requests');
+        const resultsDir = path.join(larkDir, 'results');
+        fs.mkdirSync(resultsDir, { recursive: true, mode: 0o777 });
+
+        if (!fs.existsSync(requestsDir)) continue;
+
+        const requestFiles = fs
+          .readdirSync(requestsDir)
+          .filter((f) => f.endsWith('.json'));
+
+        for (const file of requestFiles) {
+          const requestPath = path.join(requestsDir, file);
+          const resultPath = path.join(resultsDir, file);
+
+          try {
+            const request = JSON.parse(
+              fs.readFileSync(requestPath, 'utf-8'),
+            ) as LarkIpcRequest;
+
+            if (request.type !== 'lark_cli_run') {
+              throw new Error(
+                `Unsupported lark IPC request type: ${request.type}`,
+              );
+            }
+            if (!Array.isArray(request.argv) || request.argv.length === 0) {
+              throw new Error('lark IPC argv must not be empty');
+            }
+
+            const result = await larkExecutor.run({
+              argv: request.argv,
+              expectJson: request.expect_json,
+              timeoutMs: request.timeout_ms,
+            });
+
+            writeJsonAtomic(resultPath, {
+              success: result.ok,
+              exit_code: result.exitCode,
+              stdout: result.stdout,
+              stderr: result.stderr,
+              json: result.json,
+            });
+          } catch (err) {
+            const errorMessage =
+              err instanceof Error ? err.message : String(err);
+            logger.error(
+              { file, sourceGroup, err: errorMessage },
+              'Error processing lark IPC request',
+            );
+            writeJsonAtomic(resultPath, {
+              success: false,
+              exit_code: -1,
+              stdout: '',
+              stderr: errorMessage,
+            });
+          } finally {
+            try {
+              fs.unlinkSync(requestPath);
+            } catch {}
+          }
+        }
+      } catch (err) {
+        logger.error({ err, sourceGroup }, 'Error reading lark IPC directory');
       }
     }
 
@@ -633,7 +718,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
   };
 
   processIpcFiles();
-  logger.info('IPC watcher started (per-group namespaces + feishu)');
+  logger.info('IPC watcher started (per-group namespaces + lark + feishu)');
 }
 
 export async function processTaskIpc(

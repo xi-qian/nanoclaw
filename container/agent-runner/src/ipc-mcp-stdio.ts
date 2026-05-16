@@ -16,6 +16,8 @@ const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const FEISHU_REQUESTS_DIR = path.join(IPC_DIR, 'feishu', 'requests');
 const FEISHU_RESULTS_DIR = path.join(IPC_DIR, 'feishu', 'results');
+const LARK_REQUESTS_DIR = path.join(IPC_DIR, 'lark', 'requests');
+const LARK_RESULTS_DIR = path.join(IPC_DIR, 'lark', 'results');
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -46,7 +48,12 @@ server.tool(
   "Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times.",
   {
     text: z.string().describe('The message text to send'),
-    sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
+    sender: z
+      .string()
+      .optional()
+      .describe(
+        'Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.',
+      ),
   },
   async (args) => {
     const data: Record<string, string | undefined> = {
@@ -90,11 +97,33 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 \u2022 interval: Milliseconds between runs (e.g., "300000" for 5 minutes, "3600000" for 1 hour)
 \u2022 once: Local time WITHOUT "Z" suffix (e.g., "2026-02-01T15:30:00"). Do NOT use UTC/Z suffix.`,
   {
-    prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
-    schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
-    schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
-    context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
-    target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
+    prompt: z
+      .string()
+      .describe(
+        'What the agent should do when the task runs. For isolated mode, include all necessary context here.',
+      ),
+    schedule_type: z
+      .enum(['cron', 'interval', 'once'])
+      .describe(
+        'cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time',
+      ),
+    schedule_value: z
+      .string()
+      .describe(
+        'cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)',
+      ),
+    context_mode: z
+      .enum(['group', 'isolated'])
+      .default('group')
+      .describe(
+        'group=runs with chat history and memory, isolated=fresh session (include context in prompt)',
+      ),
+    target_group_jid: z
+      .string()
+      .optional()
+      .describe(
+        '(Main group only) JID of the group to schedule the task for. Defaults to the current group.',
+      ),
   },
   async (args) => {
     // Validate schedule_value before writing IPC
@@ -103,7 +132,12 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
         CronExpressionParser.parse(args.schedule_value);
       } catch {
         return {
-          content: [{ type: 'text' as const, text: `Invalid cron: "${args.schedule_value}". Use format like "0 9 * * *" (daily 9am) or "*/5 * * * *" (every 5 min).` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `Invalid cron: "${args.schedule_value}". Use format like "0 9 * * *" (daily 9am) or "*/5 * * * *" (every 5 min).`,
+            },
+          ],
           isError: true,
         };
       }
@@ -111,28 +145,47 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       const ms = parseInt(args.schedule_value, 10);
       if (isNaN(ms) || ms <= 0) {
         return {
-          content: [{ type: 'text' as const, text: `Invalid interval: "${args.schedule_value}". Must be positive milliseconds (e.g., "300000" for 5 min).` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `Invalid interval: "${args.schedule_value}". Must be positive milliseconds (e.g., "300000" for 5 min).`,
+            },
+          ],
           isError: true,
         };
       }
     } else if (args.schedule_type === 'once') {
-      if (/[Zz]$/.test(args.schedule_value) || /[+-]\d{2}:\d{2}$/.test(args.schedule_value)) {
+      if (
+        /[Zz]$/.test(args.schedule_value) ||
+        /[+-]\d{2}:\d{2}$/.test(args.schedule_value)
+      ) {
         return {
-          content: [{ type: 'text' as const, text: `Timestamp must be local time without timezone suffix. Got "${args.schedule_value}" — use format like "2026-02-01T15:30:00".` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `Timestamp must be local time without timezone suffix. Got "${args.schedule_value}" — use format like "2026-02-01T15:30:00".`,
+            },
+          ],
           isError: true,
         };
       }
       const date = new Date(args.schedule_value);
       if (isNaN(date.getTime())) {
         return {
-          content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}". Use local time format like "2026-02-01T15:30:00".` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `Invalid timestamp: "${args.schedule_value}". Use local time format like "2026-02-01T15:30:00".`,
+            },
+          ],
           isError: true,
         };
       }
     }
 
     // Non-main groups can only schedule for themselves
-    const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
+    const targetJid =
+      isMain && args.target_group_jid ? args.target_group_jid : chatJid;
 
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -151,7 +204,12 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     writeIpcFile(TASKS_DIR, data);
 
     return {
-      content: [{ type: 'text' as const, text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}` }],
+      content: [
+        {
+          type: 'text' as const,
+          text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}`,
+        },
+      ],
     };
   },
 );
@@ -165,30 +223,56 @@ server.tool(
 
     try {
       if (!fs.existsSync(tasksFile)) {
-        return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
+        return {
+          content: [
+            { type: 'text' as const, text: 'No scheduled tasks found.' },
+          ],
+        };
       }
 
       const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
 
       const tasks = isMain
         ? allTasks
-        : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
+        : allTasks.filter(
+            (t: { groupFolder: string }) => t.groupFolder === groupFolder,
+          );
 
       if (tasks.length === 0) {
-        return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
+        return {
+          content: [
+            { type: 'text' as const, text: 'No scheduled tasks found.' },
+          ],
+        };
       }
 
       const formatted = tasks
         .map(
-          (t: { id: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string }) =>
+          (t: {
+            id: string;
+            prompt: string;
+            schedule_type: string;
+            schedule_value: string;
+            status: string;
+            next_run: string;
+          }) =>
             `- [${t.id}] ${t.prompt.slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
         )
         .join('\n');
 
-      return { content: [{ type: 'text' as const, text: `Scheduled tasks:\n${formatted}` }] };
+      return {
+        content: [
+          { type: 'text' as const, text: `Scheduled tasks:\n${formatted}` },
+        ],
+      };
     } catch (err) {
       return {
-        content: [{ type: 'text' as const, text: `Error reading tasks: ${err instanceof Error ? err.message : String(err)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error reading tasks: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
       };
     }
   },
@@ -209,7 +293,14 @@ server.tool(
 
     writeIpcFile(TASKS_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} pause requested.` }] };
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Task ${args.task_id} pause requested.`,
+        },
+      ],
+    };
   },
 );
 
@@ -228,7 +319,14 @@ server.tool(
 
     writeIpcFile(TASKS_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} resume requested.` }] };
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Task ${args.task_id} resume requested.`,
+        },
+      ],
+    };
   },
 );
 
@@ -247,7 +345,14 @@ server.tool(
 
     writeIpcFile(TASKS_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} cancellation requested.` }] };
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Task ${args.task_id} cancellation requested.`,
+        },
+      ],
+    };
   },
 );
 
@@ -264,7 +369,14 @@ server.tool(
 
     writeIpcFile(TASKS_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: 'New session started. Previous conversation context has been cleared.' }] };
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: 'New session started. Previous conversation context has been cleared.',
+        },
+      ],
+    };
   },
 );
 
@@ -274,18 +386,32 @@ server.tool(
   {
     task_id: z.string().describe('The task ID to update'),
     prompt: z.string().optional().describe('New prompt for the task'),
-    schedule_type: z.enum(['cron', 'interval', 'once']).optional().describe('New schedule type'),
-    schedule_value: z.string().optional().describe('New schedule value (see schedule_task for format)'),
+    schedule_type: z
+      .enum(['cron', 'interval', 'once'])
+      .optional()
+      .describe('New schedule type'),
+    schedule_value: z
+      .string()
+      .optional()
+      .describe('New schedule value (see schedule_task for format)'),
   },
   async (args) => {
     // Validate schedule_value if provided
-    if (args.schedule_type === 'cron' || (!args.schedule_type && args.schedule_value)) {
+    if (
+      args.schedule_type === 'cron' ||
+      (!args.schedule_type && args.schedule_value)
+    ) {
       if (args.schedule_value) {
         try {
           CronExpressionParser.parse(args.schedule_value);
         } catch {
           return {
-            content: [{ type: 'text' as const, text: `Invalid cron: "${args.schedule_value}".` }],
+            content: [
+              {
+                type: 'text' as const,
+                text: `Invalid cron: "${args.schedule_value}".`,
+              },
+            ],
             isError: true,
           };
         }
@@ -295,7 +421,12 @@ server.tool(
       const ms = parseInt(args.schedule_value, 10);
       if (isNaN(ms) || ms <= 0) {
         return {
-          content: [{ type: 'text' as const, text: `Invalid interval: "${args.schedule_value}".` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `Invalid interval: "${args.schedule_value}".`,
+            },
+          ],
           isError: true,
         };
       }
@@ -309,12 +440,21 @@ server.tool(
       timestamp: new Date().toISOString(),
     };
     if (args.prompt !== undefined) data.prompt = args.prompt;
-    if (args.schedule_type !== undefined) data.schedule_type = args.schedule_type;
-    if (args.schedule_value !== undefined) data.schedule_value = args.schedule_value;
+    if (args.schedule_type !== undefined)
+      data.schedule_type = args.schedule_type;
+    if (args.schedule_value !== undefined)
+      data.schedule_value = args.schedule_value;
 
     writeIpcFile(TASKS_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} update requested.` }] };
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Task ${args.task_id} update requested.`,
+        },
+      ],
+    };
   },
 );
 
@@ -324,15 +464,28 @@ server.tool(
 
 Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.`,
   {
-    jid: z.string().describe('The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")'),
+    jid: z
+      .string()
+      .describe(
+        'The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")',
+      ),
     name: z.string().describe('Display name for the group'),
-    folder: z.string().describe('Channel-prefixed folder name (e.g., "whatsapp_family-chat", "telegram_dev-team")'),
+    folder: z
+      .string()
+      .describe(
+        'Channel-prefixed folder name (e.g., "whatsapp_family-chat", "telegram_dev-team")',
+      ),
     trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
   },
   async (args) => {
     if (!isMain) {
       return {
-        content: [{ type: 'text' as const, text: 'Only the main group can register new groups.' }],
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Only the main group can register new groups.',
+          },
+        ],
         isError: true,
       };
     }
@@ -349,8 +502,100 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     writeIpcFile(TASKS_DIR, data);
 
     return {
-      content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
+      content: [
+        {
+          type: 'text' as const,
+          text: `Group "${args.name}" registered. It will start receiving messages immediately.`,
+        },
+      ],
     };
+  },
+);
+
+async function waitForLarkResult(
+  requestId: string,
+  timeoutMs: number = 30000,
+): Promise<any> {
+  const startTime = Date.now();
+  const resultFile = path.join(LARK_RESULTS_DIR, requestId);
+
+  while (Date.now() - startTime < timeoutMs) {
+    if (fs.existsSync(resultFile)) {
+      const result = JSON.parse(fs.readFileSync(resultFile, 'utf-8'));
+      try {
+        fs.unlinkSync(resultFile);
+      } catch {}
+      return result;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new Error(
+    `Timeout waiting for lark IPC result after ${timeoutMs / 1000}s`,
+  );
+}
+
+server.tool(
+  'lark_cli_run',
+  'Run an allowlisted host-side lark-cli command via NanoClaw IPC. Use this for vendored lark-cli skills so real Lark credentials remain outside the container.',
+  {
+    argv: z
+      .array(z.string())
+      .min(1)
+      .describe('lark-cli argv, without the binary name'),
+    expect_json: z
+      .boolean()
+      .optional()
+      .describe(
+        'Whether NanoClaw should request and parse JSON output. Defaults to true.',
+      ),
+    timeout_ms: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe('Timeout in milliseconds. Defaults to 30000.'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(LARK_REQUESTS_DIR, {
+      type: 'lark_cli_run',
+      argv: args.argv,
+      expect_json: args.expect_json,
+      timeout_ms: args.timeout_ms,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForLarkResult(
+        requestId,
+        args.timeout_ms ?? 30000,
+      );
+      const hasJson = result.json !== undefined;
+      const text = hasJson
+        ? JSON.stringify(result.json, null, 2)
+        : result.stdout ||
+          (result.success
+            ? 'lark-cli command succeeded with no output.'
+            : result.stderr || `lark-cli exited with code ${result.exit_code}`);
+
+      return {
+        content: [{ type: 'text' as const, text }],
+        structuredContent: result,
+        isError: !result.success,
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `lark-cli IPC failed: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   },
 );
 
@@ -359,7 +604,10 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 /**
  * 等待飞书 IPC 结果（带超时）
  */
-async function waitForFeishuResult(requestId: string, timeoutMs: number = 30000): Promise<any> {
+async function waitForFeishuResult(
+  requestId: string,
+  timeoutMs: number = 30000,
+): Promise<any> {
   const startTime = Date.now();
   const resultFile = path.join(FEISHU_RESULTS_DIR, requestId);
 
@@ -373,10 +621,12 @@ async function waitForFeishuResult(requestId: string, timeoutMs: number = 30000)
       return result;
     }
     // 等待 100ms 后重试
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  throw new Error(`Timeout waiting for feishu IPC result after ${timeoutMs / 1000}s`);
+  throw new Error(
+    `Timeout waiting for feishu IPC result after ${timeoutMs / 1000}s`,
+  );
 }
 
 // 文档创建超时时间：由于速率限制（250ms/块），大文档需要更长时间
@@ -388,8 +638,14 @@ server.tool(
   '获取飞书云文档内容，返回 Markdown 格式。支持文档 ID 或完整 URL。',
   {
     doc_id: z.string().describe('文档 ID 或完整 URL（支持自动解析）'),
-    offset: z.number().optional().describe('字符偏移量（用于分页获取大文档，可选）'),
-    limit: z.number().optional().describe('返回的最大字符数（仅在需要分页时使用）'),
+    offset: z
+      .number()
+      .optional()
+      .describe('字符偏移量（用于分页获取大文档，可选）'),
+    limit: z
+      .number()
+      .optional()
+      .describe('返回的最大字符数（仅在需要分页时使用）'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -411,13 +667,20 @@ server.tool(
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `获取文档失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `获取文档失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `获取文档超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `获取文档超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -431,7 +694,10 @@ server.tool(
     title: z.string().describe('文档标题'),
     markdown: z.string().describe('Markdown 内容'),
     folder_token: z.string().optional().describe('父文件夹 token（可选）'),
-    wiki_node: z.string().optional().describe('知识库节点 token 或 URL（可选，传入则在该节点下创建文档）'),
+    wiki_node: z
+      .string()
+      .optional()
+      .describe('知识库节点 token 或 URL（可选，传入则在该节点下创建文档）'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -445,21 +711,36 @@ server.tool(
     });
 
     try {
-      const result = await waitForFeishuResult(requestId, DOC_CREATE_TIMEOUT_MS);
+      const result = await waitForFeishuResult(
+        requestId,
+        DOC_CREATE_TIMEOUT_MS,
+      );
 
       if (result.success) {
         return {
-          content: [{ type: 'text' as const, text: `文档创建成功!\n\n标题: ${result.title}\n文档 ID: ${result.doc_id}\n链接: ${result.url || '(未返回链接)'}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `文档创建成功!\n\n标题: ${result.title}\n文档 ID: ${result.doc_id}\n链接: ${result.url || '(未返回链接)'}`,
+            },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `创建文档失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `创建文档失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `创建文档超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `创建文档超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -483,7 +764,10 @@ server.tool(
     });
 
     try {
-      const result = await waitForFeishuResult(requestId, DOC_UPDATE_TIMEOUT_MS);
+      const result = await waitForFeishuResult(
+        requestId,
+        DOC_UPDATE_TIMEOUT_MS,
+      );
 
       if (result.success) {
         return {
@@ -491,13 +775,20 @@ server.tool(
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `更新文档失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `更新文档失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `更新文档超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `更新文档超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -531,21 +822,39 @@ server.tool(
         }
 
         const formatted = result.results
-          .map((r: any) => `- ${r.title}\n  ID: ${r.doc_id}\n  ${r.snippet ? `摘要: ${r.snippet}` : ''}\n  ${r.url ? `链接: ${r.url}` : ''}`)
+          .map(
+            (r: any) =>
+              `- ${r.title}\n  ID: ${r.doc_id}\n  ${r.snippet ? `摘要: ${r.snippet}` : ''}\n  ${r.url ? `链接: ${r.url}` : ''}`,
+          )
           .join('\n\n');
 
         return {
-          content: [{ type: 'text' as const, text: `找到 ${result.results.length} 个文档:\n\n${formatted}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `找到 ${result.results.length} 个文档:\n\n${formatted}`,
+            },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `搜索文档失败: ${result.error || '未知错误'}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `搜索文档失败: ${result.error || '未知错误'}`,
+            },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `搜索文档超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `搜索文档超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -571,17 +880,32 @@ server.tool(
 
       if (result.success) {
         return {
-          content: [{ type: 'text' as const, text: `多维表格创建成功!\n\n名称: ${result.name}\nApp Token: ${result.app_token}\n链接: ${result.app_url || '(未返回链接)'}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `多维表格创建成功!\n\n名称: ${result.name}\nApp Token: ${result.app_token}\n链接: ${result.app_url || '(未返回链接)'}`,
+            },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `创建多维表格失败: ${result.error}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `创建多维表格失败: ${result.error}`,
+            },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `创建多维表格超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `创建多维表格超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -594,11 +918,22 @@ server.tool(
   {
     app_token: z.string().describe('多维表格应用 token'),
     name: z.string().describe('数据表名称'),
-    fields: z.array(z.object({
-      field_name: z.string().describe('字段名称'),
-      type: z.number().describe('字段类型：1=文本, 2=数字, 3=单选, 4=多选, 5=日期, 7=复选框, 11=人员, 15=超链接'),
-      property: z.any().optional().describe('字段属性，如单选/多选的选项列表'),
-    })).describe('字段定义列表'),
+    fields: z
+      .array(
+        z.object({
+          field_name: z.string().describe('字段名称'),
+          type: z
+            .number()
+            .describe(
+              '字段类型：1=文本, 2=数字, 3=单选, 4=多选, 5=日期, 7=复选框, 11=人员, 15=超链接',
+            ),
+          property: z
+            .any()
+            .optional()
+            .describe('字段属性，如单选/多选的选项列表'),
+        }),
+      )
+      .describe('字段定义列表'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -615,17 +950,29 @@ server.tool(
 
       if (result.success) {
         return {
-          content: [{ type: 'text' as const, text: `数据表创建成功!\n\n表名: ${result.name}\nTable ID: ${result.table_id}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `数据表创建成功!\n\n表名: ${result.name}\nTable ID: ${result.table_id}`,
+            },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `创建数据表失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `创建数据表失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `创建数据表超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `创建数据表超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -653,7 +1000,9 @@ server.tool(
         const tables = result.tables || [];
         if (tables.length === 0) {
           return {
-            content: [{ type: 'text' as const, text: '多维表格中没有数据表。' }],
+            content: [
+              { type: 'text' as const, text: '多维表格中没有数据表。' },
+            ],
           };
         }
 
@@ -662,17 +1011,29 @@ server.tool(
           .join('\n');
 
         return {
-          content: [{ type: 'text' as const, text: `找到 ${tables.length} 个数据表:\n\n${formatted}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `找到 ${tables.length} 个数据表:\n\n${formatted}`,
+            },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `列出数据表失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `列出数据表失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `列出数据表超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `列出数据表超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -685,9 +1046,15 @@ server.tool(
   {
     app_token: z.string().describe('多维表格应用 token'),
     table_id: z.string().describe('数据表 ID'),
-    records: z.array(z.object({
-      fields: z.record(z.string(), z.any()).describe('字段值，key 为字段名，value 为字段值'),
-    })).describe('记录列表，每条记录包含 fields 对象'),
+    records: z
+      .array(
+        z.object({
+          fields: z
+            .record(z.string(), z.any())
+            .describe('字段值，key 为字段名，value 为字段值'),
+        }),
+      )
+      .describe('记录列表，每条记录包含 fields 对象'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -704,17 +1071,29 @@ server.tool(
 
       if (result.success) {
         return {
-          content: [{ type: 'text' as const, text: `记录添加成功!\n\n添加记录数: ${result.record_ids?.length || args.records.length}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `记录添加成功!\n\n添加记录数: ${result.record_ids?.length || args.records.length}`,
+            },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `添加记录失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `添加记录失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `添加记录超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `添加记录超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -728,19 +1107,55 @@ server.tool(
     app_token: z.string().describe('多维表格应用 token'),
     table_id: z.string().describe('数据表 ID'),
     view_id: z.string().optional().describe('视图 ID（可选）'),
-    filter: z.object({
-      conjunction: z.enum(['and', 'or']).optional().describe('条件之间的逻辑关系，默认为 and'),
-      conditions: z.array(z.object({
-        field_name: z.string().describe('字段名称'),
-        operator: z.enum(['is', 'isNot', 'contains', 'doesNotContain', 'isEmpty', 'isNotEmpty', 'greater', 'greaterEqual', 'less', 'lessEqual', 'isAnyOf', 'isNoneOf']).describe('操作符'),
-        value: z.any().optional().describe('字段值（根据操作符类型可以是字符串、数字、数组等）'),
-      })).describe('过滤条件数组'),
-    }).optional().describe('过滤条件（可选）'),
-    sort: z.array(z.object({
-      field_name: z.string().describe('排序字段名'),
-      desc: z.boolean().optional().describe('是否降序，默认 false'),
-    })).optional().describe('排序条件（可选）'),
-    page_size: z.number().optional().describe('每页记录数（默认 20，最大 500）'),
+    filter: z
+      .object({
+        conjunction: z
+          .enum(['and', 'or'])
+          .optional()
+          .describe('条件之间的逻辑关系，默认为 and'),
+        conditions: z
+          .array(
+            z.object({
+              field_name: z.string().describe('字段名称'),
+              operator: z
+                .enum([
+                  'is',
+                  'isNot',
+                  'contains',
+                  'doesNotContain',
+                  'isEmpty',
+                  'isNotEmpty',
+                  'greater',
+                  'greaterEqual',
+                  'less',
+                  'lessEqual',
+                  'isAnyOf',
+                  'isNoneOf',
+                ])
+                .describe('操作符'),
+              value: z
+                .any()
+                .optional()
+                .describe('字段值（根据操作符类型可以是字符串、数字、数组等）'),
+            }),
+          )
+          .describe('过滤条件数组'),
+      })
+      .optional()
+      .describe('过滤条件（可选）'),
+    sort: z
+      .array(
+        z.object({
+          field_name: z.string().describe('排序字段名'),
+          desc: z.boolean().optional().describe('是否降序，默认 false'),
+        }),
+      )
+      .optional()
+      .describe('排序条件（可选）'),
+    page_size: z
+      .number()
+      .optional()
+      .describe('每页记录数（默认 20，最大 500）'),
     page_token: z.string().optional().describe('分页 token（用于获取下一页）'),
   },
   async (args) => {
@@ -780,19 +1195,33 @@ server.tool(
           })
           .join('\n\n');
 
-        const hasMore = result.has_more ? `\n\n还有更多记录，使用 page_token: ${result.page_token}` : '';
+        const hasMore = result.has_more
+          ? `\n\n还有更多记录，使用 page_token: ${result.page_token}`
+          : '';
         return {
-          content: [{ type: 'text' as const, text: `找到 ${records.length} 条记录:\n\n${formatted}${hasMore}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `找到 ${records.length} 条记录:\n\n${formatted}${hasMore}`,
+            },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `查询记录失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `查询记录失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `查询记录超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `查询记录超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -827,29 +1256,56 @@ server.tool(
         }
 
         const typeNames: Record<number, string> = {
-          1: '文本', 2: '数字', 3: '单选', 4: '多选', 5: '日期',
-          7: '复选框', 11: '人员', 15: '超链接', 17: '附件',
-          18: '关联', 19: '公式', 20: '双向关联', 21: '位置',
-          22: '群组', 23: '条码', 1001: '创建时间', 1002: '修改时间',
-          1003: '创建人', 1004: '修改人', 1005: '自动编号'
+          1: '文本',
+          2: '数字',
+          3: '单选',
+          4: '多选',
+          5: '日期',
+          7: '复选框',
+          11: '人员',
+          15: '超链接',
+          17: '附件',
+          18: '关联',
+          19: '公式',
+          20: '双向关联',
+          21: '位置',
+          22: '群组',
+          23: '条码',
+          1001: '创建时间',
+          1002: '修改时间',
+          1003: '创建人',
+          1004: '修改人',
+          1005: '自动编号',
         };
 
         const formatted = (fields as any[])
-          .map((f: any) => `- ${f.field_name} (${typeNames[f.type] || `类型${f.type}`})${f.field_id ? ` [${f.field_id}]` : ''}`)
+          .map(
+            (f: any) =>
+              `- ${f.field_name} (${typeNames[f.type] || `类型${f.type}`})${f.field_id ? ` [${f.field_id}]` : ''}`,
+          )
           .join('\n');
 
         return {
-          content: [{ type: 'text' as const, text: `字段列表:\n\n${formatted}` }],
+          content: [
+            { type: 'text' as const, text: `字段列表:\n\n${formatted}` },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `获取字段失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `获取字段失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `获取字段超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `获取字段超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -863,7 +1319,9 @@ server.tool(
     app_token: z.string().describe('多维表格应用 token'),
     table_id: z.string().describe('数据表 ID'),
     record_id: z.string().describe('要更新的记录 ID'),
-    fields: z.record(z.string(), z.any()).describe('要更新的字段值，key 为字段名，value 为新值'),
+    fields: z
+      .record(z.string(), z.any())
+      .describe('要更新的字段值，key 为字段名，value 为新值'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -881,17 +1339,26 @@ server.tool(
 
       if (result.success) {
         return {
-          content: [{ type: 'text' as const, text: `记录 ${args.record_id} 更新成功!` }],
+          content: [
+            { type: 'text' as const, text: `记录 ${args.record_id} 更新成功!` },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `更新记录失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `更新记录失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `更新记录超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `更新记录超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -921,17 +1388,26 @@ server.tool(
 
       if (result.success) {
         return {
-          content: [{ type: 'text' as const, text: `记录 ${args.record_id} 删除成功!` }],
+          content: [
+            { type: 'text' as const, text: `记录 ${args.record_id} 删除成功!` },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `删除记录失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `删除记录失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `删除记录超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `删除记录超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -957,17 +1433,26 @@ server.tool(
 
       if (result.success) {
         return {
-          content: [{ type: 'text' as const, text: `文档删除成功! 文档已移到回收站。` }],
+          content: [
+            { type: 'text' as const, text: `文档删除成功! 文档已移到回收站。` },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `删除文档失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `删除文档失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `删除文档超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `删除文档超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -993,17 +1478,32 @@ server.tool(
 
       if (result.success) {
         return {
-          content: [{ type: 'text' as const, text: `多维表格删除成功! 多维表格已移到回收站。` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `多维表格删除成功! 多维表格已移到回收站。`,
+            },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `删除多维表格失败: ${result.error}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `删除多维表格失败: ${result.error}`,
+            },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `删除多维表格超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `删除多维表格超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -1017,7 +1517,9 @@ server.tool(
   '添加飞书云文档或多维表格的协作者。可给用户或群组授予编辑、查看等权限。',
   {
     token: z.string().describe('文档/多维表格 token（从 URL 中提取）'),
-    file_type: z.string().describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
+    file_type: z
+      .string()
+      .describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
     member_type: z.string().describe('成员标识类型：openid, userid, openchat'),
     member_id: z.string().describe('成员 ID：ou_xxx（用户）或 oc_xxx（群组）'),
     perm: z.string().describe('权限：full_access, edit, comment, view'),
@@ -1040,17 +1542,29 @@ server.tool(
       const result = await waitForFeishuResult(requestId);
       if (result.success) {
         return {
-          content: [{ type: 'text' as const, text: `协作者添加成功!\n\n成员: ${args.member_id}\n权限: ${args.perm}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `协作者添加成功!\n\n成员: ${args.member_id}\n权限: ${args.perm}`,
+            },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `添加协作者失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `添加协作者失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `添加协作者超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `添加协作者超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -1062,8 +1576,12 @@ server.tool(
   '更新飞书云文档或多维表格协作者的权限。',
   {
     token: z.string().describe('文档/多维表格 token'),
-    file_type: z.string().describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
-    member_id: z.string().describe('协作者成员 ID（从 list_collaborators 获取）'),
+    file_type: z
+      .string()
+      .describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
+    member_id: z
+      .string()
+      .describe('协作者成员 ID（从 list_collaborators 获取）'),
     perm: z.string().describe('新权限：full_access, edit, comment, view'),
   },
   async (args) => {
@@ -1081,17 +1599,32 @@ server.tool(
       const result = await waitForFeishuResult(requestId);
       if (result.success) {
         return {
-          content: [{ type: 'text' as const, text: `协作者权限更新成功!\n\n成员 ID: ${args.member_id}\n新权限: ${args.perm}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `协作者权限更新成功!\n\n成员 ID: ${args.member_id}\n新权限: ${args.perm}`,
+            },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `更新协作者权限失败: ${result.error}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `更新协作者权限失败: ${result.error}`,
+            },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `更新协作者权限超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `更新协作者权限超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -1103,7 +1636,9 @@ server.tool(
   '列出飞书云文档或多维表格的所有协作者。',
   {
     token: z.string().describe('文档/多维表格 token'),
-    file_type: z.string().describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
+    file_type: z
+      .string()
+      .describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -1130,17 +1665,32 @@ server.tool(
           return `- ${name} (${type}, 权限: ${perm})`;
         });
         return {
-          content: [{ type: 'text' as const, text: `协作者列表 (${members.length} 人):\n${lines.join('\n')}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `协作者列表 (${members.length} 人):\n${lines.join('\n')}`,
+            },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `获取协作者列表失败: ${result.error}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `获取协作者列表失败: ${result.error}`,
+            },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `获取协作者列表超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `获取协作者列表超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -1152,8 +1702,12 @@ server.tool(
   '删除飞书云文档或多维表格的协作者。',
   {
     token: z.string().describe('文档/多维表格 token'),
-    file_type: z.string().describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
-    member_id: z.string().describe('协作者成员 ID（从 list_collaborators 获取）'),
+    file_type: z
+      .string()
+      .describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
+    member_id: z
+      .string()
+      .describe('协作者成员 ID（从 list_collaborators 获取）'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -1169,17 +1723,29 @@ server.tool(
       const result = await waitForFeishuResult(requestId);
       if (result.success) {
         return {
-          content: [{ type: 'text' as const, text: `协作者删除成功!\n\n成员 ID: ${args.member_id}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `协作者删除成功!\n\n成员 ID: ${args.member_id}`,
+            },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `删除协作者失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `删除协作者失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `删除协作者超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `删除协作者超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -1191,11 +1757,21 @@ server.tool(
   '转让飞书云文档或多维表格的所有者。Bot 必须是当前所有者或拥有管理权限。',
   {
     token: z.string().describe('文档/多维表格 token'),
-    file_type: z.string().describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
+    file_type: z
+      .string()
+      .describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
     new_member_type: z.string().describe('新所有者标识类型：openid 或 userid'),
     new_member_id: z.string().describe('新所有者 ID（ou_xxx）'),
-    remove_old_owner: z.boolean().optional().describe('是否移除原所有者（默认 false，原所有者保留 full_access）'),
-    old_owner_perm: z.string().optional().describe('原所有者保留的权限（默认 full_access，仅在 remove_old_owner=false 时有效）'),
+    remove_old_owner: z
+      .boolean()
+      .optional()
+      .describe('是否移除原所有者（默认 false，原所有者保留 full_access）'),
+    old_owner_perm: z
+      .string()
+      .optional()
+      .describe(
+        '原所有者保留的权限（默认 full_access，仅在 remove_old_owner=false 时有效）',
+      ),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -1214,17 +1790,29 @@ server.tool(
       const result = await waitForFeishuResult(requestId);
       if (result.success) {
         return {
-          content: [{ type: 'text' as const, text: `所有者转让成功!\n\n新所有者: ${args.new_member_id}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `所有者转让成功!\n\n新所有者: ${args.new_member_id}`,
+            },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `转让所有者失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `转让所有者失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `转让所有者超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `转让所有者超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -1237,14 +1825,27 @@ server.tool(
   'feishu_send_card',
   '发送飞书交互式卡片消息。卡片支持富文本、按钮等交互元素。',
   {
-    chat_id: z.string().optional().describe('目标聊天 ID（可选，默认发送到当前会话）'),
+    chat_id: z
+      .string()
+      .optional()
+      .describe('目标聊天 ID（可选，默认发送到当前会话）'),
     title: z.string().describe('卡片标题'),
     content: z.string().describe('卡片内容（支持 Markdown 格式）'),
-    buttons: z.array(z.object({
-      text: z.string().describe('按钮文字'),
-      value: z.record(z.string(), z.any()).describe('按钮点击时返回的值'),
-      style: z.enum(['default', 'primary', 'danger']).optional().describe('按钮样式：default=默认, primary=主要(蓝色), danger=危险(红色)'),
-    })).optional().describe('按钮列表（可选，最多4个）'),
+    buttons: z
+      .array(
+        z.object({
+          text: z.string().describe('按钮文字'),
+          value: z.record(z.string(), z.any()).describe('按钮点击时返回的值'),
+          style: z
+            .enum(['default', 'primary', 'danger'])
+            .optional()
+            .describe(
+              '按钮样式：default=默认, primary=主要(蓝色), danger=危险(红色)',
+            ),
+        }),
+      )
+      .optional()
+      .describe('按钮列表（可选，最多4个）'),
   },
   async (args) => {
     // 构建卡片内容
@@ -1300,13 +1901,20 @@ server.tool(
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `发送卡片失败: ${result.error}` }],
+          content: [
+            { type: 'text' as const, text: `发送卡片失败: ${result.error}` },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `发送卡片超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `发送卡片超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -1317,12 +1925,26 @@ server.tool(
   'feishu_send_confirm_card',
   '发送确认卡片，包含确认和取消按钮。用户点击按钮后会触发回调，agent 可以根据用户选择执行相应操作。',
   {
-    chat_id: z.string().optional().describe('目标聊天 ID（可选，默认发送到当前会话）'),
+    chat_id: z
+      .string()
+      .optional()
+      .describe('目标聊天 ID（可选，默认发送到当前会话）'),
     title: z.string().describe('卡片标题'),
     content: z.string().describe('卡片内容（支持 Markdown 格式）'),
-    confirm_text: z.string().optional().default('确认').describe('确认按钮文字（默认"确认"）'),
-    cancel_text: z.string().optional().default('取消').describe('取消按钮文字（默认"取消"）'),
-    action_key: z.string().optional().describe('动作标识（可选，用于区分不同的确认操作）'),
+    confirm_text: z
+      .string()
+      .optional()
+      .default('确认')
+      .describe('确认按钮文字（默认"确认"）'),
+    cancel_text: z
+      .string()
+      .optional()
+      .default('取消')
+      .describe('取消按钮文字（默认"取消"）'),
+    action_key: z
+      .string()
+      .optional()
+      .describe('动作标识（可选，用于区分不同的确认操作）'),
   },
   async (args) => {
     const actionKey = args.action_key || `confirm_${Date.now()}`;
@@ -1382,17 +2004,32 @@ server.tool(
 
       if (result.success) {
         return {
-          content: [{ type: 'text' as const, text: '确认卡片发送成功! 等待用户选择...' }],
+          content: [
+            {
+              type: 'text' as const,
+              text: '确认卡片发送成功! 等待用户选择...',
+            },
+          ],
         };
       } else {
         return {
-          content: [{ type: 'text' as const, text: `发送确认卡片失败: ${result.error}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `发送确认卡片失败: ${result.error}`,
+            },
+          ],
           isError: true,
         };
       }
     } catch (error) {
       return {
-        content: [{ type: 'text' as const, text: `发送确认卡片超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `发送确认卡片超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -1418,10 +2055,20 @@ server.tool(
 - video: 视频消息
 - media: 媒体消息`,
   {
-    message_id: z.string().describe('消息 ID（从消息的 download_message_id 属性获取）'),
-    file_key: z.string().describe('资源文件 key（从消息的 download_file_key 属性获取）'),
-    file_name: z.string().optional().describe('保存的文件名（可选，默认自动生成）'),
-    type: z.enum(['image', 'file', 'audio', 'video', 'media']).default('file').describe('资源类型，必须与消息的 type 属性一致'),
+    message_id: z
+      .string()
+      .describe('消息 ID（从消息的 download_message_id 属性获取）'),
+    file_key: z
+      .string()
+      .describe('资源文件 key（从消息的 download_file_key 属性获取）'),
+    file_name: z
+      .string()
+      .optional()
+      .describe('保存的文件名（可选，默认自动生成）'),
+    type: z
+      .enum(['image', 'file', 'audio', 'video', 'media'])
+      .default('file')
+      .describe('资源类型，必须与消息的 type 属性一致'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -1492,9 +2139,19 @@ server.tool(
 - video: 视频（MP4、MOV 等）
 - media: 其他媒体文件`,
   {
-    chat_id: z.string().optional().describe('目标聊天 ID（可选，默认发送到当前聊天）'),
-    file_path: z.string().describe('文件路径（必须是容器内可访问的路径，如 /workspace/ipc/downloads/xxx.pdf）'),
-    file_type: z.enum(['file', 'image', 'audio', 'video', 'media']).default('file').describe('文件类型'),
+    chat_id: z
+      .string()
+      .optional()
+      .describe('目标聊天 ID（可选，默认发送到当前聊天）'),
+    file_path: z
+      .string()
+      .describe(
+        '文件路径（必须是容器内可访问的路径，如 /workspace/ipc/downloads/xxx.pdf）',
+      ),
+    file_type: z
+      .enum(['file', 'image', 'audio', 'video', 'media'])
+      .default('file')
+      .describe('文件类型'),
   },
   async (args) => {
     // 如果没有指定 chat_id，使用当前聊天
@@ -1523,7 +2180,10 @@ server.tool(
     });
 
     try {
-      const result = await waitForFeishuResult(requestId, DOC_CREATE_TIMEOUT_MS);
+      const result = await waitForFeishuResult(
+        requestId,
+        DOC_CREATE_TIMEOUT_MS,
+      );
 
       if (result.success) {
         return {
@@ -1580,11 +2240,19 @@ server.tool(
 - 发送成功后会自动注册单聊，后续可以直接通过 chat_id 发送消息
 - 如果用户不存在或无权限，会返回错误`,
   {
-    identify_type: z.enum(['open_id', 'email']).describe('标识类型：open_id 或 email'),
-    identify_value: z.string().describe('标识值：open_id（如 "ou_xxx"）或邮箱地址'),
+    identify_type: z
+      .enum(['open_id', 'email'])
+      .describe('标识类型：open_id 或 email'),
+    identify_value: z
+      .string()
+      .describe('标识值：open_id（如 "ou_xxx"）或邮箱地址'),
     user_name: z.string().optional().describe('用户姓名（可选，用于显示）'),
     message: z.string().describe('消息内容'),
-    msg_type: z.enum(['text', 'post']).optional().default('post').describe('消息类型：text=纯文本, post=富文本（默认，支持 Markdown）'),
+    msg_type: z
+      .enum(['text', 'post'])
+      .optional()
+      .default('post')
+      .describe('消息类型：text=纯文本, post=富文本（默认，支持 Markdown）'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -1655,7 +2323,11 @@ server.tool(
 - 需要飞书应用有通讯录相关权限（contact:user.base:readonly, contact:department.base:readonly）
 - 如果用户不存在或无权限，返回空列表`,
   {
-    open_id: z.string().describe('用户的 open_id（格式如 "ou_xxx"，可以从消息的 sender_id 属性获取）'),
+    open_id: z
+      .string()
+      .describe(
+        '用户的 open_id（格式如 "ou_xxx"，可以从消息的 sender_id 属性获取）',
+      ),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -1721,18 +2393,33 @@ server.tool(
   {
     summary: z.string().describe('任务标题（必填）'),
     description: z.string().optional().describe('任务描述'),
-    due: z.object({
-      timestamp: z.string().describe('毫秒时间戳'),
-      is_all_day: z.boolean().optional().describe('是否全天'),
-    }).optional().describe('截止日期'),
-    members: z.array(z.object({
-      id: z.string().describe('用户 open_id'),
-      role: z.enum(['assignee', 'follower']).describe('角色：assignee=执行人, follower=关注者'),
-      type: z.string().describe('类型，通常为 user'),
-    })).optional().describe('成员列表'),
-    tasklists: z.array(z.object({
-      tasklist_guid: z.string().describe('任务列表 GUID'),
-    })).optional().describe('所属任务列表'),
+    due: z
+      .object({
+        timestamp: z.string().describe('毫秒时间戳'),
+        is_all_day: z.boolean().optional().describe('是否全天'),
+      })
+      .optional()
+      .describe('截止日期'),
+    members: z
+      .array(
+        z.object({
+          id: z.string().describe('用户 open_id'),
+          role: z
+            .enum(['assignee', 'follower'])
+            .describe('角色：assignee=执行人, follower=关注者'),
+          type: z.string().describe('类型，通常为 user'),
+        }),
+      )
+      .optional()
+      .describe('成员列表'),
+    tasklists: z
+      .array(
+        z.object({
+          tasklist_guid: z.string().describe('任务列表 GUID'),
+        }),
+      )
+      .optional()
+      .describe('所属任务列表'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -1747,13 +2434,31 @@ server.tool(
       if (result.success) {
         const task = result.task || result;
         return {
-          content: [{ type: 'text' as const, text: `任务创建成功!\n\n标题: ${task.summary || args.summary}\n任务 ID: ${task.guid || task.id}\n链接: ${task.url || '(无链接)'}` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `任务创建成功!\n\n标题: ${task.summary || args.summary}\n任务 ID: ${task.guid || task.id}\n链接: ${task.url || '(无链接)'}`,
+            },
+          ],
         };
       } else {
-        return { content: [{ type: 'text' as const, text: `创建任务失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            { type: 'text' as const, text: `创建任务失败: ${result.error}` },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `创建任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `创建任务超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -1775,12 +2480,32 @@ server.tool(
     try {
       const result = await waitForFeishuResult(requestId);
       if (result.success) {
-        return { content: [{ type: 'text' as const, text: JSON.stringify(result.task || result, null, 2) }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(result.task || result, null, 2),
+            },
+          ],
+        };
       } else {
-        return { content: [{ type: 'text' as const, text: `获取任务失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            { type: 'text' as const, text: `获取任务失败: ${result.error}` },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `获取任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `获取任务超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -1790,15 +2515,22 @@ server.tool(
   '更新飞书任务。可修改标题、描述、截止日期等。',
   {
     task_id: z.string().describe('任务 GUID'),
-    task: z.object({
-      summary: z.string().optional().describe('新标题'),
-      description: z.string().optional().describe('新描述'),
-      due: z.object({
-        timestamp: z.string(),
-        is_all_day: z.boolean().optional(),
-      }).optional().describe('新截止日期'),
-    }).describe('要更新的字段'),
-    update_fields: z.array(z.string()).describe('指定更新的字段名，如 ["summary", "description", "due"]'),
+    task: z
+      .object({
+        summary: z.string().optional().describe('新标题'),
+        description: z.string().optional().describe('新描述'),
+        due: z
+          .object({
+            timestamp: z.string(),
+            is_all_day: z.boolean().optional(),
+          })
+          .optional()
+          .describe('新截止日期'),
+      })
+      .describe('要更新的字段'),
+    update_fields: z
+      .array(z.string())
+      .describe('指定更新的字段名，如 ["summary", "description", "due"]'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -1815,10 +2547,23 @@ server.tool(
       if (result.success) {
         return { content: [{ type: 'text' as const, text: `任务更新成功!` }] };
       } else {
-        return { content: [{ type: 'text' as const, text: `更新任务失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            { type: 'text' as const, text: `更新任务失败: ${result.error}` },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `更新任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `更新任务超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -1842,10 +2587,23 @@ server.tool(
       if (result.success) {
         return { content: [{ type: 'text' as const, text: `任务已完成!` }] };
       } else {
-        return { content: [{ type: 'text' as const, text: `完成任务失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            { type: 'text' as const, text: `完成任务失败: ${result.error}` },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `完成任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `完成任务超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -1867,12 +2625,27 @@ server.tool(
     try {
       const result = await waitForFeishuResult(requestId);
       if (result.success) {
-        return { content: [{ type: 'text' as const, text: `任务已重新打开!` }] };
+        return {
+          content: [{ type: 'text' as const, text: `任务已重新打开!` }],
+        };
       } else {
-        return { content: [{ type: 'text' as const, text: `重开任务失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            { type: 'text' as const, text: `重开任务失败: ${result.error}` },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `重开任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `重开任务超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -1883,13 +2656,22 @@ server.tool(
   {
     query: z.string().optional().describe('搜索关键词'),
     creator_ids: z.array(z.string()).optional().describe('创建者 open_id 列表'),
-    assignee_ids: z.array(z.string()).optional().describe('执行人 open_id 列表'),
-    follower_ids: z.array(z.string()).optional().describe('关注者 open_id 列表'),
+    assignee_ids: z
+      .array(z.string())
+      .optional()
+      .describe('执行人 open_id 列表'),
+    follower_ids: z
+      .array(z.string())
+      .optional()
+      .describe('关注者 open_id 列表'),
     is_completed: z.boolean().optional().describe('是否已完成'),
-    due_time: z.object({
-      start: z.string().optional(),
-      end: z.string().optional(),
-    }).optional().describe('截止日期范围'),
+    due_time: z
+      .object({
+        start: z.string().optional(),
+        end: z.string().optional(),
+      })
+      .optional()
+      .describe('截止日期范围'),
     page_size: z.number().optional().describe('每页数量，默认 20'),
     page_token: z.string().optional().describe('分页 token'),
   },
@@ -1906,15 +2688,36 @@ server.tool(
       if (result.success) {
         const tasks = result.tasks || [];
         const total = result.total || tasks.length;
-        const lines = tasks.map((t: any, i: number) =>
-          `${i + 1}. [${t.id || t.guid}] ${t.summary || t.title} (完成: ${t.complete_time ? '是' : '否'})`
+        const lines = tasks.map(
+          (t: any, i: number) =>
+            `${i + 1}. [${t.id || t.guid}] ${t.summary || t.title} (完成: ${t.complete_time ? '是' : '否'})`,
         );
-        return { content: [{ type: 'text' as const, text: `搜索到 ${total} 个任务:\n${lines.join('\n') || '(无结果)'}` }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `搜索到 ${total} 个任务:\n${lines.join('\n') || '(无结果)'}`,
+            },
+          ],
+        };
       } else {
-        return { content: [{ type: 'text' as const, text: `搜索任务失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            { type: 'text' as const, text: `搜索任务失败: ${result.error}` },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `搜索任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `搜索任务超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -1940,15 +2743,39 @@ server.tool(
       if (result.success) {
         const tasks = result.tasks || [];
         const total = result.total || tasks.length;
-        const lines = tasks.map((t: any, i: number) =>
-          `${i + 1}. [${t.id || t.guid}] ${t.summary || t.title} (完成: ${t.complete_time ? '是' : '否'})`
+        const lines = tasks.map(
+          (t: any, i: number) =>
+            `${i + 1}. [${t.id || t.guid}] ${t.summary || t.title} (完成: ${t.complete_time ? '是' : '否'})`,
         );
-        return { content: [{ type: 'text' as const, text: `共 ${total} 个任务:\n${lines.join('\n') || '(无任务)'}` }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `共 ${total} 个任务:\n${lines.join('\n') || '(无任务)'}`,
+            },
+          ],
+        };
       } else {
-        return { content: [{ type: 'text' as const, text: `获取我的任务失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `获取我的任务失败: ${result.error}`,
+            },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `获取我的任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `获取我的任务超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -1973,15 +2800,39 @@ server.tool(
       if (result.success) {
         const tasks = result.tasks || [];
         const total = result.total || tasks.length;
-        const lines = tasks.map((t: any, i: number) =>
-          `${i + 1}. [${t.id || t.guid}] ${t.summary || t.title} (完成: ${t.complete_time ? '是' : '否'})`
+        const lines = tasks.map(
+          (t: any, i: number) =>
+            `${i + 1}. [${t.id || t.guid}] ${t.summary || t.title} (完成: ${t.complete_time ? '是' : '否'})`,
         );
-        return { content: [{ type: 'text' as const, text: `共 ${total} 个相关任务:\n${lines.join('\n') || '(无任务)'}` }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `共 ${total} 个相关任务:\n${lines.join('\n') || '(无任务)'}`,
+            },
+          ],
+        };
       } else {
-        return { content: [{ type: 'text' as const, text: `获取相关任务失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `获取相关任务失败: ${result.error}`,
+            },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `获取相关任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `获取相关任务超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -1991,11 +2842,17 @@ server.tool(
   '给飞书任务添加成员（执行人或关注者）。',
   {
     task_id: z.string().describe('任务 GUID'),
-    members: z.array(z.object({
-      id: z.string().describe('用户 open_id'),
-      role: z.enum(['assignee', 'follower']).describe('角色：assignee=执行人, follower=关注者'),
-      type: z.string().describe('类型，通常为 user'),
-    })).describe('成员列表'),
+    members: z
+      .array(
+        z.object({
+          id: z.string().describe('用户 open_id'),
+          role: z
+            .enum(['assignee', 'follower'])
+            .describe('角色：assignee=执行人, follower=关注者'),
+          type: z.string().describe('类型，通常为 user'),
+        }),
+      )
+      .describe('成员列表'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -2011,10 +2868,23 @@ server.tool(
       if (result.success) {
         return { content: [{ type: 'text' as const, text: `成员添加成功!` }] };
       } else {
-        return { content: [{ type: 'text' as const, text: `添加成员失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            { type: 'text' as const, text: `添加成员失败: ${result.error}` },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `添加成员超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `添加成员超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -2024,11 +2894,15 @@ server.tool(
   '移除飞书任务的成员。',
   {
     task_id: z.string().describe('任务 GUID'),
-    members: z.array(z.object({
-      id: z.string().describe('用户 open_id'),
-      role: z.string().describe('角色'),
-      type: z.string().describe('类型'),
-    })).describe('要移除的成员列表'),
+    members: z
+      .array(
+        z.object({
+          id: z.string().describe('用户 open_id'),
+          role: z.string().describe('角色'),
+          type: z.string().describe('类型'),
+        }),
+      )
+      .describe('要移除的成员列表'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -2044,10 +2918,23 @@ server.tool(
       if (result.success) {
         return { content: [{ type: 'text' as const, text: `成员移除成功!` }] };
       } else {
-        return { content: [{ type: 'text' as const, text: `移除成员失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            { type: 'text' as const, text: `移除成员失败: ${result.error}` },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `移除成员超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `移除成员超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -2057,11 +2944,21 @@ server.tool(
   '给飞书任务添加提醒。',
   {
     task_id: z.string().describe('任务 GUID'),
-    reminders: z.array(z.object({
-      relative_fire_minute: z.number().optional().describe('截止前多少分钟提醒'),
-      absolute_time: z.string().optional().describe('绝对时间（毫秒时间戳）'),
-      timezone: z.string().optional().describe('时区'),
-    })).describe('提醒列表'),
+    reminders: z
+      .array(
+        z.object({
+          relative_fire_minute: z
+            .number()
+            .optional()
+            .describe('截止前多少分钟提醒'),
+          absolute_time: z
+            .string()
+            .optional()
+            .describe('绝对时间（毫秒时间戳）'),
+          timezone: z.string().optional().describe('时区'),
+        }),
+      )
+      .describe('提醒列表'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -2077,10 +2974,23 @@ server.tool(
       if (result.success) {
         return { content: [{ type: 'text' as const, text: `提醒添加成功!` }] };
       } else {
-        return { content: [{ type: 'text' as const, text: `添加提醒失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            { type: 'text' as const, text: `添加提醒失败: ${result.error}` },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `添加提醒超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `添加提醒超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -2106,10 +3016,23 @@ server.tool(
       if (result.success) {
         return { content: [{ type: 'text' as const, text: `提醒移除成功!` }] };
       } else {
-        return { content: [{ type: 'text' as const, text: `移除提醒失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            { type: 'text' as const, text: `移除提醒失败: ${result.error}` },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `移除提醒超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `移除提醒超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -2119,7 +3042,10 @@ server.tool(
   '设置飞书任务的父任务（建立子任务关系）。',
   {
     task_id: z.string().describe('子任务 GUID'),
-    ancestor_task_id: z.string().optional().describe('父任务 GUID，不传则取消父子关系'),
+    ancestor_task_id: z
+      .string()
+      .optional()
+      .describe('父任务 GUID，不传则取消父子关系'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -2133,12 +3059,27 @@ server.tool(
     try {
       const result = await waitForFeishuResult(requestId);
       if (result.success) {
-        return { content: [{ type: 'text' as const, text: `父子任务关系设置成功!` }] };
+        return {
+          content: [{ type: 'text' as const, text: `父子任务关系设置成功!` }],
+        };
       } else {
-        return { content: [{ type: 'text' as const, text: `设置父任务失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            { type: 'text' as const, text: `设置父任务失败: ${result.error}` },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `设置父任务超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `设置父任务超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -2164,10 +3105,23 @@ server.tool(
       if (result.success) {
         return { content: [{ type: 'text' as const, text: `评论添加成功!` }] };
       } else {
-        return { content: [{ type: 'text' as const, text: `添加评论失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            { type: 'text' as const, text: `添加评论失败: ${result.error}` },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `添加评论超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `添加评论超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -2177,7 +3131,9 @@ server.tool(
   '订阅飞书任务变更事件。',
   {
     task_id: z.string().describe('任务 GUID'),
-    event_types: z.array(z.string()).describe('事件类型列表，如 ["task:updated", "task:completed"]'),
+    event_types: z
+      .array(z.string())
+      .describe('事件类型列表，如 ["task:updated", "task:completed"]'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -2193,10 +3149,23 @@ server.tool(
       if (result.success) {
         return { content: [{ type: 'text' as const, text: `事件订阅成功!` }] };
       } else {
-        return { content: [{ type: 'text' as const, text: `订阅事件失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            { type: 'text' as const, text: `订阅事件失败: ${result.error}` },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `订阅事件超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `订阅事件超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -2220,12 +3189,27 @@ server.tool(
     try {
       const result = await waitForFeishuResult(requestId);
       if (result.success) {
-        return { content: [{ type: 'text' as const, text: `任务已添加到列表!` }] };
+        return {
+          content: [{ type: 'text' as const, text: `任务已添加到列表!` }],
+        };
       } else {
-        return { content: [{ type: 'text' as const, text: `添加到列表失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            { type: 'text' as const, text: `添加到列表失败: ${result.error}` },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `添加到列表超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `添加到列表超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -2235,10 +3219,15 @@ server.tool(
   '创建飞书任务列表。',
   {
     name: z.string().describe('列表名称'),
-    members: z.array(z.object({
-      id: z.string().describe('用户 open_id'),
-      type: z.string().describe('类型，通常为 user'),
-    })).optional().describe('成员列表'),
+    members: z
+      .array(
+        z.object({
+          id: z.string().describe('用户 open_id'),
+          type: z.string().describe('类型，通常为 user'),
+        }),
+      )
+      .optional()
+      .describe('成员列表'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -2252,12 +3241,35 @@ server.tool(
       const result = await waitForFeishuResult(requestId);
       if (result.success) {
         const tasklist = result.tasklist || result;
-        return { content: [{ type: 'text' as const, text: `任务列表创建成功!\n\n名称: ${tasklist.name || args.name}\n列表 ID: ${tasklist.guid || tasklist.id}` }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `任务列表创建成功!\n\n名称: ${tasklist.name || args.name}\n列表 ID: ${tasklist.guid || tasklist.id}`,
+            },
+          ],
+        };
       } else {
-        return { content: [{ type: 'text' as const, text: `创建任务列表失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `创建任务列表失败: ${result.error}`,
+            },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `创建任务列表超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `创建任务列表超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -2279,12 +3291,35 @@ server.tool(
     try {
       const result = await waitForFeishuResult(requestId);
       if (result.success) {
-        return { content: [{ type: 'text' as const, text: JSON.stringify(result.tasklist || result, null, 2) }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(result.tasklist || result, null, 2),
+            },
+          ],
+        };
       } else {
-        return { content: [{ type: 'text' as const, text: `获取任务列表失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `获取任务列表失败: ${result.error}`,
+            },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `获取任务列表超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `获取任务列表超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -2309,15 +3344,38 @@ server.tool(
       const result = await waitForFeishuResult(requestId);
       if (result.success) {
         const items = result.tasklists || [];
-        const lines = items.map((t: any, i: number) =>
-          `${i + 1}. [${t.guid || t.id}] ${t.name}`
+        const lines = items.map(
+          (t: any, i: number) => `${i + 1}. [${t.guid || t.id}] ${t.name}`,
         );
-        return { content: [{ type: 'text' as const, text: `搜索到 ${items.length} 个任务列表:\n${lines.join('\n') || '(无结果)'}` }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `搜索到 ${items.length} 个任务列表:\n${lines.join('\n') || '(无结果)'}`,
+            },
+          ],
+        };
       } else {
-        return { content: [{ type: 'text' as const, text: `搜索任务列表失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `搜索任务列表失败: ${result.error}`,
+            },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `搜索任务列表超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `搜索任务列表超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -2327,11 +3385,18 @@ server.tool(
   '给飞书任务列表添加成员。',
   {
     tasklist_id: z.string().describe('任务列表 GUID'),
-    members: z.array(z.object({
-      id: z.string().describe('用户 open_id'),
-      type: z.string().describe('类型，通常为 user'),
-      role: z.enum(['editor', 'viewer']).optional().describe('角色：editor 或 viewer'),
-    })).describe('成员列表'),
+    members: z
+      .array(
+        z.object({
+          id: z.string().describe('用户 open_id'),
+          type: z.string().describe('类型，通常为 user'),
+          role: z
+            .enum(['editor', 'viewer'])
+            .optional()
+            .describe('角色：editor 或 viewer'),
+        }),
+      )
+      .describe('成员列表'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -2345,12 +3410,30 @@ server.tool(
     try {
       const result = await waitForFeishuResult(requestId);
       if (result.success) {
-        return { content: [{ type: 'text' as const, text: `列表成员添加成功!` }] };
+        return {
+          content: [{ type: 'text' as const, text: `列表成员添加成功!` }],
+        };
       } else {
-        return { content: [{ type: 'text' as const, text: `添加列表成员失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `添加列表成员失败: ${result.error}`,
+            },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `添加列表成员超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `添加列表成员超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -2360,10 +3443,14 @@ server.tool(
   '移除飞书任务列表的成员。',
   {
     tasklist_id: z.string().describe('任务列表 GUID'),
-    members: z.array(z.object({
-      id: z.string().describe('用户 open_id'),
-      type: z.string().describe('类型，通常为 user'),
-    })).describe('要移除的成员列表'),
+    members: z
+      .array(
+        z.object({
+          id: z.string().describe('用户 open_id'),
+          type: z.string().describe('类型，通常为 user'),
+        }),
+      )
+      .describe('要移除的成员列表'),
   },
   async (args) => {
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
@@ -2377,12 +3464,30 @@ server.tool(
     try {
       const result = await waitForFeishuResult(requestId);
       if (result.success) {
-        return { content: [{ type: 'text' as const, text: `列表成员移除成功!` }] };
+        return {
+          content: [{ type: 'text' as const, text: `列表成员移除成功!` }],
+        };
       } else {
-        return { content: [{ type: 'text' as const, text: `移除列表成员失败: ${result.error}` }], isError: true };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `移除列表成员失败: ${result.error}`,
+            },
+          ],
+          isError: true,
+        };
       }
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: `移除列表成员超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `移除列表成员超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
