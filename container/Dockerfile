@@ -98,6 +98,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
+# Make globally-installed npm packages require()able from workspace
+ENV NODE_PATH=/usr/local/lib/node_modules
+
 # Install agent-browser and claude-code globally
 RUN --mount=type=cache,target=/root/.npm \
     set -eux; \
