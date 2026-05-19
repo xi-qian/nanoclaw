@@ -2469,6 +2469,7 @@ server.tool(
     user_id: z.string().describe('审批人 open_id（从 get_instance 的 task_list 中获取）'),
     task_id: z.string().describe('审批任务 ID'),
     comment: z.string().optional().describe('拒绝理由（可选）'),
+    form: z.string().optional().describe('表单数据 JSON 字符串（可选）'),
   },
   async (args) => {
     const params: Record<string, any> = {
@@ -2479,6 +2480,7 @@ server.tool(
     };
     if (args.comment) params.comment = args.comment;
 
+    if (args.form) params.form = args.form;
     const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
       type: 'approval_reject',
       params,
@@ -2549,7 +2551,8 @@ server.tool(
     parent_comment_id: z.string().optional().describe('父评论 ID（可选，用于回复评论）'),
     at_info_list: z.array(z.object({
       user_id: z.string().describe('被 @ 的用户 open_id'),
-      at_type: z.number().optional().describe('@ 类型：1=@用户, 2=@所有人'),
+      name: z.string().describe("被 @ 用户的姓名"),
+      offset: z.string().describe("被 @ 用户在评论中的位置偏移，从 0 开始"),
     })).optional().describe('@ 信息列表（可选）'),
   },
   async (args) => {
@@ -2582,16 +2585,23 @@ server.tool(
 
 server.tool(
   'feishu_approval_query',
-  '查询飞书审批任务列表。支持按分组主题查询：待办、已办、已发起、知会等。',
+  '查询飞书审批实例列表。支持按审批定义Code、状态、发起人、时间范围等条件筛选。',
   {
-    topic: z.enum(['1', '2', '3', '17', '18']).describe('任务分组主题：1=待办, 2=已办, 3=已发起, 17=未读知会, 18=已读知会'),
-    definition_code: z.string().optional().describe('审批定义 Code（可选，用于筛选特定审批类型）'),
+    approval_code: z.string().optional().describe('审批定义 Code（用于筛选特定审批类型）'),
+    instance_status: z.enum(['PENDING', 'RECALL', 'REJECT', 'DELETED', 'APPROVED', 'ALL']).optional().describe('审批实例状态，ALL 表示所有状态'),
+    user_id: z.string().optional().describe('发起审批的用户 open_id'),
+    start_time: z.number().optional().describe('审批实例开始时间（毫秒时间戳），需与 end_time 同时设置'),
+    end_time: z.number().optional().describe('审批实例结束时间（毫秒时间戳），查询跨度不得大于 30 天'),
     page_size: z.number().optional().describe('每页数量（默认 20）'),
     page_token: z.string().optional().describe('分页 token（用于获取下一页）'),
   },
   async (args) => {
-    const params: Record<string, any> = { topic: args.topic };
-    if (args.definition_code) params.definition_code = args.definition_code;
+    const params: Record<string, any> = {};
+    if (args.approval_code) params.approval_code = args.approval_code;
+    if (args.instance_status) params.instance_status = args.instance_status;
+    if (args.user_id) params.user_id = args.user_id;
+    if (args.start_time) params.start_time = args.start_time;
+    if (args.end_time) params.end_time = args.end_time;
     if (args.page_size) params.page_size = args.page_size;
     if (args.page_token) params.page_token = args.page_token;
 
@@ -2604,28 +2614,29 @@ server.tool(
 
     try {
       const result = await waitForFeishuResult(requestId);
-      if (result.success || result.tasks) {
-        const tasks = result.tasks || [];
-        const topicNames: Record<string, string> = {
-          '1': '待办', '2': '已办', '3': '已发起', '17': '未读知会', '18': '已读知会'
-        };
+      if (result.success || result.instance_list) {
+        const instances = result.instance_list || [];
         const statusNames: Record<string, string> = {
-          '1': '待办', '2': '已办', '17': '未读', '18': '已读', '33': '处理中', '34': '撤回'
+          PENDING: '待审批', APPROVED: '已通过', REJECTED: '已拒绝',
+          CANCELED: '已撤回', DELETED: '已删除', RECALL: '已撤回',
         };
 
-        if (tasks.length === 0) {
-          return { content: [{ type: 'text' as const, text: `${topicNames[args.topic]}列表中没有审批任务。` }] };
+        if (instances.length === 0) {
+          return { content: [{ type: 'text' as const, text: '没有找到匹配的审批实例。' }] };
         }
 
-        const lines = tasks.map((t: any, i: number) => {
-          const status = statusNames[t.status] || t.status;
-          const title = t.title || t.definition_name || '审批';
-          const initiator = t.initiator_name || t.initiator || '未知';
-          return `${i + 1}. [${t.task_id}] ${title} - ${status} (发起人: ${initiator})`;
+        const lines = instances.map((inst: any, i: number) => {
+          const approvalName = inst.approval?.name || inst.approval_name || '审批';
+          const instanceCode = inst.instance?.code || inst.instance_code || '';
+          const status = (inst.instance?.status || inst.status || 'UNKNOWN').toUpperCase();
+          const statusText = statusNames[status] || status;
+          const startTime = inst.instance?.start_time || inst.start_time || 0;
+          const dateStr = startTime ? new Date(Number(startTime)).toLocaleDateString('zh-CN') : '';
+          return `${i + 1}. [${instanceCode}] ${approvalName} - ${statusText} (${dateStr})`;
         });
 
         const hasMore = result.has_more ? `\n\n还有更多，使用 page_token: ${result.page_token}` : '';
-        return { content: [{ type: 'text' as const, text: `${topicNames[args.topic]}列表 (${tasks.length} 条):\n${lines.join('\n')}${hasMore}` }] };
+        return { content: [{ type: 'text' as const, text: `审批实例列表 (${instances.length} 条):\n${lines.join('\n')}${hasMore}` }] };
       } else {
         return { content: [{ type: 'text' as const, text: `查询审批失败: ${result.error || '未知错误'}` }], isError: true };
       }

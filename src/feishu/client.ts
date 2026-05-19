@@ -2860,10 +2860,10 @@ export class FeishuClient {
       );
     }
     log.info(
-      { bot_open_id: response.data?.bot?.open_id },
+      { bot_open_id: response.bot?.open_id },
       'Bot info retrieved',
     );
-    return response.data?.bot;
+    return response.bot;
   }
 
   // ---------------------------------------------------------------------------
@@ -3028,7 +3028,11 @@ export class FeishuClient {
       url: '/open-apis/approval/v4/instances/query',
       method: 'POST',
       params: { user_id_type: 'open_id' },
-      data: params,
+      data: (({ start_time, end_time, ...rest }) => ({
+        ...rest,
+        ...(start_time ? { instance_start_time_from: String(start_time) } : {}),
+        ...(end_time ? { instance_start_time_to: String(end_time) } : {}),
+      }))(params),
     });
     if (response.code !== 0) {
       throw new Error(
@@ -3038,7 +3042,7 @@ export class FeishuClient {
     log.info(
       {
         approval_code: params.approval_code,
-        count: response.data?.instances?.length,
+        count: response.data?.instance_list?.length,
       },
       'Approval instances queried',
     );
