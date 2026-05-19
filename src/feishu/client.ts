@@ -19,6 +19,10 @@ import type {
 } from './types.js';
 import type { FeishuEvent } from './types.js';
 import { larkLogger } from './logger.js';
+import {
+  handleWebhookTaskRequest,
+  type WebhookTaskDeps,
+} from '../webhook-tasks.js';
 
 const log = larkLogger('client');
 
@@ -132,10 +136,16 @@ export class FeishuClient {
   private brand: LarkBrand;
   private credentials: FeishuCredentials;
   private webhookServer: http.Server | null = null;
+  private webhookTaskDeps: WebhookTaskDeps | null = null;
   private eventHandlers: Map<string, EventHandler[]> = new Map();
 
   // 速率限制延迟（毫秒）- 飞书文档 API 每秒最多 5 次请求
   private readonly RATE_LIMIT_DELAY = 250;
+
+  /** Set dependencies for webhook task triggering */
+  setWebhookTaskDeps(deps: WebhookTaskDeps): void {
+    this.webhookTaskDeps = deps;
+  }
 
   constructor(credentials: FeishuCredentials, brand: LarkBrand = 'feishu') {
     this.credentials = credentials;
@@ -3231,6 +3241,11 @@ export class FeishuClient {
   ): void {
     // Only accept POST to the configured path
     if (req.method !== 'POST' || req.url !== path) {
+      // Delegate to webhook task handler if available
+      if (this.webhookTaskDeps && req.method === 'POST') {
+        handleWebhookTaskRequest(req, res, this.webhookTaskDeps);
+        return;
+      }
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('Not Found');
       return;
