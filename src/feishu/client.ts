@@ -2835,6 +2835,29 @@ export class FeishuClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Bot Info Operations
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 获取 Bot 信息
+   * GET /open-apis/bot/v3/info
+   * 返回 Bot 的 open_id，用于审批评论等操作
+   */
+  async getBotInfo(): Promise<{ open_id: string; app_id: string }> {
+    const response = await this.client.request({
+      url: '/open-apis/bot/v3/info',
+      method: 'GET',
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to get bot info: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info({ bot_open_id: response.data?.bot?.open_id }, 'Bot info retrieved');
+    return response.data?.bot;
+  }
+
+  // ---------------------------------------------------------------------------
   // File Upload and Send Operations
   // ---------------------------------------------------------------------------
 
