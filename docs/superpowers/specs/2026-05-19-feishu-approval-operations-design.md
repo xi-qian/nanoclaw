@@ -27,15 +27,19 @@
 
 ## 架构设计
 
-遵循现有 IPC 架构模式：
-- Container Agent 写请求到 IPC 目录
-- Host 进程读取并处理
-- 结果写回 IPC 目录
+遵循现有 MCP + IPC 架构模式：
+
+1. **MCP 工具定义**（`ipc-mcp-stdio.ts`）- 定义工具，写入 IPC 请求，等待结果
+2. **Host IPC 处理**（`src/ipc.ts`）- 处理请求，调用 FeishuChannel
+3. **FeishuChannel**（`src/channels/feishu.ts`）- 代理方法
+4. **FeishuClient**（`src/feishu/client.ts`）- 飞书 API 调用
+5. **Container Skill**（`container/skills/feishu-approval/SKILL.md`）- 文档
 
 ### 文件变更
 
 | 文件 | 变更 |
 |-----|-----|-----|
+| `container/agent-runner/src/ipc-mcp-stdio.ts` | 添加 MCP 工具定义 |
 | `src/feishu/client.ts` | 添加审批 API 方法和 getBotInfo |
 | `src/channels/feishu.ts` | 添加代理方法 |
 | `src/ipc.ts` | 添加 IPC case 处理 |
@@ -108,18 +112,60 @@ POST /open-apis/approval/v4/instances/{instance_id}/comments
 
 返回：`{ comment_id: string }`
 
-## IPC 接口
+## MCP 工具与 Skill 文档的分工
 
-### 请求类型
+| 层级 | 文件 | 作用 |
+|-----|-----|-----|
+| **代码实现** | `ipc-mcp-stdio.ts` | 定义工具参数 schema、IPC 通信逻辑、返回结果格式化 |
+| **使用文档** | `SKILL.md` | 描述触发条件、使用场景、参数示例、错误处理 |
 
-| type | 说明 | 主要参数 |
+**类比**：
+- MCP 工具定义 = API 实现（定义接口、处理请求）
+- Skill 文档 = API 使用手册（告诉 Agent 如何调用）
+
+**Agent 工作流程**：
+1. 从 Skill 文档学习何时使用该工具（触发条件）
+2. 从 Skill 文档获取参数格式和示例
+3. 调用 MCP 工具
+4. 根据 Skill 文档的错误说明处理返回结果
+
+在 `ipc-mcp-stdio.ts` 中添加以下工具：
+
+| MCP 工具 | IPC type | 说明 |
 |-----|-----|-----|-----|
-| `approval_get_instance` | 获取实例详情 | `instance_code` |
-| `approval_approve` | 同意审批 | `approval_code`, `instance_code`, `user_id`, `task_id`, `comment?` |
-| `approval_reject` | 拒绝审批 | 同 approve |
-| `approval_transfer` | 转交审批 | + `transfer_user_id` |
-| `approval_comment` | 创建评论 | `instance_id`, `content`, `parent_comment_id?` |
-| `approval_query` | 查询实例列表 | 筛选条件 |
+| `feishu_approval_get_instance` | `approval_get_instance` | 获取实例详情 |
+| `feishu_approval_approve` | `approval_approve` | 同意审批 |
+| `feishu_approval_reject` | `approval_reject` | 拒绝审批 |
+| `feishu_approval_transfer` | `approval_transfer` | 转交审批 |
+| `feishu_approval_comment` | `approval_comment` | 创建评论 |
+| `feishu_approval_query` | `approval_query` | 查询实例列表 |
+
+### 工具参数
+
+**feishu_approval_get_instance**
+- `instance_code`: 审批实例 Code
+
+**feishu_approval_approve**
+- `approval_code`: 审批定义 Code
+- `instance_code`: 审批实例 Code
+- `user_id`: 审批人 open_id
+- `task_id`: 审批任务 ID
+- `comment`: 审批意见（可选）
+
+**feishu_approval_reject**
+- 同 approve
+
+**feishu_approval_transfer**
+- 同 approve
+- `transfer_user_id`: 被转交人 open_id
+
+**feishu_approval_comment**
+- `instance_id`: 审批实例 Code
+- `content`: 评论内容（JSON 字符串格式）
+- `parent_comment_id`: 父评论 ID（可选，用于回复）
+
+**feishu_approval_query**
+- 筛选条件参数（instance_status, user_id 等）
 
 ### 评论操作自动注入 Bot 身份
 
@@ -167,5 +213,6 @@ Host 端处理 `approval_comment` 时：
 
 1. FeishuClient 添加 getBotInfo 和审批 API 方法
 2. FeishuChannel 添加代理方法
-3. IPC 添加处理逻辑
-4. 创建 Container Skill 文档
+3. IPC 添加处理逻辑（src/ipc.ts）
+4. MCP 工具定义（ipc-mcp-stdio.ts）
+5. 创建 Container Skill 文档
