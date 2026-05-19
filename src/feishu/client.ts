@@ -3036,7 +3036,10 @@ export class FeishuClient {
       );
     }
     log.info(
-      { approval_code: params.approval_code, count: response.data?.instances?.length },
+      {
+        approval_code: params.approval_code,
+        count: response.data?.instances?.length,
+      },
       'Approval instances queried',
     );
     return response.data;
