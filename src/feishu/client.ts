@@ -2886,7 +2886,7 @@ export class FeishuClient {
       );
     }
     log.info({ instanceCode }, 'Approval instance retrieved');
-    return response.data?.instance;
+    return response.data;
   }
 
   /**

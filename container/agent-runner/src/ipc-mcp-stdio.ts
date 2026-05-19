@@ -2421,16 +2421,20 @@ server.tool(
 
 server.tool(
   'feishu_approval_approve',
-  '同意飞书审批任务。需要提供审批实例 Code 和任务 ID。可附带审批意见。',
+  '同意飞书审批任务。需先调用 feishu_approval_get_instance 获取 approval_code 和审批人 user_id。',
   {
+    approval_code: z.string().describe('审批定义 Code（从 get_instance 返回结果中获取）'),
     instance_code: z.string().describe('审批实例 Code'),
+    user_id: z.string().describe('审批人 open_id（从 get_instance 的 task_list 中获取）'),
     task_id: z.string().describe('审批任务 ID'),
     comment: z.string().optional().describe('审批意见（可选）'),
-    form: z.string().optional().describe('表单数据 JSON 字符串（可选，用于修改表单）'),
+    form: z.string().optional().describe('表单数据 JSON 字符串（可选）'),
   },
   async (args) => {
     const params: Record<string, any> = {
+      approval_code: args.approval_code,
       instance_code: args.instance_code,
+      user_id: args.user_id,
       task_id: args.task_id,
     };
     if (args.comment) params.comment = args.comment;
@@ -2458,15 +2462,19 @@ server.tool(
 
 server.tool(
   'feishu_approval_reject',
-  '拒绝飞书审批任务。需要提供审批实例 Code 和任务 ID。可附带拒绝理由。',
+  '拒绝飞书审批任务。需先调用 feishu_approval_get_instance 获取 approval_code 和审批人 user_id。',
   {
+    approval_code: z.string().describe('审批定义 Code（从 get_instance 返回结果中获取）'),
     instance_code: z.string().describe('审批实例 Code'),
+    user_id: z.string().describe('审批人 open_id（从 get_instance 的 task_list 中获取）'),
     task_id: z.string().describe('审批任务 ID'),
     comment: z.string().optional().describe('拒绝理由（可选）'),
   },
   async (args) => {
     const params: Record<string, any> = {
+      approval_code: args.approval_code,
       instance_code: args.instance_code,
+      user_id: args.user_id,
       task_id: args.task_id,
     };
     if (args.comment) params.comment = args.comment;
@@ -2493,16 +2501,20 @@ server.tool(
 
 server.tool(
   'feishu_approval_transfer',
-  '转交飞书审批任务给其他人。需要提供审批实例 Code、任务 ID 和被转交人的用户 ID。',
+  '转交飞书审批任务给其他人。需先调用 feishu_approval_get_instance 获取 approval_code 和审批人 user_id。',
   {
+    approval_code: z.string().describe('审批定义 Code（从 get_instance 返回结果中获取）'),
     instance_code: z.string().describe('审批实例 Code'),
+    user_id: z.string().describe('当前审批人 open_id（从 get_instance 的 task_list 中获取）'),
     task_id: z.string().describe('审批任务 ID'),
     transfer_user_id: z.string().describe('被转交人的用户 open_id（如 ou_xxx）'),
     comment: z.string().optional().describe('转交说明（可选）'),
   },
   async (args) => {
     const params: Record<string, any> = {
+      approval_code: args.approval_code,
       instance_code: args.instance_code,
+      user_id: args.user_id,
       task_id: args.task_id,
       transfer_user_id: args.transfer_user_id,
     };

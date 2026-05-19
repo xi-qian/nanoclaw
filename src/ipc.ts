@@ -601,13 +601,14 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   case 'approval_comment': {
                     // 自动注入 Bot open_id
                     const botInfo = await feishuChannel.getBotInfo();
-                    const commentResult = await feishuChannel.createApprovalComment({
-                      instance_id: request.instance_id,
-                      user_id: botInfo.open_id,
-                      content: request.content,
-                      parent_comment_id: request.parent_comment_id,
-                      at_info_list: request.at_info_list,
-                    });
+                    const commentResult =
+                      await feishuChannel.createApprovalComment({
+                        instance_id: request.instance_id,
+                        user_id: botInfo.open_id,
+                        content: request.content,
+                        parent_comment_id: request.parent_comment_id,
+                        at_info_list: request.at_info_list,
+                      });
                     result = { comment_id: commentResult.comment_id };
                     break;
                   }
