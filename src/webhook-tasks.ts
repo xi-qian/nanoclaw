@@ -110,9 +110,7 @@ export function handleWebhookTaskRequest(
 
   if (!task) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({ ok: false, error: `Task not found: ${urlPath}` }),
-    );
+    res.end(JSON.stringify({ ok: false, error: `Task not found: ${urlPath}` }));
     return;
   }
 
@@ -177,9 +175,7 @@ export function handleWebhookTaskRequest(
     createTask(scheduledTask);
     log.info({ taskId, taskName: task.name, prompt }, 'Webhook task created');
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({ ok: true, taskId, message: 'Task triggered' }),
-    );
+    res.end(JSON.stringify({ ok: true, taskId, message: 'Task triggered' }));
   } catch (err) {
     log.error({ err, taskName: task.name }, 'Failed to create webhook task');
     res.writeHead(500, { 'Content-Type': 'application/json' });

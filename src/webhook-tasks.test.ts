@@ -50,9 +50,7 @@ describe('webhook-tasks', () => {
     });
 
     it('returns undefined for no match', () => {
-      expect(
-        matchWebhookTask('/webhook/task/unknown', tasks),
-      ).toBeUndefined();
+      expect(matchWebhookTask('/webhook/task/unknown', tasks)).toBeUndefined();
     });
 
     it('returns undefined for empty tasks', () => {
