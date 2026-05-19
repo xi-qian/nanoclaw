@@ -893,6 +893,42 @@ export class FeishuChannel implements Channel {
     return await this.client.removeTasklistMembers(tasklistId, members);
   }
 
+  // ==================== 审批操作方法（供 Host IPC 调用） ====================
+
+  async getBotInfo(): Promise<{
+    open_id: string;
+    activate_status: number;
+    app_name: string;
+    avatar_url: string;
+    ip_white_list: string[];
+  }> {
+    return await this.client.getBotInfo();
+  }
+
+  async getApprovalInstance(instanceCode: string): Promise<any> {
+    return await this.client.getApprovalInstance(instanceCode);
+  }
+
+  async approveApprovalTask(params: any): Promise<void> {
+    return await this.client.approveApprovalTask(params);
+  }
+
+  async rejectApprovalTask(params: any): Promise<void> {
+    return await this.client.rejectApprovalTask(params);
+  }
+
+  async transferApprovalTask(params: any): Promise<void> {
+    return await this.client.transferApprovalTask(params);
+  }
+
+  async createApprovalComment(params: any): Promise<{ comment_id: string }> {
+    return await this.client.createApprovalComment(params);
+  }
+
+  async queryApprovalInstances(params: any): Promise<any> {
+    return await this.client.queryApprovalInstances(params);
+  }
+
   // ==================== 云文档权限操作方法 ====================
 
   async addCollaborator(

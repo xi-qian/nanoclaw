@@ -2387,6 +2387,265 @@ server.tool(
   },
 );
 
+// ==================== 飞书审批工具 ====================
+
+server.tool(
+  'feishu_approval_get_instance',
+  '获取飞书审批实例详情，包括审批状态、表单内容、审批任务列表、评论和操作记录。',
+  {
+    instance_code: z.string().describe('审批实例 Code（从审批任务或审批链接获取）'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'approval_get_instance',
+      instance_code: args.instance_code,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        const instance = result.instance || result;
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(instance, null, 2) }],
+        };
+      } else {
+        return { content: [{ type: 'text' as const, text: `获取审批实例失败: ${result.error}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `获取审批实例超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_approval_approve',
+  '同意飞书审批任务。需先调用 feishu_approval_get_instance 获取 approval_code 和审批人 user_id。',
+  {
+    approval_code: z.string().describe('审批定义 Code（从 get_instance 返回结果中获取）'),
+    instance_code: z.string().describe('审批实例 Code'),
+    user_id: z.string().describe('审批人 open_id（从 get_instance 的 task_list 中获取）'),
+    task_id: z.string().describe('审批任务 ID'),
+    comment: z.string().optional().describe('审批意见（可选）'),
+    form: z.string().optional().describe('表单数据 JSON 字符串（可选）'),
+  },
+  async (args) => {
+    const params: Record<string, any> = {
+      approval_code: args.approval_code,
+      instance_code: args.instance_code,
+      user_id: args.user_id,
+      task_id: args.task_id,
+    };
+    if (args.comment) params.comment = args.comment;
+    if (args.form) params.form = args.form;
+
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'approval_approve',
+      params,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.approved) {
+        return { content: [{ type: 'text' as const, text: `审批任务已同意!\n\n实例: ${args.instance_code}\n任务: ${args.task_id}` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `同意审批失败: ${result.error || '未知错误'}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `同意审批超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_approval_reject',
+  '拒绝飞书审批任务。需先调用 feishu_approval_get_instance 获取 approval_code 和审批人 user_id。',
+  {
+    approval_code: z.string().describe('审批定义 Code（从 get_instance 返回结果中获取）'),
+    instance_code: z.string().describe('审批实例 Code'),
+    user_id: z.string().describe('审批人 open_id（从 get_instance 的 task_list 中获取）'),
+    task_id: z.string().describe('审批任务 ID'),
+    comment: z.string().optional().describe('拒绝理由（可选）'),
+    form: z.string().optional().describe('表单数据 JSON 字符串（可选）'),
+  },
+  async (args) => {
+    const params: Record<string, any> = {
+      approval_code: args.approval_code,
+      instance_code: args.instance_code,
+      user_id: args.user_id,
+      task_id: args.task_id,
+    };
+    if (args.comment) params.comment = args.comment;
+
+    if (args.form) params.form = args.form;
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'approval_reject',
+      params,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.rejected) {
+        return { content: [{ type: 'text' as const, text: `审批任务已拒绝!\n\n实例: ${args.instance_code}\n任务: ${args.task_id}` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `拒绝审批失败: ${result.error || '未知错误'}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `拒绝审批超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_approval_transfer',
+  '转交飞书审批任务给其他人。需先调用 feishu_approval_get_instance 获取 approval_code 和审批人 user_id。',
+  {
+    approval_code: z.string().describe('审批定义 Code（从 get_instance 返回结果中获取）'),
+    instance_code: z.string().describe('审批实例 Code'),
+    user_id: z.string().describe('当前审批人 open_id（从 get_instance 的 task_list 中获取）'),
+    task_id: z.string().describe('审批任务 ID'),
+    transfer_user_id: z.string().describe('被转交人的用户 open_id（如 ou_xxx）'),
+    comment: z.string().optional().describe('转交说明（可选）'),
+  },
+  async (args) => {
+    const params: Record<string, any> = {
+      approval_code: args.approval_code,
+      instance_code: args.instance_code,
+      user_id: args.user_id,
+      task_id: args.task_id,
+      transfer_user_id: args.transfer_user_id,
+    };
+    if (args.comment) params.comment = args.comment;
+
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'approval_transfer',
+      params,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.transferred) {
+        return { content: [{ type: 'text' as const, text: `审批任务已转交!\n\n实例: ${args.instance_code}\n任务: ${args.task_id}\n转交给: ${args.transfer_user_id}` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `转交审批失败: ${result.error || '未知错误'}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `转交审批超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_approval_comment',
+  '给飞书审批实例添加评论。Bot 身份会自动注入，无需指定评论者。支持回复已有评论和 @其他用户。',
+  {
+    instance_id: z.string().describe('审批实例 ID（注意：使用 instance_id 而非 instance_code）'),
+    content: z.string().describe('评论内容'),
+    parent_comment_id: z.string().optional().describe('父评论 ID（可选，用于回复评论）'),
+    at_info_list: z.array(z.object({
+      user_id: z.string().describe('被 @ 的用户 open_id'),
+      name: z.string().describe("被 @ 用户的姓名"),
+      offset: z.string().describe("被 @ 用户在评论中的位置偏移，从 0 开始"),
+    })).optional().describe('@ 信息列表（可选）'),
+  },
+  async (args) => {
+    const data: Record<string, any> = {
+      instance_id: args.instance_id,
+      content: args.content,
+    };
+    if (args.parent_comment_id) data.parent_comment_id = args.parent_comment_id;
+    if (args.at_info_list) data.at_info_list = args.at_info_list;
+
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'approval_comment',
+      ...data,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.comment_id) {
+        return { content: [{ type: 'text' as const, text: `评论添加成功!\n\n评论 ID: ${result.comment_id}` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `添加评论失败: ${result.error || '未知错误'}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `添加评论超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'feishu_approval_query',
+  '查询飞书审批实例列表。支持按审批定义Code、状态、发起人、时间范围等条件筛选。',
+  {
+    approval_code: z.string().optional().describe('审批定义 Code（用于筛选特定审批类型）'),
+    instance_status: z.enum(['PENDING', 'RECALL', 'REJECT', 'DELETED', 'APPROVED', 'ALL']).optional().describe('审批实例状态，ALL 表示所有状态'),
+    user_id: z.string().optional().describe('发起审批的用户 open_id'),
+    start_time: z.number().optional().describe('审批实例开始时间（毫秒时间戳），需与 end_time 同时设置'),
+    end_time: z.number().optional().describe('审批实例结束时间（毫秒时间戳），查询跨度不得大于 30 天'),
+    page_size: z.number().optional().describe('每页数量（默认 20）'),
+    page_token: z.string().optional().describe('分页 token（用于获取下一页）'),
+  },
+  async (args) => {
+    const params: Record<string, any> = {};
+    if (args.approval_code) params.approval_code = args.approval_code;
+    if (args.instance_status) params.instance_status = args.instance_status;
+    if (args.user_id) params.user_id = args.user_id;
+    if (args.start_time) params.start_time = args.start_time;
+    if (args.end_time) params.end_time = args.end_time;
+    if (args.page_size) params.page_size = args.page_size;
+    if (args.page_token) params.page_token = args.page_token;
+
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'approval_query',
+      params,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success || result.instance_list) {
+        const instances = result.instance_list || [];
+        const statusNames: Record<string, string> = {
+          PENDING: '待审批', APPROVED: '已通过', REJECTED: '已拒绝',
+          CANCELED: '已撤回', DELETED: '已删除', RECALL: '已撤回',
+        };
+
+        if (instances.length === 0) {
+          return { content: [{ type: 'text' as const, text: '没有找到匹配的审批实例。' }] };
+        }
+
+        const lines = instances.map((inst: any, i: number) => {
+          const approvalName = inst.approval?.name || inst.approval_name || '审批';
+          const instanceCode = inst.instance?.code || inst.instance_code || '';
+          const status = (inst.instance?.status || inst.status || 'UNKNOWN').toUpperCase();
+          const statusText = statusNames[status] || status;
+          const startTime = inst.instance?.start_time || inst.start_time || 0;
+          const dateStr = startTime ? new Date(Number(startTime)).toLocaleDateString('zh-CN') : '';
+          return `${i + 1}. [${instanceCode}] ${approvalName} - ${statusText} (${dateStr})`;
+        });
+
+        const hasMore = result.has_more ? `\n\n还有更多，使用 page_token: ${result.page_token}` : '';
+        return { content: [{ type: 'text' as const, text: `审批实例列表 (${instances.length} 条):\n${lines.join('\n')}${hasMore}` }] };
+      } else {
+        return { content: [{ type: 'text' as const, text: `查询审批失败: ${result.error || '未知错误'}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `查询审批超时或失败: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
 // Start the stdio server transport
 const transport = new StdioServerTransport();
 await server.connect(transport);
