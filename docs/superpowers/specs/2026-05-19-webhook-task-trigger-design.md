@@ -50,7 +50,7 @@ Fields:
 |-------|----------|-------------|
 | `name` | yes | Task identifier, used in URL path |
 | `path` | yes | URL path to match (e.g., `/webhook/task/daily-report`) |
-| `group_folder` | yes | Target group folder for task execution |
+| `group_folder` | no | Target group folder. Defaults to the main group (isMain=true) if not specified |
 | `prompt` | yes | Prompt template. `{paramName}` placeholders are replaced with URL query parameters |
 | `context_mode` | no | `group` (default) or `isolated` |
 
