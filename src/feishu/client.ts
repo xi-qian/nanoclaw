@@ -2867,6 +2867,182 @@ export class FeishuClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Approval (飞书审批) Operations — Approval v4 API
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 获取审批实例详情
+   * GET /open-apis/approval/v4/instances/{instance_code}
+   */
+  async getApprovalInstance(instanceCode: string): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/approval/v4/instances/${instanceCode}`,
+      method: 'GET',
+      params: { user_id_type: 'open_id' },
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to get approval instance: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info({ instanceCode }, 'Approval instance retrieved');
+    return response.data?.instance;
+  }
+
+  /**
+   * 同意审批任务
+   * POST /open-apis/approval/v4/tasks/approve
+   */
+  async approveApprovalTask(params: {
+    approval_code: string;
+    instance_code: string;
+    user_id: string;
+    task_id: string;
+    comment?: string;
+    form?: string;
+  }): Promise<void> {
+    const response = await this.client.request({
+      url: '/open-apis/approval/v4/tasks/approve',
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: params,
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to approve approval task: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info(
+      { instance_code: params.instance_code, task_id: params.task_id },
+      'Approval task approved',
+    );
+  }
+
+  /**
+   * 拒绝审批任务
+   * POST /open-apis/approval/v4/tasks/reject
+   */
+  async rejectApprovalTask(params: {
+    approval_code: string;
+    instance_code: string;
+    user_id: string;
+    task_id: string;
+    comment?: string;
+    form?: string;
+  }): Promise<void> {
+    const response = await this.client.request({
+      url: '/open-apis/approval/v4/tasks/reject',
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: params,
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to reject approval task: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info(
+      { instance_code: params.instance_code, task_id: params.task_id },
+      'Approval task rejected',
+    );
+  }
+
+  /**
+   * 转交审批任务
+   * POST /open-apis/approval/v4/tasks/transfer
+   */
+  async transferApprovalTask(params: {
+    approval_code: string;
+    instance_code: string;
+    user_id: string;
+    task_id: string;
+    transfer_user_id: string;
+    comment?: string;
+  }): Promise<void> {
+    const response = await this.client.request({
+      url: '/open-apis/approval/v4/tasks/transfer',
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: params,
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to transfer approval task: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info(
+      {
+        instance_code: params.instance_code,
+        task_id: params.task_id,
+        transfer_user_id: params.transfer_user_id,
+      },
+      'Approval task transferred',
+    );
+  }
+
+  /**
+   * 创建审批评论
+   * POST /open-apis/approval/v4/instances/{instance_id}/comments
+   * user_id 由 Host 自动注入（Bot open_id）
+   */
+  async createApprovalComment(params: {
+    instance_id: string;
+    user_id: string;
+    content: string;
+    parent_comment_id?: string;
+    at_info_list?: Array<{ user_id: string; name: string; offset: string }>;
+  }): Promise<{ comment_id: string }> {
+    const response = await this.client.request({
+      url: `/open-apis/approval/v4/instances/${params.instance_id}/comments`,
+      method: 'POST',
+      params: { user_id_type: 'open_id', user_id: params.user_id },
+      data: {
+        content: params.content,
+        parent_comment_id: params.parent_comment_id,
+        at_info_list: params.at_info_list,
+      },
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to create approval comment: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info({ instance_id: params.instance_id }, 'Approval comment created');
+    return { comment_id: response.data?.comment_id };
+  }
+
+  /**
+   * 查询审批实例列表
+   * POST /open-apis/approval/v4/instances/query
+   */
+  async queryApprovalInstances(params: {
+    approval_code?: string;
+    instance_status?: string;
+    user_id?: string;
+    start_time?: number;
+    end_time?: number;
+    page_size?: number;
+    page_token?: string;
+  }): Promise<any> {
+    const response = await this.client.request({
+      url: '/open-apis/approval/v4/instances/query',
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: params,
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to query approval instances: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info(
+      { approval_code: params.approval_code, count: response.data?.instances?.length },
+      'Approval instances queried',
+    );
+    return response.data;
+  }
+
+  // ---------------------------------------------------------------------------
   // File Upload and Send Operations
   // ---------------------------------------------------------------------------
 
