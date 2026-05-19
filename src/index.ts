@@ -845,6 +845,24 @@ async function main(): Promise<void> {
     getLastAgentTimestamp: (chatJid: string) =>
       lastAgentTimestamp[chatJid] || '',
   });
+
+  // Wire webhook task deps into Feishu channel's HTTP server
+  const feishuCh = channels.find((ch) => ch.name === 'feishu') as
+    | (import('./channels/feishu.js').FeishuChannel & Channel)
+    | undefined;
+  if (feishuCh) {
+    feishuCh.client.setWebhookTaskDeps({
+      getMainGroup: () => {
+        const entry = Object.entries(registeredGroups).find(
+          ([, g]) => g.isMain,
+        );
+        if (!entry) return undefined;
+        return { jid: entry[0], folder: entry[1].folder };
+      },
+      registeredGroups: () => registeredGroups,
+    });
+  }
+
   startIpcWatcher({
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);

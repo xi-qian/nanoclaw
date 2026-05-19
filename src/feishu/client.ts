@@ -19,6 +19,10 @@ import type {
 } from './types.js';
 import type { FeishuEvent } from './types.js';
 import { larkLogger } from './logger.js';
+import {
+  handleWebhookTaskRequest,
+  type WebhookTaskDeps,
+} from '../webhook-tasks.js';
 
 const log = larkLogger('client');
 
@@ -132,10 +136,16 @@ export class FeishuClient {
   private brand: LarkBrand;
   private credentials: FeishuCredentials;
   private webhookServer: http.Server | null = null;
+  private webhookTaskDeps: WebhookTaskDeps | null = null;
   private eventHandlers: Map<string, EventHandler[]> = new Map();
 
   // 速率限制延迟（毫秒）- 飞书文档 API 每秒最多 5 次请求
   private readonly RATE_LIMIT_DELAY = 250;
+
+  /** Set dependencies for webhook task triggering */
+  setWebhookTaskDeps(deps: WebhookTaskDeps): void {
+    this.webhookTaskDeps = deps;
+  }
 
   constructor(credentials: FeishuCredentials, brand: LarkBrand = 'feishu') {
     this.credentials = credentials;
@@ -1985,6 +1995,43 @@ export class FeishuClient {
   /**
    * 查询数据表记录
    */
+  /**
+   * 将数组格式的记录转换为带字段名的对象格式
+   */
+  private async enrichRecordsWithFieldNames(
+    appToken: string,
+    tableId: string,
+    records: any[],
+  ): Promise<any[]> {
+    try {
+      const fields = await this.listBitableFields(appToken, tableId);
+      const fieldNames = fields.map((f) => f.name);
+
+      return records.map((record) => {
+        // 飞书返回的记录可能是数组格式（某些视图）或对象格式
+        if (Array.isArray(record)) {
+          const enriched: Record<string, any> = {};
+          fieldNames.forEach((name, index) => {
+            if (index < record.length) {
+              enriched[name] = record[index];
+            }
+          });
+          return enriched;
+        } else if (record.fields) {
+          // 已经是对象格式，直接返回
+          return { ...record.fields, record_id: record.record_id };
+        }
+        return record;
+      });
+    } catch (error) {
+      log.warn(
+        { appToken, tableId, error },
+        'Failed to enrich records with field names, returning raw records',
+      );
+      return records;
+    }
+  }
+
   async listBitableRecords(
     appToken: string,
     tableId: string,
@@ -1994,6 +2041,7 @@ export class FeishuClient {
       sort?: any[];
       pageSize?: number;
       pageToken?: string;
+      enrichFields?: boolean; // 是否返回带字段名的对象格式
     },
   ): Promise<{ records: any[]; has_more: boolean; page_token?: string }> {
     try {
@@ -2027,8 +2075,19 @@ export class FeishuClient {
         throw new Error(`Failed to list bitable records: ${response.msg}`);
       }
 
+      let records = response.data?.items || [];
+
+      // 默认启用字段名转换，除非明确设置为 false
+      if (options?.enrichFields !== false) {
+        records = await this.enrichRecordsWithFieldNames(
+          appToken,
+          tableId,
+          records,
+        );
+      }
+
       return {
-        records: response.data?.items || [],
+        records,
         has_more: response.data?.has_more || false,
         page_token: response.data?.page_token,
       };
@@ -2776,6 +2835,221 @@ export class FeishuClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Bot Info Operations
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 获取 Bot 信息
+   * GET /open-apis/bot/v3/info
+   * 返回 Bot 的 open_id，用于审批评论等操作
+   */
+  async getBotInfo(): Promise<{
+    open_id: string;
+    activate_status: number;
+    app_name: string;
+    avatar_url: string;
+    ip_white_list: string[];
+  }> {
+    const response = await this.client.request({
+      url: '/open-apis/bot/v3/info',
+      method: 'GET',
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to get bot info: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info(
+      { bot_open_id: response.bot?.open_id },
+      'Bot info retrieved',
+    );
+    return response.bot;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Approval (飞书审批) Operations — Approval v4 API
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 获取审批实例详情
+   * GET /open-apis/approval/v4/instances/{instance_code}
+   */
+  async getApprovalInstance(instanceCode: string): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/approval/v4/instances/${instanceCode}`,
+      method: 'GET',
+      params: { user_id_type: 'open_id' },
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to get approval instance: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info({ instanceCode }, 'Approval instance retrieved');
+    return response.data;
+  }
+
+  /**
+   * 同意审批任务
+   * POST /open-apis/approval/v4/tasks/approve
+   */
+  async approveApprovalTask(params: {
+    approval_code: string;
+    instance_code: string;
+    user_id: string;
+    task_id: string;
+    comment?: string;
+    form?: string;
+  }): Promise<void> {
+    const response = await this.client.request({
+      url: '/open-apis/approval/v4/tasks/approve',
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: params,
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to approve approval task: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info(
+      { instance_code: params.instance_code, task_id: params.task_id },
+      'Approval task approved',
+    );
+  }
+
+  /**
+   * 拒绝审批任务
+   * POST /open-apis/approval/v4/tasks/reject
+   */
+  async rejectApprovalTask(params: {
+    approval_code: string;
+    instance_code: string;
+    user_id: string;
+    task_id: string;
+    comment?: string;
+    form?: string;
+  }): Promise<void> {
+    const response = await this.client.request({
+      url: '/open-apis/approval/v4/tasks/reject',
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: params,
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to reject approval task: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info(
+      { instance_code: params.instance_code, task_id: params.task_id },
+      'Approval task rejected',
+    );
+  }
+
+  /**
+   * 转交审批任务
+   * POST /open-apis/approval/v4/tasks/transfer
+   */
+  async transferApprovalTask(params: {
+    approval_code: string;
+    instance_code: string;
+    user_id: string;
+    task_id: string;
+    transfer_user_id: string;
+    comment?: string;
+  }): Promise<void> {
+    const response = await this.client.request({
+      url: '/open-apis/approval/v4/tasks/transfer',
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: params,
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to transfer approval task: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info(
+      {
+        instance_code: params.instance_code,
+        task_id: params.task_id,
+        transfer_user_id: params.transfer_user_id,
+      },
+      'Approval task transferred',
+    );
+  }
+
+  /**
+   * 创建审批评论
+   * POST /open-apis/approval/v4/instances/{instance_id}/comments
+   * user_id 由 Host 自动注入（Bot open_id）
+   */
+  async createApprovalComment(params: {
+    instance_id: string;
+    user_id: string;
+    content: string;
+    parent_comment_id?: string;
+    at_info_list?: Array<{ user_id: string; name: string; offset: string }>;
+  }): Promise<{ comment_id: string }> {
+    const response = await this.client.request({
+      url: `/open-apis/approval/v4/instances/${params.instance_id}/comments`,
+      method: 'POST',
+      params: { user_id_type: 'open_id', user_id: params.user_id },
+      data: {
+        content: params.content,
+        parent_comment_id: params.parent_comment_id,
+        at_info_list: params.at_info_list,
+      },
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to create approval comment: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info({ instance_id: params.instance_id }, 'Approval comment created');
+    return { comment_id: response.data?.comment_id };
+  }
+
+  /**
+   * 查询审批实例列表
+   * POST /open-apis/approval/v4/instances/query
+   */
+  async queryApprovalInstances(params: {
+    approval_code?: string;
+    instance_status?: string;
+    user_id?: string;
+    start_time?: number;
+    end_time?: number;
+    page_size?: number;
+    page_token?: string;
+  }): Promise<any> {
+    const response = await this.client.request({
+      url: '/open-apis/approval/v4/instances/query',
+      method: 'POST',
+      params: { user_id_type: 'open_id' },
+      data: (({ start_time, end_time, ...rest }) => ({
+        ...rest,
+        ...(start_time ? { instance_start_time_from: String(start_time) } : {}),
+        ...(end_time ? { instance_start_time_to: String(end_time) } : {}),
+      }))(params),
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to query approval instances: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info(
+      {
+        approval_code: params.approval_code,
+        count: response.data?.instance_list?.length,
+      },
+      'Approval instances queried',
+    );
+    return response.data;
+  }
+
+  // ---------------------------------------------------------------------------
   // File Upload and Send Operations
   // ---------------------------------------------------------------------------
 
@@ -3182,6 +3456,11 @@ export class FeishuClient {
   ): void {
     // Only accept POST to the configured path
     if (req.method !== 'POST' || req.url !== path) {
+      // Delegate to webhook task handler if available
+      if (this.webhookTaskDeps && req.method === 'POST') {
+        handleWebhookTaskRequest(req, res, this.webhookTaskDeps);
+        return;
+      }
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('Not Found');
       return;
