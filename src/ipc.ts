@@ -580,6 +580,42 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       request.members,
                     );
                     break;
+                  // 审批操作
+                  case 'approval_get_instance':
+                    result = await feishuChannel.getApprovalInstance(
+                      request.instance_code,
+                    );
+                    break;
+                  case 'approval_approve':
+                    await feishuChannel.approveApprovalTask(request.params);
+                    result = { approved: true };
+                    break;
+                  case 'approval_reject':
+                    await feishuChannel.rejectApprovalTask(request.params);
+                    result = { rejected: true };
+                    break;
+                  case 'approval_transfer':
+                    await feishuChannel.transferApprovalTask(request.params);
+                    result = { transferred: true };
+                    break;
+                  case 'approval_comment': {
+                    // 自动注入 Bot open_id
+                    const botInfo = await feishuChannel.getBotInfo();
+                    const commentResult = await feishuChannel.createApprovalComment({
+                      instance_id: request.instance_id,
+                      user_id: botInfo.open_id,
+                      content: request.content,
+                      parent_comment_id: request.parent_comment_id,
+                      at_info_list: request.at_info_list,
+                    });
+                    result = { comment_id: commentResult.comment_id };
+                    break;
+                  }
+                  case 'approval_query':
+                    result = await feishuChannel.queryApprovalInstances(
+                      request.params,
+                    );
+                    break;
                   default:
                     throw new Error(
                       `Unknown feishu request type: ${request.type}`,
