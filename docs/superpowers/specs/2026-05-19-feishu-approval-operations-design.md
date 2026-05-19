@@ -13,11 +13,17 @@
 
 | 操作 | 执行身份 | 说明 |
 |-----|-----|-----|
-| 同意审批 | 当前审批人 | 自动查询实例获取 task_id 和审批人 user_id |
-| 拒绝审批 | 当前审批人 | 同上 |
-| 转交审批 | 当前审批人 | 自动获取审批人，被转交人由调用者提供 |
-| 创建评论 | Bot 身份 | 自动获取 Bot open_id，无需传入 |
+| 同意审批 | Agent 提供审批人 | Agent 先查询实例获取 task_id 和审批人 user_id，再调用 approve |
+| 拒绝审批 | Agent 提供审批人 | 同上 |
+| 转交审批 | Agent 提供审批人 | Agent 先查询实例获取信息，再调用 transfer |
+| 创建评论 | Bot 身份（自动） | Host 自动获取 Bot open_id，Agent 只需传 content |
 | 查询实例 | Bot 身份 | 使用 tenant_access_token |
+
+**通过/拒绝流程**（两步调用）：
+1. 调用 `approval_get_instance` 获取实例详情
+2. 从返回的 `task_list` 中找到当前待处理的审批任务（status=PENDING）
+3. 获取该任务的 `id`（task_id）和审批人信息
+4. 调用 `approval_approve` 或 `approval_reject`
 
 ## 架构设计
 
@@ -142,6 +148,13 @@ Host 端处理 `approval_comment` 时：
 - 评论 content 格式：JSON 字符串 `{"text": "评论内容"}`
 - 通过/拒绝前需先查询实例获取 task_id 和审批人 user_id
 - 审批人判断逻辑：从 task_list 找 status 为 PENDING 的任务
+  - 如果有多个 PENDING 任务，Agent 需根据上下文判断（如用户明确指定了审批人）
+  - task_list 按审批流程顺序排列，通常第一个 PENDING 任务是当前节点
+
+### approval_code 获取
+
+- 从 `approval_get_instance` 返回结果的 `approval.code` 字段获取
+- 或从审批管理后台 URL 中提取
 
 ## 权限要求
 
