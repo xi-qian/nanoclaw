@@ -2853,7 +2853,10 @@ export class FeishuClient {
         `Failed to get bot info: ${response.msg} (code: ${response.code})`,
       );
     }
-    log.info({ bot_open_id: response.data?.bot?.open_id }, 'Bot info retrieved');
+    log.info(
+      { bot_open_id: response.data?.bot?.open_id },
+      'Bot info retrieved',
+    );
     return response.data?.bot;
   }
 
