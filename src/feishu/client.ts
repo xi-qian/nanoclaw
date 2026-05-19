@@ -1985,6 +1985,43 @@ export class FeishuClient {
   /**
    * 查询数据表记录
    */
+  /**
+   * 将数组格式的记录转换为带字段名的对象格式
+   */
+  private async enrichRecordsWithFieldNames(
+    appToken: string,
+    tableId: string,
+    records: any[],
+  ): Promise<any[]> {
+    try {
+      const fields = await this.listBitableFields(appToken, tableId);
+      const fieldNames = fields.map((f) => f.name);
+
+      return records.map((record) => {
+        // 飞书返回的记录可能是数组格式（某些视图）或对象格式
+        if (Array.isArray(record)) {
+          const enriched: Record<string, any> = {};
+          fieldNames.forEach((name, index) => {
+            if (index < record.length) {
+              enriched[name] = record[index];
+            }
+          });
+          return enriched;
+        } else if (record.fields) {
+          // 已经是对象格式，直接返回
+          return { ...record.fields, record_id: record.record_id };
+        }
+        return record;
+      });
+    } catch (error) {
+      log.warn(
+        { appToken, tableId, error },
+        'Failed to enrich records with field names, returning raw records',
+      );
+      return records;
+    }
+  }
+
   async listBitableRecords(
     appToken: string,
     tableId: string,
@@ -1994,6 +2031,7 @@ export class FeishuClient {
       sort?: any[];
       pageSize?: number;
       pageToken?: string;
+      enrichFields?: boolean; // 是否返回带字段名的对象格式
     },
   ): Promise<{ records: any[]; has_more: boolean; page_token?: string }> {
     try {
@@ -2027,8 +2065,19 @@ export class FeishuClient {
         throw new Error(`Failed to list bitable records: ${response.msg}`);
       }
 
+      let records = response.data?.items || [];
+
+      // 默认启用字段名转换，除非明确设置为 false
+      if (options?.enrichFields !== false) {
+        records = await this.enrichRecordsWithFieldNames(
+          appToken,
+          tableId,
+          records,
+        );
+      }
+
       return {
-        records: response.data?.items || [],
+        records,
         has_more: response.data?.has_more || false,
         page_token: response.data?.page_token,
       };
