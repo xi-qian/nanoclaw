@@ -2843,7 +2843,13 @@ export class FeishuClient {
    * GET /open-apis/bot/v3/info
    * 返回 Bot 的 open_id，用于审批评论等操作
    */
-  async getBotInfo(): Promise<{ open_id: string; app_id: string }> {
+  async getBotInfo(): Promise<{
+    open_id: string;
+    activate_status: number;
+    app_name: string;
+    avatar_url: string;
+    ip_white_list: string[];
+  }> {
     const response = await this.client.request({
       url: '/open-apis/bot/v3/info',
       method: 'GET',
