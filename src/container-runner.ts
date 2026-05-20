@@ -43,6 +43,8 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   assistantName?: string;
+  /** Exit after first query completes instead of waiting for IPC messages */
+  singleShot?: boolean;
 }
 
 export interface ContainerOutput {
@@ -61,6 +63,7 @@ interface VolumeMount {
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
+  isolatedIpcDir?: string,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
@@ -172,28 +175,22 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Per-group IPC namespace: each group gets its own IPC directory
-  // This prevents cross-group privilege escalation via IPC
-  const groupIpcDir = resolveGroupIpcPath(group.folder);
-  fs.mkdirSync(path.join(groupIpcDir, 'messages'), {
-    recursive: true,
-    mode: 0o777,
-  });
-  fs.mkdirSync(path.join(groupIpcDir, 'tasks'), {
-    recursive: true,
-    mode: 0o777,
-  });
-  fs.mkdirSync(path.join(groupIpcDir, 'input'), {
-    recursive: true,
-    mode: 0o777,
-  });
-  // Downloads directory for files to send to users
-  fs.mkdirSync(path.join(groupIpcDir, 'downloads'), {
-    recursive: true,
-    mode: 0o777,
-  });
+  // Per-group IPC namespace: each group gets its own IPC directory.
+  // Isolated containers use a temporary directory to prevent cross-container
+  // interference (message cross-talk, _close sentinel consumption, etc.)
+  const ipcDir = isolatedIpcDir || resolveGroupIpcPath(group.folder);
+  for (const sub of [
+    'messages',
+    'tasks',
+    'input',
+    'downloads',
+    'feishu/requests',
+    'feishu/results',
+  ]) {
+    fs.mkdirSync(path.join(ipcDir, sub), { recursive: true, mode: 0o777 });
+  }
   mounts.push({
-    hostPath: groupIpcDir,
+    hostPath: ipcDir,
     containerPath: '/workspace/ipc',
     readonly: false,
   });
@@ -319,13 +316,25 @@ export async function runContainerAgent(
   input: ContainerInput,
   onProcess: (proc: ChildProcess, containerName: string) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  options?: { isolated?: boolean },
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isMain);
+  // Isolated containers get their own temporary IPC directory to prevent
+  // cross-container interference (message cross-talk, sentinel consumption)
+  let isolatedIpcDir: string | undefined;
+  if (options?.isolated) {
+    isolatedIpcDir = path.join(
+      DATA_DIR,
+      'sessions',
+      group.folder,
+      `isolated-ipc-${Date.now()}`,
+    );
+  }
+  const mounts = buildVolumeMounts(group, input.isMain, isolatedIpcDir);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
   const containerArgs = buildContainerArgs(mounts, containerName);
@@ -499,6 +508,19 @@ export async function runContainerAgent(
     container.on('close', (code) => {
       clearTimeout(timeout);
       const duration = Date.now() - startTime;
+
+      // Clean up isolated IPC directory
+      if (isolatedIpcDir) {
+        try {
+          fs.rmSync(isolatedIpcDir, { recursive: true, force: true });
+          logger.debug({ isolatedIpcDir }, 'Cleaned up isolated IPC directory');
+        } catch (err) {
+          logger.warn(
+            { isolatedIpcDir, err },
+            'Failed to clean up isolated IPC directory',
+          );
+        }
+      }
 
       // Notify monitor if enabled
       if (MONITOR_ENABLED) {

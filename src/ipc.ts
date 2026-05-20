@@ -44,6 +44,41 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
   const ipcBaseDir = path.join(DATA_DIR, 'ipc');
   fs.mkdirSync(ipcBaseDir, { recursive: true, mode: 0o777 });
+  const sessionsBaseDir = path.join(DATA_DIR, 'sessions');
+
+  /**
+   * Scan isolated IPC directories under data/sessions/{group}/isolated-ipc-*.
+   * Returns entries with the resolved IPC dir path and the source group folder.
+   */
+  function discoverIsolatedIpcDirs(): Array<{
+    ipcDir: string;
+    sourceGroup: string;
+  }> {
+    const entries: Array<{ ipcDir: string; sourceGroup: string }> = [];
+    try {
+      if (!fs.existsSync(sessionsBaseDir)) return entries;
+      const groupFolders = fs.readdirSync(sessionsBaseDir);
+      for (const groupFolder of groupFolders) {
+        const groupSessionsDir = path.join(sessionsBaseDir, groupFolder);
+        if (!fs.statSync(groupSessionsDir).isDirectory()) continue;
+        try {
+          const subs = fs.readdirSync(groupSessionsDir);
+          for (const sub of subs) {
+            if (!sub.startsWith('isolated-ipc-')) continue;
+            const ipcDir = path.join(groupSessionsDir, sub);
+            if (fs.statSync(ipcDir).isDirectory()) {
+              entries.push({ ipcDir, sourceGroup: groupFolder });
+            }
+          }
+        } catch {
+          /* ignore per-group scan errors */
+        }
+      }
+    } catch {
+      /* ignore sessions dir scan errors */
+    }
+    return entries;
+  }
 
   const processIpcFiles = async () => {
     // Scan all group IPC directories (identity determined by directory)
@@ -67,10 +102,32 @@ export function startIpcWatcher(deps: IpcDeps): void {
       if (group.isMain) folderIsMain.set(group.folder, true);
     }
 
+    // Collect all IPC directories to scan for messages/tasks/feishu:
+    // 1. Regular group IPC dirs: data/ipc/{sourceGroup}/
+    // 2. Isolated temp IPC dirs: data/sessions/{group}/isolated-ipc-*/
+    const ipcDirs: Array<{
+      dir: string;
+      sourceGroup: string;
+      isMain: boolean;
+    }> = [];
     for (const sourceGroup of groupFolders) {
-      const isMain = folderIsMain.get(sourceGroup) === true;
-      const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
-      const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
+      ipcDirs.push({
+        dir: path.join(ipcBaseDir, sourceGroup),
+        sourceGroup,
+        isMain: folderIsMain.get(sourceGroup) === true,
+      });
+    }
+    for (const { ipcDir, sourceGroup } of discoverIsolatedIpcDirs()) {
+      ipcDirs.push({
+        dir: ipcDir,
+        sourceGroup,
+        isMain: folderIsMain.get(sourceGroup) === true,
+      });
+    }
+
+    for (const { dir: ipcDir, sourceGroup, isMain } of ipcDirs) {
+      const messagesDir = path.join(ipcDir, 'messages');
+      const tasksDir = path.join(ipcDir, 'tasks');
 
       // Process messages from this group's IPC directory
       try {
@@ -156,9 +213,9 @@ export function startIpcWatcher(deps: IpcDeps): void {
     }
 
     // ==================== 飞书 IPC 处理 ====================
-    // 扫描所有群组的 feishu 请求目录
-    for (const sourceGroup of groupFolders) {
-      const feishuDir = path.join(ipcBaseDir, sourceGroup, 'feishu');
+    // 扫描所有 IPC 目录（包括 isolated 临时目录）的 feishu 请求
+    for (const { dir: ipcDir, sourceGroup } of ipcDirs) {
+      const feishuDir = path.join(ipcDir, 'feishu');
       try {
         if (fs.existsSync(feishuDir)) {
           const requestsDir = path.join(feishuDir, 'requests');
@@ -371,20 +428,14 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   case 'send_file':
                     // 将容器路径转换为主机路径
                     // 容器路径: /workspace/ipc/downloads/xxx
-                    // 主机路径: {DATA_DIR}/ipc/{sourceGroup}/downloads/xxx
+                    // 主机路径: {ipcDir}/downloads/xxx
                     let hostFilePath = request.file_path;
                     if (request.file_path.startsWith('/workspace/ipc/')) {
-                      // 转换为相对于 /workspace/ipc 的路径
                       const relativePath = request.file_path.replace(
                         '/workspace/ipc/',
                         '',
                       );
-                      hostFilePath = path.join(
-                        DATA_DIR,
-                        'ipc',
-                        sourceGroup,
-                        relativePath,
-                      );
+                      hostFilePath = path.join(ipcDir, relativePath);
                     }
                     logger.debug(
                       {
