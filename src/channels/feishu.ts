@@ -970,6 +970,14 @@ export class FeishuChannel implements Channel {
     return await this.client.removeCollaborator(token, type, memberId);
   }
 
+  async updatePublicSetting(
+    token: string,
+    type: string,
+    settings: Record<string, any>,
+  ): Promise<any> {
+    return await this.client.updatePublicSetting(token, type, settings);
+  }
+
   async transferOwner(
     token: string,
     type: string,

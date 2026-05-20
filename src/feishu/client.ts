@@ -2276,6 +2276,37 @@ export class FeishuClient {
   }
 
   /**
+   * 更新云文档权限设置（链接分享、外部访问等）
+   * PATCH /open-apis/drive/v1/permissions/:token/public
+   */
+  async updatePublicSetting(
+    token: string,
+    type: string,
+    settings: {
+      external_access?: boolean;
+      security_entity?: string;
+      comment_entity?: string;
+      share_entity?: string;
+      link_share_entity?: string;
+      invite_external?: boolean;
+    },
+  ): Promise<any> {
+    const response = await this.client.request({
+      url: `/open-apis/drive/v1/permissions/${encodeURIComponent(token)}/public`,
+      method: 'PATCH',
+      params: { type },
+      data: settings,
+    });
+    if (response.code !== 0) {
+      throw new Error(
+        `Failed to update public setting: ${response.msg} (code: ${response.code})`,
+      );
+    }
+    log.info({ token, type, settings }, 'Public setting updated');
+    return response.data?.permission_public;
+  }
+
+  /**
    * 转让所有者
    * POST /open-apis/drive/v1/permissions/:token/members/transfer_owner
    */
@@ -2859,10 +2890,7 @@ export class FeishuClient {
         `Failed to get bot info: ${response.msg} (code: ${response.code})`,
       );
     }
-    log.info(
-      { bot_open_id: response.bot?.open_id },
-      'Bot info retrieved',
-    );
+    log.info({ bot_open_id: response.bot?.open_id }, 'Bot info retrieved');
     return response.bot;
   }
 

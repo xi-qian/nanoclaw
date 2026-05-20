@@ -1231,6 +1231,60 @@ server.tool(
   },
 );
 
+// ==================== 云文档权限设置工具 ====================
+
+server.tool(
+  'feishu_update_public_setting',
+  '更新飞书云文档的权限设置，如设置组织内可阅读、允许外部访问等。',
+  {
+    token: z.string().describe('文档 token（从 URL 中提取）'),
+    file_type: z.string().describe('资源类型：docx, bitable, sheet, wiki, slides 等'),
+    link_share_entity: z.string().optional().describe('链接分享设置：tenant_readable（组织内可阅读）、tenant_editable（组织内可编辑）、anyone_readable（互联网可阅读）、anyone_editable（互联网可编辑）'),
+    external_access: z.boolean().optional().describe('是否允许分享到组织外'),
+    security_entity: z.string().optional().describe('谁可以查看：anyone_can_view 等'),
+    comment_entity: z.string().optional().describe('谁可以评论'),
+    share_entity: z.string().optional().describe('谁可以添加协作者'),
+    invite_external: z.boolean().optional().describe('是否允许非管理员分享到组织外'),
+  },
+  async (args) => {
+    const settings: Record<string, any> = {};
+    if (args.link_share_entity !== undefined) settings.link_share_entity = args.link_share_entity;
+    if (args.external_access !== undefined) settings.external_access = args.external_access;
+    if (args.security_entity !== undefined) settings.security_entity = args.security_entity;
+    if (args.comment_entity !== undefined) settings.comment_entity = args.comment_entity;
+    if (args.share_entity !== undefined) settings.share_entity = args.share_entity;
+    if (args.invite_external !== undefined) settings.invite_external = args.invite_external;
+
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'update_public_setting',
+      token: args.token,
+      file_type: args.file_type,
+      settings,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+      if (result.success) {
+        return {
+          content: [{ type: 'text' as const, text: `文档权限设置更新成功!\n\n设置: ${JSON.stringify(settings, null, 2)}` }],
+        };
+      } else {
+        return {
+          content: [{ type: 'text' as const, text: `更新文档权限设置失败: ${result.error}` }],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `更新文档权限设置超时或失败: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 // ==================== 卡片消息工具 ====================
 
 server.tool(

@@ -102,6 +102,7 @@ description: |
 | **更新权限** | `feishu_update_collaborator` | 更新协作者权限 |
 | **删除协作者** | `feishu_remove_collaborator` | 删除协作者 |
 | **转让所有者** | `feishu_transfer_owner` | 转让文档/多维表格所有者 |
+| **更新权限设置** | `feishu_update_public_setting` | 更新文档链接分享、外部访问等权限设置 |
 | **下载附件** | `feishu_download_resource` | 下载用户发送的图片/文件/语音/视频 |
 | **发送文件** | `feishu_send_file` | 发送文件给用户（文件必须在 /workspace/ipc/downloads/） |
 | **获取用户部门** | `feishu_get_user_department` | 根据用户 open_id 查询所属部门名称 |
@@ -563,6 +564,37 @@ feishu_remove_collaborator(
   member_id: "member_id"
 )
 ```
+
+### 更新权限设置
+
+设置文档的链接分享、外部访问等全局权限：
+
+```
+feishu_update_public_setting(
+  token: "文档 token",
+  file_type: "docx",
+  link_share_entity: "tenant_readable"   // 组织内获得链接的人可阅读
+)
+```
+
+**link_share_entity 可选值**：
+
+| 值 | 说明 |
+|------|------|
+| `tenant_readable` | 组织内获得链接的人可阅读 |
+| `tenant_editable` | 组织内获得链接的人可编辑 |
+| `anyone_readable` | 互联网上获得链接的人可阅读 |
+| `anyone_editable` | 互联网上获得链接的人可编辑 |
+
+**其他可选参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `external_access` | boolean | 是否允许分享到组织外 |
+| `security_entity` | string | 谁可以查看（如 `anyone_can_view`） |
+| `comment_entity` | string | 谁可以评论 |
+| `share_entity` | string | 谁可以添加协作者 |
+| `invite_external` | boolean | 是否允许非管理员分享到组织外 |
 
 ---
 
