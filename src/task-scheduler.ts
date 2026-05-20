@@ -196,6 +196,7 @@ async function runTask(
           chatJid: task.chat_jid,
           isMain,
           assistantName: ASSISTANT_NAME,
+          singleShot: true,
         },
         (proc, containerName) =>
           deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
@@ -214,6 +215,7 @@ async function runTask(
             }
           }
         },
+        { isolated: true },
       );
 
       if (output.status === 'error') {

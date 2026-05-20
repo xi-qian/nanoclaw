@@ -84,6 +84,7 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   assistantName?: string;
+  singleShot?: boolean;
 }
 
 interface ContainerOutput {
@@ -546,6 +547,12 @@ async function runQuery(
         result: textResult || null,
         newSessionId
       });
+      // Single-shot mode: end the stream so the for-await loop exits.
+      // Non-singleShot mode relies on _close sentinel or IPC messages to
+      // keep the conversation going — ending here would break multi-turn.
+      if (containerInput.singleShot) {
+        stream.end();
+      }
     }
   }
 
@@ -638,6 +645,13 @@ async function main(): Promise<void> {
 
         // Emit session update so host can track it
         writeOutput({ status: 'success', result: null, newSessionId: sessionId });
+
+        // Single-shot mode: exit after first query instead of waiting for IPC
+        log(`singleShot check: ${JSON.stringify({ singleShot: containerInput.singleShot, isMain: containerInput.isMain })}`);
+        if (containerInput.singleShot) {
+          log('Single-shot mode, exiting after first query');
+          break;
+        }
 
         log('Query ended, waiting for next IPC message...');
 
