@@ -1,0 +1,11 @@
+{
+  "tasks": [
+    {
+      "name": "test-approve",
+      "path": "/feishu-hetang/task/test-approve",
+      "group_folder": "feishu-oc_805475081daf7a78b023e13e53a41fc2",
+      "prompt": "使用 ido-approve-review skill，对审批实例 {instance_id} 进行审查，生成审查建议卡",
+      "context_mode": "isolated"
+    }
+  ]
+}
