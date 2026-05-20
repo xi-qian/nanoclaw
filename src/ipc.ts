@@ -383,6 +383,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       request.old_owner_perm,
                     );
                     break;
+                  case 'update_public_setting':
+                    result = await feishuChannel.updatePublicSetting(
+                      request.token,
+                      request.file_type,
+                      request.settings,
+                    );
+                    break;
                   // 卡片消息发送
                   case 'send_card':
                     await feishuChannel.sendCard(

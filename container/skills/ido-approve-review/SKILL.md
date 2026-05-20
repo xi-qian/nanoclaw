@@ -176,6 +176,18 @@ feishu_approval_comment(
 
 **注意**：如果审批实例状态为 REJECTED（已结束），飞书 API 可能不允许追加评论（错误码 60001/60003）。此时应跳过备注写入步骤，仅上传飞书文档即可。
 
+### 8. 设置文档权限
+
+创建飞书文档后，调用权限设置接口将文档设置为组织内可阅读，使提交人和所有审批参与人都能查看：
+
+```
+feishu_update_public_setting(
+  token: "文档 token（从创建文档返回的 URL 中提取，如 https://feishu.cn/docx/xxxxxx 中的 xxxxxx）",
+  file_type: "docx",
+  link_share_entity: "tenant_readable"
+)
+```
+
 ---
 
 ## API 接口说明
