@@ -22,6 +22,7 @@ Single Node.js process with skill-based channel system. Channels (Feishu, WhatsA
 | `src/db.ts` | SQLite operations |
 | `src/remote-control.ts` | Remote control session management |
 | `src/sender-allowlist.ts` | Sender permission control |
+| `approval-allowlist.json` | Approval operation permission config (per-group, per-action, per-approval-code) |
 | `src/reporter/index.ts` | Monitor reporting (WebSocket to central monitor) |
 | `src/feishu/client.ts` | Feishu API client |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
@@ -181,4 +182,5 @@ On startup, `cleanupOrphans()` stops containers matching the current `INSTANCE_I
 - Secrets (API keys, tokens) are only loaded by the credential proxy, never exposed to containers
 - Mount allowlist stored in `~/.config/nanoclaw/mount-allowlist.json`
 - Sender allowlist in `~/.config/nanoclaw/sender-allowlist.json`
+- Approval allowlist in `approval-allowlist.json` (project root) -- missing file denies all approval operations
 - Auth credentials in `store/auth/` (never mounted into containers)
