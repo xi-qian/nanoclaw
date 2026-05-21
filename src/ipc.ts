@@ -12,6 +12,7 @@ import {
   getTaskById,
   updateTask,
 } from './db.js';
+import { isApprovalAllowed, loadApprovalAllowlist } from './approval-allowlist.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
@@ -639,24 +640,53 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                     break;
                   // 审批操作
-                  case 'approval_get_instance':
+                  case 'approval_get_instance': {
+                    const approvalCfg = loadApprovalAllowlist();
+                    if (!isApprovalAllowed(approvalCfg, sourceGroup, 'get_instance')) {
+                      logger.warn({ sourceGroup, action: 'get_instance' }, 'Approval action denied');
+                      throw new Error(`approval action 'get_instance' not allowed for group '${sourceGroup}'`);
+                    }
                     result = await feishuChannel.getApprovalInstance(
                       request.instance_code,
                     );
                     break;
-                  case 'approval_approve':
+                  }
+                  case 'approval_approve': {
+                    const approvalCfg = loadApprovalAllowlist();
+                    if (!isApprovalAllowed(approvalCfg, sourceGroup, 'approve', request.params?.approval_code)) {
+                      logger.warn({ sourceGroup, action: 'approve', approvalCode: request.params?.approval_code }, 'Approval action denied');
+                      throw new Error(`approval action 'approve' not allowed for group '${sourceGroup}'`);
+                    }
                     await feishuChannel.approveApprovalTask(request.params);
                     result = { approved: true };
                     break;
-                  case 'approval_reject':
+                  }
+                  case 'approval_reject': {
+                    const approvalCfg = loadApprovalAllowlist();
+                    if (!isApprovalAllowed(approvalCfg, sourceGroup, 'reject', request.params?.approval_code)) {
+                      logger.warn({ sourceGroup, action: 'reject', approvalCode: request.params?.approval_code }, 'Approval action denied');
+                      throw new Error(`approval action 'reject' not allowed for group '${sourceGroup}'`);
+                    }
                     await feishuChannel.rejectApprovalTask(request.params);
                     result = { rejected: true };
                     break;
-                  case 'approval_transfer':
+                  }
+                  case 'approval_transfer': {
+                    const approvalCfg = loadApprovalAllowlist();
+                    if (!isApprovalAllowed(approvalCfg, sourceGroup, 'transfer', request.params?.approval_code)) {
+                      logger.warn({ sourceGroup, action: 'transfer', approvalCode: request.params?.approval_code }, 'Approval action denied');
+                      throw new Error(`approval action 'transfer' not allowed for group '${sourceGroup}'`);
+                    }
                     await feishuChannel.transferApprovalTask(request.params);
                     result = { transferred: true };
                     break;
+                  }
                   case 'approval_comment': {
+                    const approvalCfg = loadApprovalAllowlist();
+                    if (!isApprovalAllowed(approvalCfg, sourceGroup, 'comment')) {
+                      logger.warn({ sourceGroup, action: 'comment' }, 'Approval action denied');
+                      throw new Error(`approval action 'comment' not allowed for group '${sourceGroup}'`);
+                    }
                     // 自动注入 Bot open_id
                     const botInfo = await feishuChannel.getBotInfo();
                     const commentResult =
@@ -670,11 +700,17 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     result = { comment_id: commentResult.comment_id };
                     break;
                   }
-                  case 'approval_query':
+                  case 'approval_query': {
+                    const approvalCfg = loadApprovalAllowlist();
+                    if (!isApprovalAllowed(approvalCfg, sourceGroup, 'query', request.params?.approval_code)) {
+                      logger.warn({ sourceGroup, action: 'query', approvalCode: request.params?.approval_code }, 'Approval action denied');
+                      throw new Error(`approval action 'query' not allowed for group '${sourceGroup}'`);
+                    }
                     result = await feishuChannel.queryApprovalInstances(
                       request.params,
                     );
                     break;
+                  }
                   default:
                     throw new Error(
                       `Unknown feishu request type: ${request.type}`,
