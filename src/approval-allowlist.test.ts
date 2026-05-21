@@ -109,9 +109,9 @@ describe('isApprovalAllowed', () => {
         },
       },
     };
-    expect(
-      isApprovalAllowed(cfg, 'feishu-oc_xxx', 'approve', 'CODE-A'),
-    ).toBe(false);
+    expect(isApprovalAllowed(cfg, 'feishu-oc_xxx', 'approve', 'CODE-A')).toBe(
+      false,
+    );
   });
 
   it('returns true when actions is wildcard', () => {
@@ -124,9 +124,9 @@ describe('isApprovalAllowed', () => {
         },
       },
     };
-    expect(
-      isApprovalAllowed(cfg, 'feishu-oc_xxx', 'approve', 'CODE-A'),
-    ).toBe(true);
+    expect(isApprovalAllowed(cfg, 'feishu-oc_xxx', 'approve', 'CODE-A')).toBe(
+      true,
+    );
   });
 
   it('returns false when approval_code does not match', () => {
@@ -139,9 +139,9 @@ describe('isApprovalAllowed', () => {
         },
       },
     };
-    expect(
-      isApprovalAllowed(cfg, 'feishu-oc_xxx', 'approve', 'CODE-B'),
-    ).toBe(false);
+    expect(isApprovalAllowed(cfg, 'feishu-oc_xxx', 'approve', 'CODE-B')).toBe(
+      false,
+    );
   });
 
   it('returns true when action and approval_code both match', () => {
@@ -154,12 +154,12 @@ describe('isApprovalAllowed', () => {
         },
       },
     };
-    expect(
-      isApprovalAllowed(cfg, 'feishu-oc_xxx', 'approve', 'CODE-A'),
-    ).toBe(true);
-    expect(
-      isApprovalAllowed(cfg, 'feishu-oc_xxx', 'reject', 'CODE-B'),
-    ).toBe(true);
+    expect(isApprovalAllowed(cfg, 'feishu-oc_xxx', 'approve', 'CODE-A')).toBe(
+      true,
+    );
+    expect(isApprovalAllowed(cfg, 'feishu-oc_xxx', 'reject', 'CODE-B')).toBe(
+      true,
+    );
   });
 
   it('returns true for get_instance without approval_code check', () => {
@@ -172,9 +172,7 @@ describe('isApprovalAllowed', () => {
         },
       },
     };
-    expect(
-      isApprovalAllowed(cfg, 'feishu-oc_xxx', 'get_instance'),
-    ).toBe(true);
+    expect(isApprovalAllowed(cfg, 'feishu-oc_xxx', 'get_instance')).toBe(true);
   });
 
   it('returns true for comment without approval_code check', () => {
@@ -187,9 +185,7 @@ describe('isApprovalAllowed', () => {
         },
       },
     };
-    expect(
-      isApprovalAllowed(cfg, 'feishu-oc_xxx', 'comment'),
-    ).toBe(true);
+    expect(isApprovalAllowed(cfg, 'feishu-oc_xxx', 'comment')).toBe(true);
   });
 
   it('returns true when action matches but no approval_code provided', () => {
@@ -202,9 +198,7 @@ describe('isApprovalAllowed', () => {
         },
       },
     };
-    expect(
-      isApprovalAllowed(cfg, 'feishu-oc_xxx', 'approve'),
-    ).toBe(true);
+    expect(isApprovalAllowed(cfg, 'feishu-oc_xxx', 'approve')).toBe(true);
   });
 
   it('approval_codes wildcard allows any code', () => {
@@ -217,8 +211,8 @@ describe('isApprovalAllowed', () => {
         },
       },
     };
-    expect(
-      isApprovalAllowed(cfg, 'feishu-oc_xxx', 'approve', 'ANY-CODE'),
-    ).toBe(true);
+    expect(isApprovalAllowed(cfg, 'feishu-oc_xxx', 'approve', 'ANY-CODE')).toBe(
+      true,
+    );
   });
 });
