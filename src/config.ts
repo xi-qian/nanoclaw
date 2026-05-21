@@ -40,6 +40,10 @@ export const WEBHOOK_TASKS_CONFIG = path.resolve(
   PROJECT_ROOT,
   process.env.WEBHOOK_TASKS_CONFIG || 'webhook-tasks.json',
 );
+export const APPROVAL_ALLOWLIST_PATH = path.resolve(
+  PROJECT_ROOT,
+  process.env.APPROVAL_ALLOWLIST_PATH || 'approval-allowlist.json',
+);
 
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';

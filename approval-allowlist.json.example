@@ -1,0 +1,13 @@
+{
+  "default": { "allow": false },
+  "groups": {
+    "feishu-oc_YOUR_GROUP_ID": {
+      "actions": ["approve", "reject", "comment", "query", "get_instance", "transfer"],
+      "approval_codes": ["YOUR_APPROVAL_CODE_1", "YOUR_APPROVAL_CODE_2"]
+    },
+    "feishu-oc_APPROVAL_BOT_GROUP": {
+      "actions": ["*"],
+      "approval_codes": ["*"]
+    }
+  }
+}
