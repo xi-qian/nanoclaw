@@ -797,6 +797,10 @@ export class FeishuChannel implements Channel {
     return await this.client.getUserDepartments(openId);
   }
 
+  async getUserNameBatch(openIds: string[]): Promise<Record<string, string>> {
+    return await this.client.getUserNameBatch(openIds);
+  }
+
   // ==================== 任务操作方法（供 Host IPC 调用） ====================
 
   async createTask(params: any): Promise<any> {

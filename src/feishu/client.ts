@@ -1152,6 +1152,69 @@ export class FeishuClient {
   }
 
   /**
+   * Batch resolve user IDs to names via basic_batch API.
+   * This API does not require contact scope authorization.
+   * @param openIds Array of open_id strings (1-10)
+   * @returns Record mapping open_id → name
+   */
+  async getUserNameBatch(
+    openIds: string[],
+  ): Promise<Record<string, string>> {
+    const result: Record<string, string> = {};
+    const uncached: string[] = [];
+
+    for (const id of openIds) {
+      const cached = this.userInfoCache.get(id);
+      if (cached && cached.expireAt > Date.now()) {
+        result[id] = cached.name;
+      } else {
+        uncached.push(id);
+      }
+    }
+
+    if (uncached.length === 0) return result;
+
+    try {
+      const response = (await this.client.request({
+        url: '/open-apis/contact/v3/users/basic_batch',
+        method: 'POST',
+        params: { user_id_type: 'open_id' },
+        data: { user_ids: uncached },
+      })) as {
+        code?: number;
+        msg?: string;
+        data?: {
+          users?: Array<{ user_id?: string; name?: string }>;
+        };
+      };
+
+      if (response.code === 0 && response.data?.users) {
+        for (const user of response.data.users) {
+          const name = user.name || user.user_id || '';
+          if (user.user_id) {
+            result[user.user_id] = name;
+            this.userInfoCache.set(user.user_id, {
+              name,
+              expireAt: Date.now() + this.USER_CACHE_TTL,
+            });
+          }
+        }
+      }
+
+      for (const id of uncached) {
+        if (!result[id]) result[id] = id;
+      }
+    } catch (error) {
+      log.warn({ err: error, openIds: uncached }, 'basic_batch API failed');
+      for (const id of uncached) {
+        if (!result[id]) result[id] = id;
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * 下载消息中的资源文件（用户发送的图片、文件、音频、视频等）
    * 使用原生 fetch API 绕过 Lark SDK 的 arraybuffer 处理问题
    * @param messageId 消息ID

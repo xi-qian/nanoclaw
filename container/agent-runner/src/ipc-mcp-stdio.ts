@@ -1767,6 +1767,84 @@ server.tool(
   },
 );
 
+server.tool(
+  'feishu_get_user_name',
+  `根据用户 open_id 批量获取用户姓名。
+
+使用场景：
+- 将 open_id 解析为可读的姓名
+- 审批流程中获取审批人姓名用于 @提及
+- 消息中展示用户姓名而非 ID
+
+参数说明：
+- open_ids: 用户的 open_id 列表（格式如 ["ou_xxx", "ou_yyy"]，最多 10 个）
+
+返回值：
+- open_id → 姓名的映射
+
+注意：
+- 不受通讯录授权范围限制
+- 最多支持一次查询 10 个用户`,
+  {
+    open_ids: z.array(z.string()).describe('用户的 open_id 列表（格式如 ["ou_xxx"]，最多 10 个）'),
+  },
+  async (args) => {
+    const requestId = writeIpcFile(FEISHU_REQUESTS_DIR, {
+      type: 'get_user_name',
+      open_ids: args.open_ids,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = await waitForFeishuResult(requestId);
+
+      if (result.success) {
+        const users = result.users || {};
+        const entries = Object.entries(users);
+        if (entries.length === 0) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `未找到用户信息`,
+              },
+            ],
+          };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: entries.map(([id, name]) => `${id}: ${name}`).join('\n'),
+            },
+          ],
+        };
+      } else {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `获取用户姓名失败: ${result.error || '未知错误'}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `获取用户姓名超时或失败: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
 // ==================== 飞书任务工具 ====================
 
 server.tool(
@@ -2598,10 +2676,10 @@ server.tool(
 
 server.tool(
   'feishu_approval_comment',
-  '给飞书审批实例添加评论。Bot 身份会自动注入，无需指定评论者。支持回复已有评论和 @其他用户。',
+  '给飞书审批实例添加评论。Bot 身份会自动注入，无需指定评论者。支持回复已有评论和 @其他用户。content 必须是 JSON 字符串格式：{"text": "评论内容"}',
   {
     instance_id: z.string().describe('审批实例 ID（注意：使用 instance_id 而非 instance_code）'),
-    content: z.string().describe('评论内容'),
+    content: z.string().describe('评论内容，必须是 JSON 字符串格式，如 \'{"text": "评论内容"}\''),
     parent_comment_id: z.string().optional().describe('父评论 ID（可选，用于回复评论）'),
     at_info_list: z.array(z.object({
       user_id: z.string().describe('被 @ 的用户 open_id'),
