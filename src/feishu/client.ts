@@ -1157,9 +1157,7 @@ export class FeishuClient {
    * @param openIds Array of open_id strings (1-10)
    * @returns Record mapping open_id → name
    */
-  async getUserNameBatch(
-    openIds: string[],
-  ): Promise<Record<string, string>> {
+  async getUserNameBatch(openIds: string[]): Promise<Record<string, string>> {
     const result: Record<string, string> = {};
     const uncached: string[] = [];
 
