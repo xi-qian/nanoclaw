@@ -539,6 +539,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                     result = { departments };
                     break;
+                  case 'get_user_name':
+                    const nameMap = await feishuChannel.getUserNameBatch(
+                      request.open_ids,
+                    );
+                    result = { users: nameMap };
+                    break;
 
                   // ==================== 飞书任务操作 ====================
                   case 'task_create':

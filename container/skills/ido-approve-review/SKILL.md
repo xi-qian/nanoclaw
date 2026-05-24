@@ -1,12 +1,10 @@
 ---
 name: ido-approve-review
 description: |
-  付款/合同审批智能审查工具。
+  付款/合同审批智能审查工具（webhook 自动触发，非用户直接调用）。
 
-  **当以下情况时使用此 Skill**：
-  (1) 需要对付款审批或合同审批实例进行智能审查
-  (2) 用户提供审批实例 ID，需要生成审查建议卡
-  (3) 需要依据 IDO SPACE 审批执行标准进行合规审查
+  **触发方式**：由 webhook-tasks.json 配置自动触发，prompt 中已替换实际的 instance_id。
+  用户如需主动触发审查，应使用 trigger-intelligent-approval skill。
 
   **重要说明**：
   - 必须提供审批实例 ID (instance_code)
@@ -144,20 +142,45 @@ curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/project/{project_c
 
 ### 6. 写入审批备注
 
-调用飞书 MCP 工具将 **AI 建议方案**写入审批备注。
+调用飞书 MCP 工具将 **AI 建议方案**（建议卡中"AI 建议方案"部分）写入审批备注，同时 @ 审批任务负责人和提交人。
+
+**步骤 A：获取用户姓名**
+
+从步骤 1 获取的审批实例中提取：
+- **提交人 open_id**：`data.instance.initiator` 字段
+- **当前审批任务负责人 open_id**：`data.instance.task_list` 中状态为 PENDING 的任务的 `user_id` 字段
+
+调用工具解析姓名：
+```
+feishu_get_user_name(
+  open_ids: ["提交人open_id", "审批人open_id"]
+)
+```
+
+**步骤 B：发送评论并 @ 相关人**
 
 **重要：content 参数格式要求**
 - content 必须是 JSON 字符串，包含 `text` 字段，不能是纯文本
 - 正确格式：`'{"text": "评论内容"}'`
 - 错误格式：`"评论内容"` 或 `'评论内容'`
 - 文本中不能包含未转义的双引号，需用中文引号或单引号替代
+- @ 提及**必须集中在文本开头**，不要穿插在正文中，避免 offset 计算错误导致文字错乱
+- 要 @ 用户时，在 text 中对应位置写 `@姓名`，并在 at_info_list 中声明位置
 
 ```
 feishu_approval_comment(
   instance_id: "审批实例ID",
-  content: '{"text": "AI 建议方案内容..."}'
+  content: '{"text": "@审批人姓名 @提交人姓名 AI 建议方案内容"}',
+  at_info_list: [
+    { user_id: "审批人open_id", name: "审批人姓名", offset: "0" },
+    { user_id: "提交人open_id", name: "提交人姓名", offset: "审批人姓名长度+1" }
+  ]
 )
 ```
+
+**offset 计算规则**：从 `@` 符号开始计算，`@` 占 1 个字符，姓名从 offset 位置开始。第一个 @ 的 offset 为 0。
+
+**注意**：如果审批实例状态为 REJECTED（已结束），飞书 API 可能不允许追加评论（错误码 60001/60003）。此时应跳过备注写入步骤，仅上传飞书文档即可。
 
 ### 7. 上传飞书文档并链接
 
