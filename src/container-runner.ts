@@ -252,6 +252,12 @@ function buildContainerArgs(
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_AUTH_TOKEN',
     'ANTHROPIC_BASE_URL',
+    'ANTHROPIC_MODEL',
+    'ANTHROPIC_DEFAULT_OPUS_MODEL',
+    'ANTHROPIC_DEFAULT_SONNET_MODEL',
+    'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+    'CLAUDE_CODE_SUBAGENT_MODEL',
+    'CLAUDE_CODE_EFFORT_LEVEL',
   ]);
 
   // Determine auth mode and use direct API credentials
@@ -260,6 +266,19 @@ function buildContainerArgs(
 
   // Pass the actual API base URL to the container (not through proxy)
   args.push('-e', `ANTHROPIC_BASE_URL=${apiBaseUrl}`);
+
+  // Pass model configuration for SDK
+  const modelEnvVars = [
+    'ANTHROPIC_MODEL',
+    'ANTHROPIC_DEFAULT_OPUS_MODEL',
+    'ANTHROPIC_DEFAULT_SONNET_MODEL',
+    'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+    'CLAUDE_CODE_SUBAGENT_MODEL',
+    'CLAUDE_CODE_EFFORT_LEVEL',
+  ] as const;
+  for (const key of modelEnvVars) {
+    if (secrets[key]) args.push('-e', `${key}=${secrets[key]}`);
+  }
 
   // Pass the actual API credentials directly to the container
   if (authMode === 'api-key') {

@@ -1,10 +1,11 @@
 ---
 name: ido-approve-review
 description: |
-  付款/合同审批智能审查工具（webhook 自动触发，非用户直接调用）。
+  付款/合同审批智能审查工具。接受 instance_code（UUID 格式），执行审查并生成建议卡。
 
-  **触发方式**：由 webhook-tasks.json 配置自动触发，prompt 中已替换实际的 instance_id。
-  用户如需主动触发审查，应使用 trigger-intelligent-approval skill。
+  **触发方式**：通常由 webhook 自动触发，prompt 中已包含实际的 instance_code。
+  当 prompt 直接要求使用本 skill 时，直接执行，不要重定向到其他 skill。
+  trigger-intelligent-approval 是另一个 skill，仅用于用户在聊天中主动提供 serial_number 的场景，与本 skill 无关。
 
   **重要说明**：
   - 必须提供审批实例 ID (instance_code)
