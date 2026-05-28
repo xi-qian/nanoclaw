@@ -4,10 +4,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
+const { mockMkdirSync, mockWriteFileSync } = vi.hoisted(() => ({
+  mockMkdirSync: vi.fn(),
+  mockWriteFileSync: vi.fn(),
+}));
+
 // Mock fs module
 vi.mock('fs', () => ({
   existsSync: vi.fn(() => true),
   readFileSync: vi.fn(() => Buffer.from('test file content')),
+  mkdirSync: mockMkdirSync,
+  writeFileSync: mockWriteFileSync,
 }));
 
 // Mock form-data module
@@ -227,6 +234,77 @@ describe('FeishuClient', () => {
 
       expect(result.file_key).toBe('test_file_key');
       expect(result.message_id).toBe('test_message_id');
+    });
+  });
+
+  describe('downloadMessageResourceToFile', () => {
+    it('uses Content-Disposition filename when file_name is not provided', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          json: () =>
+            Promise.resolve({
+              code: 0,
+              tenant_access_token: 'test_tenant_token',
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(Buffer.from('pdf content')),
+          headers: new Headers({
+            'content-disposition':
+              "attachment; filename*=UTF-8''%E9%87%87%E8%B4%AD%20%E6%98%8E%E7%BB%86.pdf",
+            'content-type': 'application/pdf',
+          }),
+        });
+
+      const result = await client.downloadMessageResourceToFile(
+        'om_test',
+        'file_v3_test',
+        undefined,
+        'main',
+        'file',
+      );
+
+      expect(result).toBe('/workspace/ipc/downloads/采购 明细.pdf');
+      expect(mockWriteFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('data/ipc/main/downloads/采购 明细.pdf'),
+        Buffer.from('pdf content'),
+      );
+    });
+
+    it('falls back to a content-type extension when response has no filename', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(1234567890);
+      mockFetch
+        .mockResolvedValueOnce({
+          json: () =>
+            Promise.resolve({
+              code: 0,
+              tenant_access_token: 'test_tenant_token',
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(Buffer.from('image content')),
+          headers: new Headers({
+            'content-type': 'image/png',
+          }),
+        });
+
+      const result = await client.downloadMessageResourceToFile(
+        'om_test',
+        'img_v2_test',
+        undefined,
+        'main',
+        'image',
+      );
+
+      expect(result).toBe('/workspace/ipc/downloads/resource-1234567890.png');
+      expect(mockWriteFileSync).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'data/ipc/main/downloads/resource-1234567890.png',
+        ),
+        Buffer.from('image content'),
+      );
     });
   });
 

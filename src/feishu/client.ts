@@ -26,6 +26,99 @@ import {
 
 const log = larkLogger('client');
 
+type FeishuResourceType = 'image' | 'file' | 'audio' | 'video' | 'media';
+
+interface DownloadedResource {
+  buffer: Buffer;
+  contentType?: string;
+  fileName?: string;
+}
+
+function decodeHeaderFileName(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function parseContentDispositionFileName(
+  header: string | null,
+): string | undefined {
+  if (!header) return undefined;
+
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeHeaderFileName(utf8Match[1].trim().replace(/^"|"$/g, ''));
+  }
+
+  const fileNameMatch = header.match(/filename="?([^";]+)"?/i);
+  if (fileNameMatch?.[1]) {
+    return decodeHeaderFileName(fileNameMatch[1].trim());
+  }
+
+  return undefined;
+}
+
+function extensionFromContentType(
+  contentType: string | undefined,
+  resourceType: FeishuResourceType,
+): string {
+  const normalized = contentType?.split(';')[0]?.trim().toLowerCase();
+  const map: Record<string, string> = {
+    'application/pdf': '.pdf',
+    'application/json': '.json',
+    'application/msword': '.doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+      '.docx',
+    'application/vnd.ms-excel': '.xls',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+      '.xlsx',
+    'application/vnd.ms-powerpoint': '.ppt',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+      '.pptx',
+    'application/zip': '.zip',
+    'text/csv': '.csv',
+    'text/plain': '.txt',
+    'image/gif': '.gif',
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'audio/mpeg': '.mp3',
+    'audio/mp4': '.m4a',
+    'audio/ogg': '.ogg',
+    'audio/wav': '.wav',
+    'video/mp4': '.mp4',
+    'video/quicktime': '.mov',
+    'video/webm': '.webm',
+  };
+
+  if (normalized && map[normalized]) return map[normalized];
+
+  switch (resourceType) {
+    case 'image':
+      return '.jpg';
+    case 'audio':
+      return '.mp3';
+    case 'video':
+    case 'media':
+      return '.mp4';
+    default:
+      return '';
+  }
+}
+
+function sanitizeDownloadFileName(fileName: string): string {
+  const trimmed = fileName.trim().split(/[\\/]/).filter(Boolean).pop() || '';
+  const safe = trimmed
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/[<>:"|?*]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return safe.slice(0, 180) || `resource-${Date.now()}`;
+}
+
 /**
  * 从 Axios / HTTP 错误中取出飞书开放平台常见字段，便于区分「权限 / 参数 / 其它」。
  * 参见：https://open.feishu.cn/document/ukTMukTMukTM/ugjM14COyUjL4ITN
@@ -1223,8 +1316,21 @@ export class FeishuClient {
   async downloadMessageResource(
     messageId: string,
     fileKey: string,
-    type: 'image' | 'file' | 'audio' | 'video' | 'media' = 'file',
+    type: FeishuResourceType = 'file',
   ): Promise<Buffer> {
+    const resource = await this.downloadMessageResourceWithMetadata(
+      messageId,
+      fileKey,
+      type,
+    );
+    return resource.buffer;
+  }
+
+  private async downloadMessageResourceWithMetadata(
+    messageId: string,
+    fileKey: string,
+    type: FeishuResourceType = 'file',
+  ): Promise<DownloadedResource> {
     try {
       // 获取 tenant_access_token
       // Lark SDK 内部会自动管理 token，我们通过一个简单的 API 调用来触发 token 刷新
@@ -1268,6 +1374,10 @@ export class FeishuClient {
       // 读取为 ArrayBuffer
       const arrayBuffer = await response.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
+      const contentType = response.headers.get('content-type') || undefined;
+      const fileName = parseContentDispositionFileName(
+        response.headers.get('content-disposition'),
+      );
 
       log.info(
         {
@@ -1275,12 +1385,13 @@ export class FeishuClient {
           fileKey,
           type,
           size: buffer.length,
-          contentType: response.headers.get('content-type'),
+          contentType,
+          fileName,
         },
         'Resource downloaded successfully',
       );
 
-      return buffer;
+      return { buffer, contentType, fileName };
     } catch (error: any) {
       log.error(
         {
@@ -1354,15 +1465,23 @@ export class FeishuClient {
     fileKey: string,
     fileName?: string,
     groupFolder?: string,
-    type: 'image' | 'file' | 'audio' | 'video' | 'media' = 'file',
+    type: FeishuResourceType = 'file',
   ): Promise<string> {
     const fs = await import('fs');
     const path = await import('path');
 
-    const buffer = await this.downloadMessageResource(messageId, fileKey, type);
+    const resource = await this.downloadMessageResourceWithMetadata(
+      messageId,
+      fileKey,
+      type,
+    );
+    const { buffer } = resource;
 
-    // 生成安全的文件名
-    const safeFileName = fileName || `resource-${Date.now()}`;
+    // 生成安全的文件名；未显式传入时优先使用飞书响应头里的原始文件名。
+    const detectedFileName =
+      resource.fileName ||
+      `resource-${Date.now()}${extensionFromContentType(resource.contentType, type)}`;
+    const safeFileName = sanitizeDownloadFileName(fileName || detectedFileName);
 
     // 如果提供了 groupFolder，保存到 IPC 目录（容器可访问）
     // 否则回退到临时目录（向后兼容）
