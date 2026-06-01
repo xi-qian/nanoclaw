@@ -1,16 +1,17 @@
 ---
 name: ido-approve-review
 description: |
-  付款/合同/采购审批智能审查工具。接受 instance_code（UUID 格式），自动识别审批类型并执行审查，生成建议卡。
+  付款/合同/采购/报销审批智能审查工具。接受 instance_code（UUID 格式），自动识别审批类型并执行审查，生成建议卡。
 
   **触发方式**：通常由 webhook 自动触发，prompt 中已包含实际的 instance_code。
   当 prompt 直接要求使用本 skill 时，直接执行，不要重定向到其他 skill。
   trigger-intelligent-approval 是另一个 skill，仅用于用户在聊天中主动提供 serial_number 的场景，与本 skill 无关。
 
-  **支持三种审批类型**：
+  **支持四种审批类型**：
   - 付款审批（approval_code: 2C701485-AF89-4FB3-AA63-EFEDA4A0BD14）
   - 合同审批（9个合同审批模板之一）
   - 采购审批（approval_code: F753B844-865B-4B3D-B44A-544F3178F8F1）
+  - 报销审批（费用报销 2CA3FB36-1000-4022-A27B-57B7AF7CF0B9 / 出差费用报销 73ED8C14-29E7-4B5F-90B4-663D36D4A78F）
 
   **重要说明**：
   - 必须提供审批实例 ID (instance_code)
@@ -22,7 +23,7 @@ description: |
 
 # ido-approve-review（审批智能审查 Skill）
 
-本 Skill 对付款审批、合同审批或采购审批实例进行智能审查，自动识别审批类型，按对应标准生成建议卡。
+本 Skill 对付款审批、合同审批、采购审批或报销审批实例进行智能审查，自动识别审批类型，按对应标准生成建议卡。
 
 ---
 
@@ -35,6 +36,7 @@ description: |
 | 付款审批 | `2C701485-AF89-4FB3-AA63-EFEDA4A0BD14` | `/data/payment/{instance_code}` | `IDO_SPACE_付款审批Agent执行标准_v1.2.md` |
 | 合同审批 | 9个合同模板之一（非上述付款/采购 code） | `/data/contract/{instance_code}` | `IDO_SPACE_合同审批Agent执行标准_v1.2.md` |
 | 采购审批 | `F753B844-865B-4B3D-B44A-544F3178F8F1` | `/data/buy/{instance_code}` | `IDO_SPACE_采购审批Agent执行标准_v1.2.md` |
+| 报销审批 | `2CA3FB36-1000-4022-A27B-57B7AF7CF0B9`（费用报销）或 `73ED8C14-29E7-4B5F-90B4-663D36D4A78F`（出差费用报销） | `/data/expense-reimbursement/{instance_code}` 或 `/data/travel-expense-reimbursement/{instance_code}` | `IDO_SPACE_报销审批Agent执行标准_v1.0.md` |
 
 ---
 
@@ -67,6 +69,12 @@ curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/contract/{instance
 
 # 采购审批
 curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/buy/{instance_code}"
+
+# 报销审批 - 费用报销（业务招待费/其他日常费用）
+curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/expense-reimbursement/{instance_code}"
+
+# 报销审批 - 出差费用报销（差旅费）
+curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/travel-expense-reimbursement/{instance_code}"
 ```
 
 ### 3. 查询关联数据
@@ -93,6 +101,18 @@ curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/project/{project_c
 # 3. 物料价格历史表.csv — 价格偏离时逐笔回溯排查原因
 ```
 
+**报销审批专属**：步骤2已通过专用接口获取完整报销数据（主表+全部子表）。返回数据包含报销类型（`reimbursement_type_texts`：差旅费/业务招待费/其他日常费用）、明细行（`travel_lines`/`entertainment_lines`/`daily_lines`）、特殊事项（`special_lines`）、发票 OCR 文本等。
+
+若需按 serial_number 模糊搜索，可使用搜索接口：
+
+```bash
+curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/search?q={serial_number}&scope=all"
+```
+
+报销审批的两个 approval_code：
+- `2CA3FB36-1000-4022-A27B-57B7AF7CF0B9`：费用报销（业务招待费/其他日常费用）
+- `73ED8C14-29E7-4B5F-90B4-663D36D4A78F`：出差费用报销（差旅费）
+
 ### 4. 按对应标准执行审查
 
 读取对应的标准文件：
@@ -102,8 +122,9 @@ curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/project/{project_c
 | 付款审批 | `IDO_SPACE_付款审批Agent执行标准_v1.2.md` | 五项判断（真实性/合规性/必要性/价值性/承受性） |
 | 合同审批 | `IDO_SPACE_合同审批Agent执行标准_v1.2.md` | 七项判断（+场景归因/风险性/履约性） |
 | 采购审批 | `IDO_SPACE_采购审批Agent执行标准_v1.2.md` | 五项判断（真实性/合规性/必要性/价值性/承受性） |
+| 报销审批 | `IDO_SPACE_报销审批Agent执行标准_v1.0.md` | 五项判断（真实性/合规性/必要性/合理性/规范性） |
 
-三种类型的判断体系不同，但共享本文件中的通用规则（见下文）。
+四种类型的判断体系不同，但共享本文件中的通用规则（见下文）。
 
 ### 5. 生成建议卡
 
@@ -180,6 +201,25 @@ feishu_approval_comment(
 
 **注意**：如果审批实例状态为 REJECTED（已结束），飞书 API 可能不允许追加评论。此时应跳过备注写入，仅上传飞书文档。
 
+**步骤 C：追加员工工作概要（报销审批必须）**
+
+报销审批必须在主评论后再发一条工作概要备注，总结报销涉及员工的实际工作内容。工作概要不需要 @ 提及，以纯信息备注形式发布，内容要点：
+
+- 实际执行人姓名（如与提交人不同需注明）
+- 工作目的和关联业务/项目
+- 如涉及差旅：跨期天数、日期范围、覆盖城市
+- 如涉及招待：招待笔数、人均范围、招待对象类型
+- 如涉及日常费用：费用类型和用途说明
+- 报销构成概览（各类费用金额分布）
+- 如有代提交，标注代提交人和原因
+
+```
+feishu_approval_comment(
+  instance_id: "审批实例ID",
+  content: '{"text": "【员工工作概要】实际执行人：XXX（如与提交人不同需注明）。工作内容：XXX。报销构成：XXX。"}'
+)
+```
+
 ### 7. 上传飞书文档并链接
 
 将完整建议卡上传为飞书文档，并把链接追加到备注。
@@ -205,7 +245,7 @@ feishu_update_public_setting(
 
 ---
 
-## 共享规则（三种审批类型通用）
+## 共享规则（四种审批类型通用）
 
 ### 核心原则
 
@@ -219,7 +259,7 @@ feishu_update_public_setting(
 | **证据集中管理** | 同一证据点可以影响多个判断，先集中列出再由各判断分别解释影响 |
 | **主判定优先** | 金额不符、节点不符、红线、基础材料缺失等核心问题，应先处理 |
 | **人工确认优先** | 审批评论中特定岗位人员（风控、法务、财务）的确认声明，可信度高于 OCR 或附件自动解析结果；OCR 结果与人工确认冲突时，以人工确认为准 |
-| **首审穷尽** | 首次审查必须对全部判断项（付款5项/合同7项/采购5项）逐一检查，一次性列出所有问题；不得分批披露条件，不得为了减少单次输出而保留问题 |
+| **首审穷尽** | 首次审查必须对全部判断项（付款5项/合同7项/采购5项/报销5项）逐一检查，一次性列出所有问题；不得分批披露条件，不得为了减少单次输出而保留问题 |
 | **人数据必关联项目** | 凡涉及人体生物数据采集、检测、分析（如蛋白组学、基因组学、代谢组学、临床样本检测等）的支出，无论是否收费，所属项目必须为具体项目编号，不得为「其他」；无项目关联的人数据支出 → 合规性不通过 |
 | **资质链上不重复** | 同一审批链（采购→合同→付款）中，前序审批已验证的供应商资质、主体材料，后续审批不再重复要求。供应商已在合格库内或前序审批已确认资质的，营业执照/经营资质免于提供 |
 
@@ -374,6 +414,8 @@ AI 判断范围：[AI 能判断的部分]
 | `/hetang-payment-apply/data/payment/{instance_code}` | 查询付款数据 |
 | `/hetang-payment-apply/data/contract/{instance_code}` | 查询合同数据 |
 | `/hetang-payment-apply/data/buy/{instance_code}` | 查询采购数据 |
+| `/hetang-payment-apply/data/expense-reimbursement/{instance_code}` | 查询费用报销数据（招待费/日常费用） |
+| `/hetang-payment-apply/data/travel-expense-reimbursement/{instance_code}` | 查询出差费用报销数据（差旅费） |
 | `/hetang-payment-apply/data/project/{project_code}` | 查询项目数据 |
 | `/hetang-payment-apply/data/search?q={keyword}&scope={scope}` | 模糊搜索 |
 
@@ -385,6 +427,7 @@ AI 判断范围：[AI 能判断的部分]
 - `IDO_SPACE_付款审批Agent执行标准_v1.2.md` — 付款审批判断标准
 - `IDO_SPACE_合同审批Agent执行标准_v1.2.md` — 合同审批判断标准
 - `IDO_SPACE_采购审批Agent执行标准_v1.2.md` — 采购审批判断标准
+- `IDO_SPACE_报销审批Agent执行标准_v1.0.md` — 报销审批判断标准
 
 ### 数据文件（采购审批使用）
 - `物料均价速查表.csv` — 物料历史均价、价差、最近供应商
