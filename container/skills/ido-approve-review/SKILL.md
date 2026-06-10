@@ -10,7 +10,7 @@ description: |
   **支持四种审批类型**：
   - 付款审批（approval_code: 2C701485-AF89-4FB3-AA63-EFEDA4A0BD14）
   - 合同审批（9个合同审批模板之一）
-  - 采购审批（approval_code: F753B844-865B-4B3D-B44A-544F3178F8F1）
+  - 采购审批（新流程 approval_code: 6F2782E2-6312-437B-8DC3-A8720757484A；旧流程 F753B844-865B-4B3D-B44A-544F3178F8F1，仅在被关联查询时回退）
   - 报销审批（费用报销 2CA3FB36-1000-4022-A27B-57B7AF7CF0B9 / 出差费用报销 73ED8C14-29E7-4B5F-90B4-663D36D4A78F）
 
   **重要说明**：
@@ -19,6 +19,8 @@ description: |
   - 共享规则（禁止表述、条件四要素、建议信心、附件标准、承受性阈值）在本文件中
   - 通过 api.md 定义的数据接口查询相关数据
   - 审查结果写入飞书审批备注并上传飞书文档
+  - 合同审批审查结束后（含复查模式），抽取扩展字段并 POST 至 `/hetang-payment-apply/push-contract-ext-data`（见步骤 9）
+  - 采购审批审查结束后（含复查模式），从采购明细抽取物料行并 POST 至 `/hetang-payment-apply/push-procurement-price-history`（见步骤 10）
 ---
 
 # ido-approve-review（审批智能审查 Skill）
@@ -34,8 +36,9 @@ description: |
 | 审批类型 | approval_code | API 接口 | 标准文件 |
 |---------|---|---------|---------|
 | 付款审批 | `2C701485-AF89-4FB3-AA63-EFEDA4A0BD14` | `/data/payment/{instance_code}` | `IDO_SPACE_付款审批Agent执行标准_v1.2.md` |
-| 合同审批 | 9个合同模板之一（非上述付款/采购 code） | `/data/contract/{instance_code}` | `IDO_SPACE_合同审批Agent执行标准_v1.2.md` |
-| 采购审批 | `F753B844-865B-4B3D-B44A-544F3178F8F1` | `/data/buy/{instance_code}` | `IDO_SPACE_采购审批Agent执行标准_v1.2.md` |
+| 合同审批 | 9个合同模板之一（非上述付款/采购 code） | `/data/contract/{instance_code}` | `IDO_SPACE_合同审批Agent执行标准_v1.2.md`（含 `Contract_Templates/` 模版一致性审查） |
+| 采购审批（新流程） | `6F2782E2-6312-437B-8DC3-A8720757484A` | `/data/buy-v2/{instance_code}` | `IDO_SPACE_采购审批Agent执行标准_v1.2.md` |
+| 采购审批（旧流程） | `F753B844-865B-4B3D-B44A-544F3178F8F1` | `/data/buy/{instance_code}` | `IDO_SPACE_采购审批Agent执行标准_v1.2.md` |
 | 报销审批 | `2CA3FB36-1000-4022-A27B-57B7AF7CF0B9`（费用报销）或 `73ED8C14-29E7-4B5F-90B4-663D36D4A78F`（出差费用报销） | `/data/expense-reimbursement/{instance_code}` 或 `/data/travel-expense-reimbursement/{instance_code}` | `IDO_SPACE_报销审批Agent执行标准_v1.0.md` |
 
 ---
@@ -56,6 +59,8 @@ feishu_approval_get_instance(instance_code: "审批实例ID")
 - `status`: 审批实例状态
 - `form`: 表单数据
 
+**表单控件类型以飞书审批定义为准**：各审批类型的控件 `name` / `type` 见对应执行标准 §数据输入规范，或调用 `GET /open-apis/approval/v4/approvals/{approval_code}?locale=zh-CN` 获取最新定义。`text` 类型控件为填写说明，审查时忽略。
+
 ### 2. 按类型查询审批详情
 
 根据步骤1的 `approval_code` 确定类型，调用对应 API：
@@ -67,7 +72,10 @@ curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/payment/{instance_
 # 合同审批
 curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/contract/{instance_code}"
 
-# 采购审批
+# 采购审批（新流程，approval_code = 6F2782E2-6312-437B-8DC3-A8720757484A）
+curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/buy-v2/{instance_code}"
+
+# 采购审批（旧流程，approval_code = F753B844-865B-4B3D-B44A-544F3178F8F1）
 curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/buy/{instance_code}"
 
 # 报销审批 - 费用报销（业务招待费/其他日常费用）
@@ -85,12 +93,34 @@ curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/travel-expense-rei
 # 关联合同（付款 → 合同）
 curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/contract/{contract_instance_code}"
 
-# 关联采购（付款/合同 → 采购）
+# 关联采购（付款/合同 → 采购）：先查新流程，404 时回退旧流程
+curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/buy-v2/{buy_instance_code}"
+# 若返回 404（被关联到历史旧采购单）：
 curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/buy/{buy_instance_code}"
 
-# 关联项目（如有项目编码）
+# 关联项目（如有项目编码；project_code 多选时为逗号连接，需逐个查询）
 curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/project/{project_code}"
 ```
+
+**项目与公司层面费用字段**（付款/合同/采购新流程 API 返回，审查时必查）：
+
+| 字段 | 适用流程 | 说明 |
+|------|---------|------|
+| `has_affiliated_project_text` | 付款、合同 | 是否有所属项目（是/否） |
+| `is_project_payment_text` | 采购新流程 | 是否为项目付款（是/否） |
+| `is_rd_expense_text` | 付款、合同、采购新流程 | 是否为公司层面研发费用（是/否） |
+| `is_daily_expense_text` | 付款、合同、采购新流程 | 是否为公司层面日常费用（是/否） |
+| `project_code` | 全部 | 所属项目编号，多选逗号连接 |
+
+**项目关联判定规则**：
+- `has_affiliated_project_text` = 是 或 `is_project_payment_text` = 是 → 必须有有效 `project_code`（不可为空或「其他」）
+- `is_rd_expense_text` = 是 或 `is_daily_expense_text` = 是 → 公司层面费用，可不关联具体项目，但须在建议卡中标注费用性质
+- 人数据支出（见共享规则）无论上述字段如何，都必须关联具体项目编号
+
+**关联采购回退规则**：
+- 合同 `related_buy_instance_codes`、付款链路上的采购关联：优先调用 `/data/buy-v2/`
+- 返回 404 或 `approval_code` = `F753B844-865B-4B3D-B44A-544F3178F8F1` 时，改用 `/data/buy/`
+- 审查时根据返回的 `approval_code` 区分新旧流程，旧流程字段见采购标准 §3.1，新流程见 §3.2
 
 **采购审批专属**：查询参考数据表进行价格和供应商比对：
 
@@ -107,6 +137,9 @@ curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/project/{project_c
 
 ```bash
 curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/search?q={serial_number}&scope=all"
+
+# 按 scope 精确搜索（采购新流程用 buy_v2，旧流程用 buy）
+curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/search?q={keyword}&scope=buy_v2&limit=10"
 ```
 
 报销审批的两个 approval_code：
@@ -120,7 +153,7 @@ curl -s "http://192.168.100.1:27298/hetang-payment-apply/data/search?q={serial_n
 | 审批类型 | 标准文件 | 判断体系 |
 |---------|---------|---------|
 | 付款审批 | `IDO_SPACE_付款审批Agent执行标准_v1.2.md` | 五项判断（真实性/合规性/必要性/价值性/承受性） |
-| 合同审批 | `IDO_SPACE_合同审批Agent执行标准_v1.2.md` | 七项判断（+场景归因/风险性/履约性） |
+| 合同审批 | `IDO_SPACE_合同审批Agent执行标准_v1.2.md` | 模版与内容审查 + 七项判断（+场景归因/风险性/履约性） |
 | 采购审批 | `IDO_SPACE_采购审批Agent执行标准_v1.2.md` | 五项判断（真实性/合规性/必要性/价值性/承受性） |
 | 报销审批 | `IDO_SPACE_报销审批Agent执行标准_v1.0.md` | 五项判断（真实性/合规性/必要性/合理性/规范性） |
 
@@ -242,6 +275,109 @@ feishu_update_public_setting(
   link_share_entity: "tenant_readable"
 )
 ```
+
+### 9. 推送合同扩展数据（仅合同审批）
+
+**触发条件**：合同审批 AI 审查流程结束即执行，**含复查模式**；与建议动作（通过/不通过等）、实例 `instance_status` 无关。
+
+**字段抽取规则**：见 `IDO_SPACE_合同审批Agent执行标准_v1.2.md` §五。
+
+**组装与推送规则**：
+
+| 规则 | 说明 |
+|------|------|
+| 必填 | `serial_number` 必须有值，否则跳过本步骤 |
+| 可选字段 | 抽取不到的字段**不传对应 key**（JSON 中省略，不传 `null` 或空字符串） |
+| `payment_nodes` | **仅** `contract_type_text` = 采购类 且能抽取到付款节点时传；非采购类不传此 key |
+| 失败处理 | POST 失败**不阻断**审查；不重试、不追加飞书备注，继续结束流程 |
+
+**步骤 A：组装 payload**
+
+从步骤 2 合同 API 数据 + 审查上下文（OCR、关联采购、人工确认评论等）抽取字段，仅纳入有值的 key：
+
+```json
+{
+  "serial_number": "202605110003",
+  "approval_code": "1B8B163C-F4F3-4733-B7C0-C73120240917",
+  "instance_code": "56BF55C5-0826-4265-9E4D-827A59D79357",
+  "approval_name": "广东荷塘生华 合同审核流程",
+  "contract_summary": "与某某化工厂签订液氮为期3年的采购合同",
+  "contract_start_date": "2026-01-01",
+  "contract_end_date": "2026-12-31",
+  "is_framework_contract": "否",
+  "tax_rate": "13%",
+  "payment_nodes": "预付30%，验收70%"
+}
+```
+
+上例为字段齐全时的参考；实际 payload 只包含有值的 key（`serial_number` 除外必含）。
+
+**步骤 B：POST 推送**
+
+```bash
+curl -X POST "http://192.168.100.1:27298/hetang-payment-apply/push-contract-ext-data" \
+  -H "Content-Type: application/json" \
+  -d '{ ... 仅含有值 key 的 JSON ... }'
+```
+
+接口详细定义见 `api.md` §8。
+
+---
+
+### 10. 推送采购价格历史（仅采购审批）
+
+**触发条件**：采购审批 AI 审查流程结束即执行，**含复查模式**；与建议动作（通过/不通过等）、实例 `instance_status` 无关。新旧采购流程均适用。
+
+**字段抽取规则**：见 `IDO_SPACE_采购审批Agent执行标准_v1.2.md` §九。
+
+**组装与推送规则**：
+
+| 规则 | 说明 |
+|------|------|
+| 必填 | `serial_number` 必须有值，否则跳过本步骤 |
+| `items` | 从采购明细 Excel / `attachments_ocr_text` 逐行抽取；`items` 可为空数组（仅删除旧数据） |
+| 行有效性 | 每条须满足 `material_name`、`purchase_date`、`quantity`、`unit_price_tax_incl`、`amount_tax_incl` 均有效，否则**不传该行**（服务端也会静默跳过） |
+| 可选字段 | `catalog_no`、`specification`、`supplier_name`、`manufacturer` 等抽取不到时可省略对应 key（服务端空值写 `"无"`） |
+| 失败处理 | POST 失败**不阻断**审查；不重试、不追加飞书备注，继续结束流程 |
+
+**步骤 A：组装 payload**
+
+从步骤 2 采购 API 数据（`/data/buy-v2/` 或 `/data/buy/`）+ 采购明细解析 + 关联项目查询，组装 `items` 数组：
+
+```json
+{
+  "serial_number": "202605220009",
+  "items": [
+    {
+      "material_name": "温湿度记录仪",
+      "catalog_no": "RCW-360Plus",
+      "specification": "药品转运温度记录仪",
+      "purchase_date": "2026-05-22",
+      "quantity": 1,
+      "unit_price_tax_incl": 740,
+      "amount_tax_incl": 740,
+      "supplier_name": "精创京东官方旗舰店",
+      "manufacturer": "精创（elitech）",
+      "approval_status": "PENDING",
+      "purchase_type": "设备",
+      "supplier_tag": "临时合格供应商",
+      "project_name": "北京胸科医院IIT项目"
+    }
+  ]
+}
+```
+
+上例为字段齐全时的参考；`items` 元素仅包含有值的 key（五个写入必填字段除外）。
+
+**步骤 B：POST 推送**
+
+```bash
+curl -X POST "http://192.168.100.1:27298/hetang-payment-apply/push-procurement-price-history" \
+  -H "Content-Type: application/json" \
+  -d '{ ... serial_number + items JSON ... }'
+```
+
+接口详细定义见 `api.md` §9。
 
 ---
 
@@ -413,11 +549,14 @@ AI 判断范围：[AI 能判断的部分]
 |------|------|
 | `/hetang-payment-apply/data/payment/{instance_code}` | 查询付款数据 |
 | `/hetang-payment-apply/data/contract/{instance_code}` | 查询合同数据 |
-| `/hetang-payment-apply/data/buy/{instance_code}` | 查询采购数据 |
+| `/hetang-payment-apply/data/buy-v2/{instance_code}` | 查询采购新流程数据 |
+| `/hetang-payment-apply/data/buy/{instance_code}` | 查询采购旧流程数据（关联回退） |
 | `/hetang-payment-apply/data/expense-reimbursement/{instance_code}` | 查询费用报销数据（招待费/日常费用） |
 | `/hetang-payment-apply/data/travel-expense-reimbursement/{instance_code}` | 查询出差费用报销数据（差旅费） |
 | `/hetang-payment-apply/data/project/{project_code}` | 查询项目数据 |
 | `/hetang-payment-apply/data/search?q={keyword}&scope={scope}` | 模糊搜索 |
+| `/hetang-payment-apply/push-contract-ext-data` | 推送合同扩展数据（POST，仅合同审批步骤 9） |
+| `/hetang-payment-apply/push-procurement-price-history` | 推送采购价格历史（POST，仅采购审批步骤 10） |
 
 ---
 
@@ -433,6 +572,9 @@ AI 判断范围：[AI 能判断的部分]
 - `物料均价速查表.csv` — 物料历史均价、价差、最近供应商
 - `供应商主表.csv` — 供应商合格库状态、历史合作次数
 - `物料价格历史表.csv` — 逐次采购价格明细
+
+### 合同模板文件（合同审批使用）
+- `Contract_Templates/买卖合同模版.docx` — 采购类标准合同模板；表单「合同模版」= 有时须比对一致性（见合同标准 §一）
 
 ### 接口文件
 - `api.md` — 数据查询接口定义

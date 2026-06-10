@@ -1,4 +1,4 @@
-# hetang-payment 对外查询接口
+# hetang-payment 对外接口
 
 Base URL 示例：`http://<host>:27298`
 
@@ -6,7 +6,7 @@ Base URL 示例：`http://<host>:27298`
 
 ## 通用说明
 
-- 全部为 `GET` 查询接口
+- 查询类接口均为 `GET`；数据推送类接口为 `POST`，见第 8 节
 - 查询成功：`200`，格式 `{"ok": true, "data": {...}}` 或 `{"ok": true, ...}`（视接口而定）
 - 未找到：`404`，格式 `{"detail": "..."}`
 - 参数错误：`400`
@@ -20,8 +20,19 @@ Base URL 示例：`http://<host>:27298`
 | `expense_date` | 费用/特殊事项日期时间，格式 `YYYY-MM-DD` 或 `YYYY-MM-DD HH:MM`（到分钟） |
 | `attachments_ocr_text` | JSON 字符串，key 为附件文件名（含业务前缀，见各接口说明）；普通附件 value 为 OCR 文本字符串；**zip/7z 压缩包** value 为嵌套对象（key=包内相对路径，value=OCR 文本，策略 A） |
 | `attachments_json` | JSON 字符串，含 `ext`（文件名，含前缀）与 `value`（飞书 URL 列表）；仅特殊事项行等场景返回 |
-| 不返回字段 | 内部键值 `*_key`、`parsed_form_items_json`、`created_at`、`update_at`；主表 `invoice_attachments_json` 不对外（发票 OCR 见 `attachments_ocr_text`） |
+| 不返回字段 | 内部键值 `*_key`、`parsed_form_items_json`、`created_at`、`update_at`；主表 `invoice_attachments_json` 不对外（发票 OCR 见 `attachments_ocr_text`）；付款主表 `budget_items_json`（资金预算明细）、采购主表 `upload_detail_attachments`（上传采购明细附件元数据）不对外 |
 | 子表关联键 | 子表行均含 `approval_code`、`instance_code`；明细另有 `line_no`（特殊事项另有 `special_type`） |
+
+### 采购 / 合同 / 付款 近期新增字段一览
+
+| 流程 | 表 | 新增对外字段 | 查询接口 | 搜索接口 |
+| --- | --- | --- | --- | --- |
+| 付款 | `payment_apply_payment` | `project_code`、`has_affiliated_project_text`、`is_rd_expense_text`、`is_daily_expense_text`、`attachments_ocr_text` | 已支持（`SELECT *` 自动透出） | 已支持搜索 `project_code`、`has_affiliated_project_text`、`is_rd_expense_text`、`is_daily_expense_text`、`contract_instance_codes` |
+| 采购（旧） | `payment_apply_buy` | `project_code`、`attachments_ocr_text` | 已支持 | 未纳入搜索字段 |
+| 采购（v2） | `payment_apply_buy_v2` | `supplier_type_text`、`temp_supplier_remark`（替代原 `supplier_name`） | 已支持 | 已支持搜索上述字段 |
+| 合同 | `payment_apply_contract` | `project_code`、`has_affiliated_project_text`、`is_rd_expense_text`、`is_daily_expense_text`、`related_buy_instance_codes`、`counterparty_contact`、`attachments_ocr_text` | 已支持 | 已支持搜索 `project_code`、`has_affiliated_project_text`、`is_rd_expense_text`、`is_daily_expense_text`、`counterparty_contact`、`related_buy_instance_codes` |
+
+> 付款流程数据库另有 `budget_items_json`（资金预算明细），按内部字段处理，查询与搜索均不返回。
 
 ## 1) 查询付款数据
 
@@ -40,6 +51,9 @@ Base URL 示例：`http://<host>:27298`
 | `instance_status` | string | 实例状态：`PENDING` / `APPROVED` / `REJECTED` 等 |
 | `topic` | string | 主题 |
 | `project_code` | string | 所属项目编号，多选逗号连接 |
+| `has_affiliated_project_text` | string | 是否有所属项目（是/否） |
+| `is_rd_expense_text` | string | 是否是公司层面研发费用（是/否） |
+| `is_daily_expense_text` | string | 是否是公司层面日常费用（是/否） |
 | `amount` | number | 金额（元） |
 | `apply_type_text` | string | 付款申请类型（文本） |
 | `has_contract_text` | string | 是否有关联合同（文本） |
@@ -67,6 +81,10 @@ Base URL 示例：`http://<host>:27298`
     "serial_number": "202605170021",
     "instance_status": "APPROVED",
     "topic": "供应商付款-聚合美",
+    "project_code": "HTSH-26-NK-006",
+    "has_affiliated_project_text": "是",
+    "is_rd_expense_text": "否",
+    "is_daily_expense_text": "否",
     "amount": "35200.00",
     "apply_type_text": "货款",
     "has_contract_text": "有",
@@ -82,10 +100,10 @@ Base URL 示例：`http://<host>:27298`
 
 ---
 
-## 2) 查询采购数据
+## 2) 查询采购数据（旧流程）
 
 - **URL**: `/hetang-payment-apply/data/buy/{instance_code}`
-- **说明**: 按 `instance_code` 查询 `payment_apply_buy`
+- **说明**: 按 `instance_code` 查询 `payment_apply_buy`（审批模板 `F753B844-865B-4B3D-B44A-544F3178F8F1`，采购申请）
 
 ### 业务字段说明（data 内）
 
@@ -122,6 +140,7 @@ Base URL 示例：`http://<host>:27298`
     "serial_number": "202605160009",
     "instance_status": "APPROVED",
     "topic": "细胞培养耗材采购",
+    "project_code": "HTSH-26-NK-006",
     "buy_type_text": "物料采购",
     "total_amount": "9800.00",
     "supplier_type_text": "长期供应商",
@@ -130,6 +149,81 @@ Base URL 示例：`http://<host>:27298`
   }
 }
 ```
+
+---
+
+## 2b) 查询采购新流程数据（v2）
+
+- **URL**: `/hetang-payment-apply/data/buy-v2/{instance_code}`
+- **说明**: 按 `instance_code` 查询 `payment_apply_buy_v2`（审批模板 `6F2782E2-6312-437B-8DC3-A8720757484A`，采购新流程申请）
+
+### 业务字段说明（data 内）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | int | 主键 |
+| `approval_code` | string | 审批模板编码（固定为采购新流程） |
+| `instance_code` | string | 审批实例编码 |
+| `approval_name` | string | 审批模板名称 |
+| `serial_number` | string | 审批单号 |
+| `instance_status` | string | 实例状态 |
+| `apply_department_name` | string | 申请部门名称 |
+| `apply_department_open_id` | string | 申请部门 open_id |
+| `is_project_payment_text` | string | 是否为项目付款（是/否） |
+| `project_code` | string | 所属项目编号，多选逗号连接；非项目付款或无「所属项目」控件时可能为空 |
+| `is_rd_expense_text` | string | 是否为公司层面研发费用（是/否） |
+| `is_daily_expense_text` | string | 是否为公司层面日常费用（是/否） |
+| `buy_type_text` | string | 采购类型（文本） |
+| `procurement_content` | string | 采购内容 |
+| `apply_company_text` | string | 申请公司（文本） |
+| `total_amount` | number | 采购总金额（元） |
+| `supplier_type_text` | string | 物料供应商信息（文本，与旧采购同名字段含义） |
+| `temp_supplier_remark` | string | 临时合格供应商说明（选「临时合格供应商」时填写） |
+| `remark` | string | 备注 |
+| `attachments_ocr_text` | string | 附件 OCR 汇总 JSON（上传采购明细等） |
+
+> 与旧采购接口差异：v2 **无** `topic`、`contract_template_text`；**有** 申请部门、是否项目付款、公司层面费用、采购内容、申请公司、临时供应商说明等。
+
+### 请求示例
+
+`GET /hetang-payment-apply/data/buy-v2/<instance_code>`
+
+### 成功响应示例
+
+```json
+{
+  "ok": true,
+  "data": {
+    "id": 1,
+    "approval_code": "6F2782E2-6312-437B-8DC3-A8720757484A",
+    "instance_code": "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX",
+    "approval_name": "采购新流程申请",
+    "serial_number": "202606020001",
+    "instance_status": "PENDING",
+    "apply_department_name": "企管部",
+    "apply_department_open_id": "od-8b1c999dee949396eba8d66b0b616369",
+    "is_project_payment_text": "是",
+    "project_code": "0",
+    "is_rd_expense_text": "否",
+    "is_daily_expense_text": "否",
+    "buy_type_text": "办公用品",
+    "procurement_content": "哈哈哈",
+    "apply_company_text": "北京水木生华医疗科技有限公司",
+    "total_amount": "777.00",
+    "supplier_type_text": "临时合格供应商",
+    "temp_supplier_remark": "临时说明",
+    "remark": "新飞猪",
+    "attachments_ocr_text": "{\"Screenshot_....jpg\":\"...\"}"
+  }
+}
+```
+
+### 错误说明
+
+| HTTP | detail 示例 |
+| --- | --- |
+| `404` | `未找到采购新流程记录: instance_code=...` |
+| `500` | `查询 payment_apply_buy_v2 失败: ...` |
 
 ---
 
@@ -221,6 +315,9 @@ Base URL 示例：`http://<host>:27298`
 | `instance_status` | string | 实例状态 |
 | `topic` | string | 主题 |
 | `project_code` | string | 所属项目编号，多选逗号连接 |
+| `has_affiliated_project_text` | string | 是否有所属项目（是/否） |
+| `is_rd_expense_text` | string | 是否是公司层面研发费用（是/否） |
+| `is_daily_expense_text` | string | 是否是公司层面日常费用（是/否） |
 | `seal_type_text` | string | 盖章类型（文本） |
 | `contract_template_text` | string | 合同模板（文本） |
 | `contract_type_text` | string | 合同类型（文本） |
@@ -228,6 +325,7 @@ Base URL 示例：`http://<host>:27298`
 | `contract_no` | string | 合同编号 |
 | `counterparty_name` | string | 对方单位名称 |
 | `counterparty_owner` | string | 对方负责人 |
+| `counterparty_contact` | string | 对方联系方式 |
 | `amount` | number | 金额（元） |
 | `related_buy_instance_codes` | string | 关联采购申请实例编码，逗号分隔 |
 | `remark` | string | 备注 |
@@ -250,6 +348,10 @@ Base URL 示例：`http://<host>:27298`
     "serial_number": "202605110003",
     "instance_status": "APPROVED",
     "topic": "液氮采购-广州粤佳气体有限公司",
+    "project_code": "HTSH-26-NK-006",
+    "has_affiliated_project_text": "是",
+    "is_rd_expense_text": "否",
+    "is_daily_expense_text": "否",
     "seal_type_text": "合同专用章",
     "contract_template_text": "无",
     "contract_type_text": "采购类",
@@ -257,6 +359,7 @@ Base URL 示例：`http://<host>:27298`
     "contract_no": "无",
     "counterparty_name": "广州粤佳气体有限公司",
     "counterparty_owner": "陈志文",
+    "counterparty_contact": "13800138000",
     "amount": "1200.00",
     "related_buy_instance_codes": "A61916FB-4B27-4981-8260-F79DB0D6AE07",
     "remark": "1200 元 / 罐（195L），月结",
@@ -748,7 +851,8 @@ Base URL 示例：`http://<host>:27298`
 | scope | 数据表 | 说明 |
 | --- | --- | --- |
 | `project` | `payment_apply_projects` | 项目基础信息 |
-| `buy` | `payment_apply_buy` | 采购审批 |
+| `buy` | `payment_apply_buy` | 采购审批（旧流程） |
+| `buy_v2` | `payment_apply_buy_v2` | 采购新流程申请 |
 | `payment` | `payment_apply_payment` | 付款审批 |
 | `contract` | `payment_apply_contract` | 合同审批 |
 | `project_weekreport` | `payment_apply_projects_weekreport` | 项目周报 |
@@ -771,9 +875,10 @@ Base URL 示例：`http://<host>:27298`
 | scope | 可搜索字段 |
 | --- | --- |
 | `project` | `project_name`, `global_pi`, `pipeline_directive`, `indications`, `chassis_cell`, `target`, `hospital`, `department`, `pi`, `progress`, `risk_level`, `risk`, `pending_coordinate_matters`, `mark` |
-| `payment` | `approval_name`, `serial_number`, `topic`, `apply_type_text`, `has_contract_text`, `pay_account_text`, `pay_method_text`, `payee_info`, `remark`, `attachments_ocr_text` |
+| `payment` | `approval_name`, `serial_number`, `topic`, `project_code`, `has_affiliated_project_text`, `is_rd_expense_text`, `is_daily_expense_text`, `apply_type_text`, `has_contract_text`, `contract_instance_codes`, `pay_account_text`, `pay_method_text`, `payee_info`, `remark`, `attachments_ocr_text` |
 | `buy` | `approval_name`, `serial_number`, `topic`, `buy_type_text`, `supplier_type_text`, `contract_template_text`, `upload_detail_attachments`, `attachments_ocr_text` |
-| `contract` | `approval_name`, `serial_number`, `topic`, `seal_type_text`, `contract_template_text`, `contract_type_text`, `purpose`, `contract_no`, `counterparty_name`, `counterparty_owner`, `remark`, `attachments_ocr_text` |
+| `buy_v2` | `approval_name`, `serial_number`, `apply_department_name`, `is_project_payment_text`, `buy_type_text`, `procurement_content`, `apply_company_text`, `supplier_type_text`, `temp_supplier_remark`, `remark`, `upload_detail_attachments`, `attachments_ocr_text` |
+| `contract` | `approval_name`, `serial_number`, `topic`, `project_code`, `has_affiliated_project_text`, `is_rd_expense_text`, `is_daily_expense_text`, `seal_type_text`, `contract_template_text`, `contract_type_text`, `purpose`, `contract_no`, `counterparty_name`, `counterparty_owner`, `counterparty_contact`, `related_buy_instance_codes`, `remark`, `attachments_ocr_text` |
 | `project_weekreport` | `report_title`, `reporter`, `reporting_department`, `affiliated_project`, `project_count`, `progress_content`, `next_week_plan`, `risk_level`, `risk_content`, `need_coordination_support`, `coordination_support_content` |
 | `supplier_materials` | `supplier_name`, `material_name`, `catalog_no`, `specification`, `manufacturer`, `remark` |
 | `procurement_price_history` | `material_name`, `catalog_no`, `specification`, `purchase_date`, `quantity`, `unit_price_tax_incl`, `amount_tax_incl`, `supplier_name`, `manufacturer`, `serial_number`, `approval_status`, `purchase_type`, `supplier_tag`, `project_name` |
@@ -794,6 +899,8 @@ Base URL 示例：`http://<host>:27298`
 ### 请求示例
 
 合同搜索：`GET /hetang-payment-apply/data/search?q=荷塘&scope=contract&limit=20`
+
+采购新流程（v2）：`GET /hetang-payment-apply/data/search?q=临时合格供应商&scope=buy_v2&limit=10`
 
 采购核查-物料价格历史： `GET /hetang-payment-apply/data/search?q=M113&scope=procurement_price_history&limit=10`
 
@@ -824,8 +931,12 @@ Base URL 示例：`http://<host>:27298`
       "serial_number": "202605110003",
       "instance_status": "APPROVED",
       "topic": "液氮采购-广州粤佳气体有限公司",
+      "has_affiliated_project_text": "是",
+      "is_rd_expense_text": "否",
+      "is_daily_expense_text": "否",
       "contract_type_text": "采购类",
       "counterparty_name": "广州粤佳气体有限公司",
+      "counterparty_contact": "13800138000",
       "attachments_ocr_text": "{\"液氮采购合同.pdf\":\"...\"}",
       "_scope": "contract",
       "_table": "payment_apply_contract"
@@ -928,3 +1039,175 @@ Base URL 示例：`http://<host>:27298`
 | --- | --- |
 | `400` | `q 不能为空`；`scope` 不在允许列表 |
 | `500` | 数据库查询失败 |
+
+---
+
+## 8) 推送合同扩展数据
+
+- **URL**: `/hetang-payment-apply/push-contract-ext-data`
+- **Method**: `POST`
+- **Content-Type**: `application/json`
+- **说明**: 按 `serial_number` 写入或更新 `payment_apply_contract_ext`；`serial_number` 为唯一主键，存在则更新，不存在则插入。`created_at`、`update_at` 由服务端自动写入，无需在请求体中传递。
+
+### 请求字段
+
+| 字段 | 类型 | 必填 | 说明            |
+| --- | --- | --- |---------------|
+| `serial_number` | string | 是 | 审批单号（唯一主键）    |
+| `approval_code` | string | 否 | 审批模板编码        |
+| `instance_code` | string | 否 | 审批实例编码        |
+| `approval_name` | string | 否 | 审批模板名称        |
+| `contract_summary` | string | 否 | 合同一句话摘要       |
+| `contract_start_date` | string | 否 | 合同开始日期        |
+| `contract_end_date` | string | 否 | 合同结束日期        |
+| `is_framework_contract` | string | 否 | 是否为框架合同       |
+| `tax_rate` | string | 否 | 税率            |
+| `payment_nodes` | string | 否 | 付款节点（采购类合同才有值） |
+
+### 请求示例
+
+```bash
+curl -X POST "http://127.0.0.1:27298/hetang-payment-apply/push-contract-ext-data" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "approval_code": "1B8B163C-F4F3-4733-B7C0-C73120240917",
+    "instance_code": "56BF55C5-0826-4265-9E4D-827A59D79357",
+    "approval_name": "广东荷塘生华 合同审核流程",
+    "serial_number": "202605110003",
+    "contract_summary": "液氮采购合同",
+    "contract_start_date": "2026-01-01",
+    "contract_end_date": "2026-12-31",
+    "is_framework_contract": "否",
+    "tax_rate": "13%",
+    "payment_nodes": "预付30%，验收70%"
+  }'
+```
+
+### 成功响应示例
+
+```json
+{
+  "ok": true,
+  "serial_number": "202605110003"
+}
+```
+
+### 错误响应
+
+| HTTP | 说明 |
+| --- | --- |
+| `400` | `serial_number 不能为空` |
+| `500` | `数据库写入失败: ...` |
+
+---
+
+## 9) 推送采购价格历史
+
+- **URL**: `/hetang-payment-apply/push-procurement-price-history`
+- **Method**: `POST`
+- **Content-Type**: `application/json`
+- **说明**: 按审批单号 `serial_number` 全量替换该单号下的物料价格历史：先删除库中同单号全部记录，再插入 `items` 数组中的有效行。`created_at`、`update_at` 由服务端自动写入。
+- **写入条件**: `items` 中每条记录须满足 `material_name`、`purchase_date`、`quantity`、`unit_price_tax_incl`、`amount_tax_incl` 均有效，否则**静默跳过**该条（计入响应 `skipped`）。`serial_number` 取自请求体顶层，无需在 `items` 元素中重复传递。
+- **空值处理**: `catalog_no`、`specification`、`supplier_name`、`manufacturer` 为空时，入库前写入 `"无"`
+
+### 请求字段
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `serial_number` | string | 是 | 审批单号（流水号） |
+| `items` | array | 是 | 该单号下的物料明细，可为空数组（仅删除旧数据） |
+
+**items 数组元素字段**
+
+| 字段 | 类型 | 写入必填 | 说明 |
+| --- | --- | --- | --- |
+| `material_name` | string | 是 | 物料名称 |
+| `purchase_date` | string | 是 | 采购日期（`YYYY-MM-DD`） |
+| `quantity` | number | 是 | 数量 |
+| `unit_price_tax_incl` | number | 是 | 含税单价 |
+| `amount_tax_incl` | number | 是 | 含税金额 |
+| `catalog_no` | string | 否 | 货号（空则写 `"无"`） |
+| `specification` | string | 否 | 规格（空则写 `"无"`） |
+| `supplier_name` | string | 否 | 供应商（空则写 `"无"`） |
+| `manufacturer` | string | 否 | 生产厂商（空则写 `"无"`） |
+| `approval_status` | string | 否 | 审批状态 |
+| `purchase_type` | string | 否 | 采购类型 |
+| `supplier_tag` | string | 否 | 供应商标签 |
+| `project_name` | string | 否 | 所属项目 |
+
+### 请求示例
+
+**示例：一个单号下两条物料**
+
+```bash
+curl -X POST "http://192.168.100.1:27298/hetang-payment-apply/push-procurement-price-history" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "serial_number": "202605220009",
+    "items": [
+      {
+        "material_name": "温湿度记录仪",
+        "catalog_no": "RCW-360Plus",
+        "specification": "药品转运温度记录仪",
+        "purchase_date": "2026-05-22",
+        "quantity": 1,
+        "unit_price_tax_incl": 740,
+        "amount_tax_incl": 740,
+        "supplier_name": "精创京东官方旗舰店",
+        "manufacturer": "精创（elitech）",
+        "approval_status": "PENDING",
+        "purchase_type": "设备",
+        "supplier_tag": "临时合格供应商",
+        "project_name": "北京胸科医院IIT项目"
+      },
+      {
+        "material_name": "5ml细胞冻存管",
+        "catalog_no": "OB02007",
+        "specification": "25个/包，1000个/箱",
+        "purchase_date": "2026-03-27",
+        "quantity": 1,
+        "unit_price_tax_incl": 3600,
+        "amount_tax_incl": 3600,
+        "supplier_name": "北京钎铧科技",
+        "manufacturer": "德国SARSTEDT",
+        "approval_status": "APPROVED",
+        "purchase_type": "生产原料",
+        "supplier_tag": "合格供应商",
+        "project_name": "通用项目"
+      }
+    ]
+  }'
+```
+
+### 成功响应示例
+
+**写入成功**
+
+```json
+{
+  "ok": true,
+  "serial_number": "202605220009",
+  "deleted": 2,
+  "inserted": 2,
+  "skipped": 0
+}
+```
+
+**部分行无效被跳过**
+
+```json
+{
+  "ok": true,
+  "serial_number": "202605220009",
+  "deleted": 0,
+  "inserted": 1,
+  "skipped": 1
+}
+```
+
+### 错误响应
+
+| HTTP | 说明 |
+| --- | --- |
+| `400` | `serial_number 不能为空` |
+| `500` | `数据库写入失败: ...` |
