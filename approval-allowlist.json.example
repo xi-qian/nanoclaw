@@ -1,11 +1,11 @@
 {
   "default": { "allow": false },
   "groups": {
-    "feishu-oc_YOUR_GROUP_ID": {
-      "actions": ["approve", "reject", "comment", "query", "get_instance", "transfer"],
-      "approval_codes": ["YOUR_APPROVAL_CODE_1", "YOUR_APPROVAL_CODE_2"]
+    "feishu-oc_805475081daf7a78b023e13e53a41fc2": {
+      "actions": ["*"],
+      "approval_codes": ["*"]
     },
-    "feishu-oc_APPROVAL_BOT_GROUP": {
+    "feishu-oc_64a35466adac455d7a03c654c3be5f28": {
       "actions": ["*"],
       "approval_codes": ["*"]
     }

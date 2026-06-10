@@ -24,6 +24,7 @@ groups/global/*
 
 # Customized Config file
 webhook-tasks.json
+approval-allowlist.json
 
 # Temp files
 .tmp-*
