@@ -20,25 +20,47 @@ Final runtime shape:
 
 ```mermaid
 flowchart TD
-  Config["Config sources<br/>tenant.json, agent.json<br/>builtin, tenant, and agent skills"]
-  Host["Host NanoClaw process<br/>channels, router, scheduler, policy<br/>tenant loader, runtime client<br/>tool workers, credential proxy"]
-  HostDb[("Central host DB<br/>messages, tasks, cursors, groups")]
-  AgentFinance["Docker service/container: finance<br/>supervisor, provider adapters<br/>read-only skill mounts, manifest"]
-  AgentOps["Docker service/container: ops<br/>same runtime shape"]
-  GroupMain["Group runtime: feishu-main<br/>Linux user ncg_feishu_main<br/>live runner, isolated tasks<br/>runtime DBs, generated skills"]
-  GroupOps["Group runtime: ops<br/>Linux user ncg_ops<br/>live runner, isolated tasks<br/>runtime DBs, generated skills"]
+  Inputs["Deployment inputs<br/>tenant.json, agent.json<br/>builtin, tenant, and agent skills<br/>host policy files"]
+  Host["Host NanoClaw process"]
+  Routing["Channels, router, scheduler<br/>sender, trigger, card-action policy"]
+  State[("Central host DB<br/>messages, tasks, cursors, groups")]
+  RuntimeClient["Runtime client<br/>agent container lifecycle<br/>supervisor RPC"]
+  ToolPlane["Tool workers and credential proxy<br/>Feishu/channel APIs, approvals, files"]
+  AgentFinance["Agent service container: finance"]
+  Supervisor["Supervisor<br/>runs.start, stop, status<br/>user and directory preparation"]
+  RuntimeInputs["Read-only runtime inputs<br/>instructions, manifest<br/>builtin, tenant, and agent skills"]
+  Providers["Provider adapters<br/>Claude, OpenCode, mock"]
+  GroupMain["Group runtime: feishu-main<br/>user ncg_feishu_main<br/>live runner, isolated tasks<br/>runtime DBs, generated skills"]
+  GroupOps["Group runtime: ops<br/>user ncg_ops<br/>live runner, isolated tasks<br/>runtime DBs, generated skills"]
+  AgentOps["Agent service container: ops<br/>same internal shape"]
 
-  Config --> Host
-  Host <--> HostDb
-  Host --> AgentFinance
-  Host --> AgentOps
-  AgentFinance --> GroupMain
-  AgentFinance --> GroupOps
+  Inputs --> Host
+  Host --> Routing
+  Routing <--> State
+  Routing --> RuntimeClient
+  Routing --> ToolPlane
+  ToolPlane <--> State
+  RuntimeClient --> AgentFinance
+  RuntimeClient --> AgentOps
+  AgentFinance --> Supervisor
+  Supervisor --> RuntimeInputs
+  Supervisor --> Providers
+  Supervisor --> GroupMain
+  Supervisor --> GroupOps
+
+  classDef host fill:#eef6ff,stroke:#4f80b5,color:#172033
+  classDef runtime fill:#f4f1ff,stroke:#7c67b8,color:#172033
+  classDef data fill:#fff7df,stroke:#b79235,color:#172033
+  classDef group fill:#ecfdf3,stroke:#4a9b68,color:#172033
+  class Inputs,Host,Routing,RuntimeClient,ToolPlane host
+  class State data
+  class AgentFinance,AgentOps,Supervisor,RuntimeInputs,Providers runtime
+  class GroupMain,GroupOps group
 ```
 
-The overview intentionally shows only ownership boundaries in a vertical shape.
-The message, scheduled task, tool, and skill-loading sections below show the
-detailed interactions.
+The overview uses a vertical spine with a few side capabilities. The message,
+scheduled task, tool, and skill-loading sections below show the detailed
+interactions.
 
 ## Component Responsibilities
 
