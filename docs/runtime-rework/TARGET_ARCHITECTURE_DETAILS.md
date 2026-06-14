@@ -19,58 +19,26 @@ Final runtime shape:
   runtime-local and writable only by that group user.
 
 ```mermaid
-flowchart TB
+flowchart TD
   Config["Config sources<br/>tenant.json, agent.json<br/>builtin, tenant, and agent skills"]
+  Host["Host NanoClaw process<br/>channels, router, scheduler, policy<br/>tenant loader, runtime client<br/>tool workers, credential proxy"]
+  HostDb[("Central host DB<br/>messages, tasks, cursors, groups")]
+  AgentFinance["Docker service/container: finance<br/>supervisor, provider adapters<br/>read-only skill mounts, manifest"]
+  AgentOps["Docker service/container: ops<br/>same runtime shape"]
+  GroupMain["Group runtime: feishu-main<br/>Linux user ncg_feishu_main<br/>live runner, isolated tasks<br/>runtime DBs, generated skills"]
+  GroupOps["Group runtime: ops<br/>Linux user ncg_ops<br/>live runner, isolated tasks<br/>runtime DBs, generated skills"]
 
-  subgraph Host["Host control plane"]
-    Channels["Channels"]
-    Core["Router, scheduler, policy<br/>tenant loader, runtime client<br/>tool workers, credential proxy"]
-    HostDb[("Central host DB<br/>messages, tasks, cursors, groups")]
-  end
-
-  subgraph AgentA["Agent service container: finance"]
-    SupervisorA["Supervisor"]
-    SkillsA["Read-only skill mounts<br/>skills.manifest.json"]
-    ProvidersA["Provider adapters<br/>Claude, OpenCode, mock"]
-
-    subgraph GroupA1["Group runtime: feishu-main"]
-      UserA1["Linux user ncg_feishu_main"]
-      RunnerA1["live and isolated runners"]
-      DbA1[("runtime DBs")]
-      GenA1["generated skills"]
-    end
-
-    subgraph GroupA2["Group runtime: ops"]
-      UserA2["Linux user ncg_ops"]
-      RunnerA2["live and isolated runners"]
-      DbA2[("runtime DBs")]
-      GenA2["generated skills"]
-    end
-  end
-
-  AgentB["Agent service container: ops<br/>same internal shape"]
-
-  Config --> Core
-  Channels --> Core
-  Core <--> HostDb
-  Core --> SupervisorA
-  Core --> AgentB
-  SupervisorA --> SkillsA
-  SupervisorA --> UserA1
-  SupervisorA --> UserA2
-  UserA1 --> RunnerA1
-  RunnerA1 --> DbA1
-  RunnerA1 --> ProvidersA
-  GenA1 --> RunnerA1
-  UserA2 --> RunnerA2
-  RunnerA2 --> DbA2
-  RunnerA2 --> ProvidersA
-  GenA2 --> RunnerA2
+  Config --> Host
+  Host <--> HostDb
+  Host --> AgentFinance
+  Host --> AgentOps
+  AgentFinance --> GroupMain
+  AgentFinance --> GroupOps
 ```
 
-The overview intentionally shows only ownership boundaries. The message,
-scheduled task, tool, and skill-loading sections below show the detailed
-interactions.
+The overview intentionally shows only ownership boundaries in a vertical shape.
+The message, scheduled task, tool, and skill-loading sections below show the
+detailed interactions.
 
 ## Component Responsibilities
 
