@@ -4,6 +4,9 @@
 
 Make `agent-container-users` the default runtime and treat the old per-group Docker model as fallback.
 
+For the expanded final topology, message flow, tenant deployment flow, and skill
+loading flow, see [Target Architecture Details](./TARGET_ARCHITECTURE_DETAILS.md).
+
 ## Final Runtime
 
 ```text

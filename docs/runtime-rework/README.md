@@ -59,6 +59,7 @@ Supporting references:
 - [Implementation Checklist](./IMPLEMENTATION_CHECKLIST.md)
 - [Architecture Decision Record](./ADR.md)
 - [Cross-cutting Migration Contracts](./CROSS_CUTTING_CONTRACTS.md)
+- [Target Architecture Details](./TARGET_ARCHITECTURE_DETAILS.md)
 
 ## Existing Code Hotspots
 
