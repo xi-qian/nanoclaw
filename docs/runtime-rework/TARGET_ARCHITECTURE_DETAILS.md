@@ -278,13 +278,13 @@ For channels using outbound connections (Feishu WebSocket mode, Slack Socket Mod
 sequenceDiagram
   autonumber
   participant User
-  participant Channel as Channel adapter (tenant, agent)
-  participant Host as Control plane message loop
-  participant DB as Central host DB
-  participant Helper as nc-setuid-helper
-  participant Runner as Run process (ncg-...)
+  participant Channel as "Channel adapter (tenant, agent)"
+  participant Host as "Control plane message loop"
+  participant DB as "Central host DB"
+  participant Helper as "nc-setuid-helper"
+  participant Runner as "Run process (ncg-...)"
   participant Provider
-  participant Outbound as Host outbound poller
+  participant Outbound as "Host outbound poller"
 
   User->>Channel: Send message
   Channel->>Host: onMessage(chatJid, message)
@@ -296,12 +296,12 @@ sequenceDiagram
     Host->>DB: keep as context only
   else message should be processed
     Host->>DB: select messages since last_agent_timestamp
-    Host->>Host: Write inbound.db rows under <t>/<a>/<g>/live/
+    Host->>Host: Write inbound.db rows under t/a/g/live/
     alt live runner already active
       Host->>Runner: wake by DB polling
     else no live runner
-      Host->>Helper: spawn --uid=ncg-<t>-<a>-<g> --runtime-dir=... -- node agent-runner --mode=live
-      Helper->>Runner: exec as ncg-<t>-<a>-<g>
+      Host->>Helper: spawn --uid=ncg-t-a-g --runtime-dir=... -- node agent-runner --mode=live
+      Helper->>Runner: exec as ncg-t-a-g
     end
     Runner->>Runner: claim inbound rows
     Runner->>Provider: query(prompt, continuation, skills)
@@ -366,14 +366,14 @@ Tools are invoked by provider-visible MCP tools, but host capabilities remain ho
 sequenceDiagram
   autonumber
   participant Provider
-  participant Mcp as Agent MCP tool
-  participant ToolsDb as tools.db
-  participant Worker as Host tool worker
-  participant Policy as Host policy
-  participant Channel as Channel client (tenant, agent)
+  participant Mcp as "Agent MCP tool"
+  participant ToolsDb as "tools.db"
+  participant Worker as "Host tool worker"
+  participant Policy as "Host policy"
+  participant Channel as "Channel client (tenant, agent)"
 
   Provider->>Mcp: call tool(payload)
-  Mcp->>ToolsDb: insert pending tool_request (with run identity)
+  Mcp->>ToolsDb: insert pending tool_request with run identity
   Worker->>ToolsDb: claim request
   Worker->>Policy: verify source run and action
   alt authorized
@@ -402,7 +402,7 @@ flowchart TB
   Resolve --> Manifest["skills.manifest.json<br/>per (tenant, agent)"]
   Manifest --> Mounts["Read-only copies under<br/>/opt/nanoclaw/skills/{builtin,tenant,agent}/"]
   Mounts --> Runner["agent-runner"]
-  Generated["/runtime/<t>/<a>/<g>/skills/generated"] --> Runner
+  Generated["/runtime/t/a/g/skills/generated"] --> Runner
   Manifest --> Runner
   Runner --> Adapter{"SkillLoaderAdapter"}
   Adapter --> Claude["Claude adapter<br/>stage to .claude/skills if needed"]
