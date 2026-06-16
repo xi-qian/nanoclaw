@@ -6,25 +6,30 @@ For the design rationale behind these decisions, see [`../superpowers/specs/2026
 
 ## Architecture Overview
 
-```text
-NanoClaw host (bare-metal systemd service OR one Docker container)
-├── Control plane process (uid=nanoclaw-svc, no capabilities)
-│   ├── HTTP webhook server
-│   │     POST /<tenant>/<agent>/<channel>/event
-│   │     GET  /<tenant>/<agent>/<channel>/verify
-│   ├── channels: per-(tenant, agent) Feishu / Slack / Telegram / Discord / ... clients
-│   ├── router, scheduler, sender/trigger policy
-│   ├── tool workers (host-side: Feishu, approval, file, task APIs)
-│   ├── tenant config loader
-│   ├── run lifecycle manager
-│   │     spawn, monitor (via /proc), reap (SIGCHLD + waitpid)
-│   │     kill (via nc-setuid-helper), idle-reap, reconcile
-│   └── run spawner
-│         invokes nc-setuid-helper
-├── nc-setuid-helper (SUID root binary)
-│     spawn / kill / cgroup / status
-└── Run processes (uid=ncg-<tenant>-<agent>-<group>)
-    └── agent-runner (Claude / OpenCode / mock provider adapter)
+```mermaid
+flowchart TD
+  Host["NanoClaw host<br/>(bare-metal systemd OR one Docker container)"]
+
+  subgraph CP["Control plane process (uid=nanoclaw-svc, no capabilities)"]
+    direction TB
+    Webhook["HTTP webhook server<br/>POST /[tenant]/[agent]/[channel]/event<br/>GET /[tenant]/[agent]/[channel]/verify"]
+    Channels["channels:<br/>per-(tenant, agent) Feishu / Slack /<br/>Telegram / Discord / ... clients"]
+    Routing["router, scheduler,<br/>sender/trigger policy"]
+    Tools["tool workers (host-side:<br/>Feishu, approval, file, task APIs)"]
+    Loader["tenant config loader"]
+    Lifecycle["run lifecycle manager<br/>spawn, monitor (/proc),<br/>reap (SIGCHLD + waitpid),<br/>kill (via helper), idle-reap, reconcile"]
+    Spawner["run spawner<br/>invokes nc-setuid-helper"]
+  end
+
+  Helper["nc-setuid-helper<br/>(SUID root binary)<br/>spawn / kill / cgroup / status"]
+
+  Run["Run processes<br/>(uid=ncg-[tenant]-[agent]-[group])<br/>agent-runner<br/>(Claude / OpenCode / mock)"]
+
+  Host --- CP
+  Host --- Helper
+  Host --- Run
+  Spawner -->|invokes| Helper
+  Helper -->|exec as ncg-...| Run
 ```
 
 The overview collapses to a vertical spine: control plane → helper → run processes. Auxiliary planes (channel connections, tool workers, scheduler) live alongside the control plane.
