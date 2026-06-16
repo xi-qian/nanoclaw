@@ -47,7 +47,7 @@ Status: **Deleted 2026-06-16.**
 
 Supersedes ADR-005 (one Docker container per agent service, per-group Linux users inside).
 
-Decision: Each run process runs as a distinct Linux user `ncg-<tenant>-<agent>-<group>` directly on the host. Docker, when used, wraps the entire NanoClaw deployment (control plane + helper + run processes) as a single container for portability. It is not a security boundary.
+Decision: Each run process runs as a distinct mapped `ncg-*` Linux user for its canonical `(tenant, agent, group)` tuple directly on the host. Docker or Kubernetes, when used, wraps the entire NanoClaw deployment (control plane + helper + run processes) as a packaging/deployment layer. It is not a security boundary and is supported only when it permits the same SUID helper, POSIX ACL, user/NSS, and cgroup primitives as the bare-metal/systemd reference deployment.
 
 Reason:
 
@@ -90,7 +90,7 @@ Status: Accepted. Unchanged.
 
 Revises ADR-008 (supervisor owns group process lifecycle).
 
-Decision: The control plane process owns run lifecycle **policy** — when to spawn, monitor, reap, kill, and reconcile. Privileged **mechanism** (`setuid`, signal, cgroup) is encapsulated in `nc-setuid-helper`, a SUID root binary invokable only by `nanoclaw-svc`. The control plane holds no Linux capabilities.
+Decision: The control plane process owns run lifecycle **policy** — when to prepare a runtime, spawn, monitor, reap, kill, and reconcile. Privileged **mechanism** (user/group creation, runtime ACL setup, `setuid`, signal, cgroup) is encapsulated in `nc-setuid-helper`, a SUID root binary invokable only by `nanoclaw-svc`. The control plane holds no Linux capabilities.
 
 Reason:
 
@@ -127,15 +127,15 @@ Status: Accepted. Unchanged.
 
 Sharpens the original ADR-011 (secrets stay host/supervisor-side).
 
-Decision: Tenant repositories may reference secrets but may not store secret values. Channel credentials (`app_secret`, bot tokens) live only in `0600` files owned by `nanoclaw-svc` and in control plane process memory; run processes access channels via tool IPC. LLM credentials, because they target an internal gateway and are useless if leaked outside, may be injected directly via env at spawn time.
+Decision: Tenant repositories may reference secrets but may not store secret values. Secret refs are typed: `llm:<name>` may be injected into a run environment, while `channel:<name>` may be resolved only inside the control plane. Channel credentials (`app_secret`, bot tokens) live only in `0600` files under `/var/lib/nanoclaw/auth/` owned by `nanoclaw-svc` and in control plane process memory; run processes access channels via tool IPC. LLM credentials may be injected directly via env because they target NanoClaw's internal LLM gateway, not a public provider endpoint.
 
 Reason:
 
 - Business skill repositories may be shared or versioned.
 - Channel credentials are real external credentials; leaking them enables tenant impersonation and data exfiltration.
-- LLM credentials target an internal gateway; even if a `ncg-*` process leaks them, they cannot be used outside the internal network.
+- LLM credentials target an internal gateway; the agent uses the internal gateway endpoint and an internal credential accepted only inside the internal network. Even if a `ncg-*` process leaks them, they cannot be used against the external LLM provider or from outside the internal network.
 
-Status: Accepted. Sharpened 2026-06-16 by ADR-024.
+Status: Accepted. Sharpened 2026-06-16 by ADR-024. Sharpened 2026-06-17 to require typed secret refs and canonical `/var/lib/nanoclaw/auth/` storage.
 
 ## ADR-012: No World-writable Runtime IPC
 
@@ -144,9 +144,9 @@ Decision: Runtime directories must not rely on `0777` directories or `0666` file
 Reason:
 
 - World-writable IPC defeats Linux user isolation.
-- Per-group ownership plus shared `nc-runtime` group access (containing only `nanoclaw-svc`) is the intended security boundary.
+- Per-group ownership plus per-runtime POSIX ACLs for `nanoclaw-svc` are the intended security boundary. A shared runtime group is avoided because it either fails for files created by the wrong owner or risks granting all run users access to all runtime directories.
 
-Status: Accepted. Unchanged.
+Status: Accepted. Sharpened 2026-06-17 to use per-runtime ACLs instead of a shared runtime group.
 
 ## ADR-013: Registered Groups Are Not the Same as Active Runs
 
@@ -162,7 +162,7 @@ Status: Accepted. Unchanged.
 
 ## ADR-015: Tenant Skills Enter Runtime as Read-only Agent Inputs
 
-Decision: Tenant-managed and agent-managed skills are resolved during deployment/config loading and exposed to run processes as read-only inputs. Run processes can read these skills but cannot modify them.
+Decision: Tenant-managed and agent-managed skills are resolved during deployment/config loading and exposed to run processes as read-only inputs through a per-run resolved skill bundle under that run's runtime directory. Run processes can read only the skills selected for their own `(tenant, agent, group, run)` and cannot modify them.
 
 Reason:
 
@@ -170,7 +170,7 @@ Reason:
 - One control plane can serve multiple groups that share the agent's configured skill set.
 - Group write access to tenant skill repositories would bypass review and make configuration drift hard to audit.
 
-Status: Accepted. Unchanged.
+Status: Accepted. Sharpened 2026-06-17 to require per-run skill bundles instead of world-readable tenant/agent skill paths.
 
 ## ADR-016: Generated Skills Are Group-local Until Promoted
 
@@ -184,13 +184,13 @@ Reason:
 
 Status: Accepted. Unchanged.
 
-## ADR-017: Central Host DB Remains the Control-plane Source of Truth
+## ADR-017: Partitioned Host DBs Remain the Control-plane Source of Truth
 
-Decision: Per-run runtime DBs are queues and run-local state. The existing host DB remains authoritative for chats, message history, scheduled tasks, task run logs, registered groups, router cursors, and legacy session IDs.
+Decision: Per-run runtime DBs are queues and run-local state. The control-plane host DBs are physically partitioned by `(tenant, agent)` and remain authoritative for chats, message history, scheduled tasks, task run logs, registered groups, router cursors, and legacy session IDs. Inside each per-agent DB, channel-derived state is keyed by `channel_type` because one agent may bind multiple channels.
 
 Reason:
 
-- The host message loop uses `last_timestamp` and `last_agent_timestamp` to avoid duplicate replies and to retry failed runs.
+- The host message loop uses `last_timestamp[channel_type]` and `last_agent_timestamp[channel_type, chat_jid]` to avoid duplicate replies and to retry failed runs.
 - Scheduled tasks, registered groups, sender policy, card actions, and channel metadata are host-level control-plane data, not one-run runtime data.
 - Treating runtime DBs as a second source of truth would create cursor drift and duplicate delivery risks.
 
@@ -245,23 +245,23 @@ Status: Accepted 2026-06-16.
 
 ## ADR-023: Privileged Operations Only Through nc-setuid-helper
 
-Decision: All privileged operations (`setuid`/`setgid` for run spawning, process signal, cgroup setup) go through `nc-setuid-helper`, a SUID root binary installed at `/usr/lib/nanoclaw/nc-setuid-helper` (mode 4750, owner=root, group=nc-priv). Only the `nanoclaw-svc` user is in `nc-priv`. The helper validates all arguments against an allowlist: UIDs must match `^ncg-` and exist in `users.db`; runtime dirs must be owned by the target UID; PIDs for `kill` must be owned by `ncg-*` users.
+Decision: All privileged operations (`prepare` for user/runtime setup, `setuid`/`setgid` for run spawning, process signal, cgroup setup) go through `nc-setuid-helper`, a SUID root binary installed at `/usr/lib/nanoclaw/nc-setuid-helper` (mode 4750, owner=root, group=nc-priv). Only the `nanoclaw-svc` user is in `nc-priv`. The helper validates all arguments against an allowlist: UIDs must match a recorded `(tenant, agent, group)` mapping in `users.db`; usernames include a stable tuple hash to prevent sanitisation collisions; runtime dirs must match the recorded mapping and expected ACLs; kill/status requests must match PID, `/proc/<pid>/stat` start time, expected UID, runtime dir, and cgroup to prevent PID-reuse mistakes.
 
 Reason:
 
 - Keeping the privilege surface in a single small auditable binary is cleaner than running the control plane with elevated capabilities.
 - The helper rejects all out-of-scope invocations, so a control plane compromise cannot escalate to arbitrary root.
-- Works uniformly across deployment modes (bare-metal systemd, single Docker container, Kubernetes pod).
+- Works across deployment modes only when the wrapper exposes the required SUID, ACL, user/NSS, and cgroup primitives; bare-metal/systemd is the reference deployment.
 
-Status: Accepted 2026-06-16.
+Status: Accepted 2026-06-16. Sharpened 2026-06-17 to add `prepare`, tuple-hashed usernames, runtime ACL validation, and PID start-time/cgroup checks.
 
 ## ADR-024: Two-tier Credential Threat Model
 
 Decision: Credentials are categorised and handled by tier:
 
-- **LLM credentials (low risk)**: point at an internal gateway, useless if leaked outside. Delivered via env at spawn time. No proxy, no scoped tokens.
-- **Channel credentials (high risk)**: real external credentials (Feishu `app_secret`, Slack bot tokens, Telegram bot tokens, Discord bot tokens). Stored only in `0600` files owned by `nanoclaw-svc` and in control plane process memory. Run processes access channels via tool IPC — never see the raw credentials.
-- **Runtime data (high risk)**: chat history, provider continuation, generated skills, downloaded files. Protected by Linux user ownership and `0770` directory modes.
+- **LLM credentials (low risk)**: point at NanoClaw's internal LLM gateway. The agent calls the internal gateway endpoint with an internal credential that is useless against the public provider endpoint and outside the internal network. Delivered via env at spawn time. No proxy, no scoped tokens.
+- **Channel credentials (high risk)**: real external credentials (Feishu `app_secret`, Slack bot tokens, Telegram bot tokens, Discord bot tokens). Stored only in `0600` files under `/var/lib/nanoclaw/auth/` owned by `nanoclaw-svc` and in control plane process memory. Run processes access channels via tool IPC — never see the raw credentials.
+- **Runtime data (high risk)**: chat history, provider continuation, generated skills, downloaded files. Protected by Linux user ownership, `0700` runtime directories, and per-runtime POSIX ACLs for `nanoclaw-svc`.
 
 Reason:
 
@@ -269,7 +269,7 @@ Reason:
 - Treating all credentials as equally low-risk would expose channel secrets to run processes, creating a real attack surface.
 - The two-tier model focuses protection effort where the threat actually is.
 
-Status: Accepted 2026-06-16.
+Status: Accepted 2026-06-16. Sharpened 2026-06-17 to clarify that LLM credentials are internal-gateway credentials and to require typed refs.
 
 ## ADR-025: Channel Registry Uses Composite Key; Singleton Accessors Removed
 
@@ -286,7 +286,7 @@ Status: Accepted 2026-06-16.
 
 Decisions deferred to implementation:
 
-- Whether the central host DB stays SQLite or moves to embedded Postgres for multi-tenant query patterns.
+- Whether the per-`(tenant, agent)` host DB stays SQLite or moves to embedded Postgres for larger multi-tenant query patterns.
 - Cgroup v2 delegation: whether the control plane gets its own delegated cgroup subtree or the helper manages the full `/sys/fs/cgroup/nanoclaw/` tree as root.
 - Per-(tenant, agent) resource limit defaults.
 - Whether to introduce a separate supervisor process (ADR-008 original) as the codebase grows.

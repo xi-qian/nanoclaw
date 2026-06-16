@@ -7,22 +7,22 @@
 
 ## Background
 
-The existing `docs/runtime-rework/` plan targets "one Docker container per agent service, per-group Linux users inside each container". This design reverses that: Linux users become the isolation unit on the host directly, and Docker drops to an optional deployment wrapper.
+The existing `docs/runtime-rework/` plan targets "one Docker container per agent service, per-group Linux users inside each container". This design reverses that: Linux users become the isolation unit on the host directly, and Docker/Kubernetes drops to an optional deployment wrapper that is supported only when it exposes the required host-direct primitives.
 
 The shift is driven by three realisations:
 
 1. Docker adds no credential isolation on top of Linux user separation. Process memory isolation, `/proc/<pid>/environ` restrictions, and file permissions already give different-UID processes different security domains. Docker's residual value is operational (image portability, cgroups, defence in depth), not security.
 2. Deployment convenience matters: one NanoClaw instance supporting many tenants and many agents is simpler to operate than N Docker services.
-3. Channel credentials (Feishu, Slack, etc.) and tenant runtime data — not LLM credentials — are the real protection targets. The current deployment uses an internal LLM gateway whose credentials are useless if leaked outside the internal network, which downgrades the LLM credential threat model.
+3. Channel credentials (Feishu, Slack, etc.) and tenant runtime data — not LLM credentials — are the real protection targets. The current deployment routes agents to an internal LLM gateway using an internal endpoint and internal credential; that credential is not accepted by the public provider API and is useless outside the internal network, which downgrades the LLM credential threat model.
 
 ## Goals
 
 - One NanoClaw control plane process supports multiple tenants, multiple agents per tenant, multiple groups per agent.
-- Isolation unit: Linux user `ncg-<tenant>-<agent>-<group>`.
+- Isolation unit: one Linux user per `(tenant, agent, group)` tuple. Usernames use the `ncg-` prefix plus a stable tuple hash to avoid sanitisation collisions.
 - Per-(tenant, agent) external identity: each agent can have its own Feishu app, Slack bot, etc.
 - Webhook URLs shaped `/<tenant>/<agent>/<channel>/event` route inbound events to the right channel instance.
 - Clean replacement of the existing `docker-per-group` runtime. No fallback mode.
-- Docker remains usable as a one-image deployment wrapper but is not the security boundary.
+- Docker/Kubernetes remains usable as a one-image deployment wrapper when the deployment wrapper requirements below are met, but it is not the security boundary.
 
 ## Non-goals
 
@@ -35,18 +35,18 @@ The shift is driven by three realisations:
 ## Architecture Overview
 
 ```text
-NanoClaw host (bare-metal systemd service OR one Docker container)
+NanoClaw host (bare-metal systemd service OR supported wrapper)
 ├── Control plane process (uid=nanoclaw-svc, no capabilities)
 │   ├── HTTP webhook server: POST /<tenant>/<agent>/<channel>/event
 │   ├── channels: per-(tenant, agent) Feishu / Slack / Telegram / ... clients
 │   ├── router, scheduler, sender/trigger policy
 │   ├── tool workers: Feishu / approval / file / task APIs (host-side)
 │   ├── tenant config loader
-│   ├── run lifecycle manager: spawn, monitor, reap, kill, idle-reap
+│   ├── run lifecycle manager: prepare, spawn, monitor, reap, kill, idle-reap
 │   └── run spawner: invokes nc-setuid-helper
 ├── nc-setuid-helper (SUID root binary, ~500 lines C)
-│   └── privileged operations: spawn, kill, cgroup setup
-└── Run processes (uid=ncg-<tenant>-<agent>-<group>)
+│   └── privileged operations: prepare, spawn, kill, cgroup setup
+└── Run processes (uid=mapped ncg-* user for tenant/agent/group)
     └── agent-runner: Claude / OpenCode / mock provider adapter
 ```
 
@@ -54,20 +54,35 @@ NanoClaw host (bare-metal systemd service OR one Docker container)
 
 Control plane never holds any Linux capability. All privileged operations go through `nc-setuid-helper`, a small SUID root binary installed at `/usr/lib/nanoclaw/nc-setuid-helper` (mode 4750, owner=root, group=nc-priv). Only the `nanoclaw-svc` user is in the `nc-priv` group, so only the control plane can invoke the helper.
 
-The helper exposes four operations, each with strict argument validation:
+### Deployment wrapper requirements
+
+Bare-metal/systemd is the reference deployment. A single Docker container or Kubernetes pod can wrap the whole NanoClaw deployment for packaging, but only when the wrapper permits the same host-direct primitives:
+
+- SUID execution is allowed (`no_new_privileges` must not block the helper).
+- The helper has the capabilities needed for its narrow operations: user/group switching, signalling mapped `ncg-*` processes, POSIX ACL setup, and cgroup writes.
+- NSS/user creation is available inside the deployment environment, or the deployment provides an equivalent local user database that the helper owns.
+- `/var/lib/nanoclaw` is persistent and mounted with POSIX ACL support.
+- A cgroup v2 subtree is writable or explicitly delegated to NanoClaw at `/sys/fs/cgroup/nanoclaw/`.
+- The container/pod does not claim to add per-group security boundaries; Linux UID separation inside the wrapper remains the isolation boundary.
+
+If these prerequisites are not available, Docker/Kubernetes is unsupported for this architecture until a separate supervisor or different sandbox mechanism is introduced.
+
+The helper exposes five operations, each with strict argument validation:
 
 ```
+nc-setuid-helper prepare --tenant=<t> --agent=<a> --group=<g> --runtime-dir=<dir>
 nc-setuid-helper spawn  --uid=<u> --gid=<g> --cgroup=<path> --runtime-dir=<dir> -- <cmd...>
-nc-setuid-helper kill   --pid=<p> --signal=<sig>
+nc-setuid-helper kill   --pid=<p> --signal=<sig> --uid=<u> --runtime-dir=<dir> --cgroup=<path> --start-time=<ticks>
 nc-setuid-helper cgroup --path=<path> --mem=<mb> --pids=<n> --cpu=<shares>
-nc-setuid-helper status --pid=<p>
+nc-setuid-helper status --pid=<p> --uid=<u> --runtime-dir=<dir> --cgroup=<path> --start-time=<ticks>
 ```
 
 Validation rules:
 
-- `--uid` and `--gid` must match `^ncg-` and correspond to a user the helper itself created earlier in this host's lifetime (tracked via a state file under `/var/lib/nanoclaw/users.db`, owned by root).
-- `--runtime-dir` must be owned by `--uid:--gid` and live under `/var/lib/nanoclaw/runtime/`.
-- `kill --pid` must point to a process whose real UID matches an `ncg-*` user.
+- `prepare` validates `(tenant, agent, group)`, derives the collision-resistant Linux username, creates the user/group if missing, creates the runtime directory tree, applies ACLs and modes, pre-creates runtime DB files, and records the mapping in `/var/lib/nanoclaw/users.db`.
+- `--uid` and `--gid` for `spawn` must match `^ncg-` and correspond to the exact `(tenant, agent, group)` mapping the helper created via `prepare`.
+- `--runtime-dir` must live under `/var/lib/nanoclaw/runtime/`, match the recorded mapping, and have the expected owner/mode/ACLs.
+- `kill` and `status` must match the active-run identity recorded by the control plane: PID, `/proc/<pid>/stat` start time, expected real UID, runtime dir, and cgroup path. A PID whose start time or cgroup does not match is treated as stale PID reuse and is never signalled.
 - `cgroup` paths must live under `/sys/fs/cgroup/nanoclaw/`.
 
 Any violation: helper exits non-zero without performing the operation. Control plane sees the failure and reports it.
@@ -76,13 +91,16 @@ Any violation: helper exits non-zero without performing the operation. Control p
 
 | Operation | Owner | Mechanism |
 |-----------|-------|-----------|
+| Prepare user/runtime | control plane | `nc-setuid-helper prepare` creates/repairs Linux user, group, runtime dirs, ACLs, and runtime DB files |
 | Spawn | control plane | `posix_spawn` → child execs `nc-setuid-helper spawn` → helper setuids, sets up cgroup, execs agent-runner |
-| Liveness check | control plane | `stat("/proc/<pid>")` (works for any UID) |
-| Stop (SIGTERM/SIGKILL) | helper | `nc-setuid-helper kill --pid --signal` (validates pid owner) |
+| Liveness check | control plane | `stat("/proc/<pid>")` plus helper `status` check against PID start time, expected UID, runtime dir, and cgroup |
+| Stop (SIGTERM/SIGKILL) | helper | `nc-setuid-helper kill --pid --signal --uid --runtime-dir --cgroup --start-time` |
 | Cgroup / resource limits | helper | Set up at spawn time; subsequent adjustments via `cgroup` command |
 | Zombie reaping | control plane | Run process is direct child of control plane (helper only bridges exec); normal SIGCHLD + `waitpid` |
 | Idle reap / timeout kill | control plane | Periodic timer scans active runs; calls helper kill when thresholds exceeded |
-| Host-restart reconcile | control plane | DB-listed active PIDs are checked against `/proc/`; missing ones marked crashed |
+| Host-restart reconcile | control plane | DB-listed active PIDs are checked against `/proc/` and helper `status`; missing or identity-mismatched PIDs are marked crashed/stale |
+
+Each active-run DB record stores `pid`, `/proc/<pid>/stat` start time ticks, expected uid, runtime dir, cgroup path, tenant, agent, group, and run id. The helper never infers ownership from PID alone.
 
 Two Linux rules shape this split:
 
@@ -95,38 +113,45 @@ This keeps the privilege surface to a single auditable binary while letting cont
 
 ### Naming convention
 
-Linux user name:
+Conceptual Linux user identity:
 
 ```
 ncg-<tenant>-<agent>-<group>
 ```
 
-Sanitisation:
+Actual Linux username:
 
-- All segments lowercased.
-- Allowed characters: `[a-z0-9-]`. Anything else replaced with `-`.
-- Tenant and agent IDs: max 16 chars each, validated at tenant-config load time.
-- Group ID: variable length, sanitised to `[a-z0-9-]+`. If the resulting username would exceed 32 chars (Linux username limit), the group segment is replaced with `g<sha1(group).substr(0,8)>`.
+```
+ncg-<tenant8>-<agent8>-<hash10>
+```
+
+Rules:
+
+- Tenant and agent IDs are lowercased, validated at tenant-config load time, and truncated only for the human-readable username prefix.
+- `<hash10>` is derived from the canonical tuple `(tenant, agent, group)` before sanitisation, so `a_b`, `a-b`, `a/b`, and case variants cannot collapse into the same Linux user.
+- `/var/lib/nanoclaw/users.db` stores the authoritative mapping from canonical tuple to Linux uid/gid/username. The helper rejects any username collision or tuple remap.
+- The username is an implementation detail; authorization and routing always use the canonical `(tenant, agent, group)` tuple.
 
 Each user gets:
 
-- A matching primary group (`ncg-<t>-<a>-<g>`).
+- A matching primary group for the mapped `ncg-*` username.
 - Home directory is the runtime directory itself (`/var/lib/nanoclaw/runtime/<t>/<a>/<g>/`). No separate `/home/ncg-*`.
-- No supplementary groups. Platform code under `/opt/nanoclaw/` is world-readable (mode 0755, owner=nanoclaw-svc) so no special group is needed for the run process to read it.
+- No supplementary groups. Platform runner code under `/opt/nanoclaw/agent-runner/` is world-readable (mode 0755, owner=nanoclaw-svc) so no special group is needed for the run process to read it. Tenant and agent skills are not stored in world-readable paths.
 
 ### Control plane access to runtime directories
 
-The control plane (`uid=nanoclaw-svc`) needs to read and write the IPC databases inside each runtime directory without compromising isolation between `ncg-*` users. The mechanism is a single shared group:
+The control plane (`uid=nanoclaw-svc`) needs to read and write the IPC databases inside each runtime directory without compromising isolation between `ncg-*` users. The mechanism is per-runtime POSIX ACLs installed by `nc-setuid-helper prepare`:
 
-- Group `nc-runtime` exists, with **only** `nanoclaw-svc` as a member.
-- Every runtime directory is `owner=ncg-<t>-<a>-<g>`, `group=nc-runtime`, `mode=0770`.
-- Owner (the ncg user) gets rwx. Group (only nanoclaw-svc) gets rwx. Other ncg-* users have no access.
+- Every runtime directory is `owner=ncg-<mapped-user>`, `group=ncg-<mapped-user>`, `mode=0700`.
+- ACL grants `nanoclaw-svc` rwx on the directory tree.
+- Default ACL grants both the group user and `nanoclaw-svc` rwx on newly created directories and rw on newly created files.
+- Helper pre-created runtime DB files (`inbound.db`, `outbound.db`, `state.db`, `tools.db`) and SQLite sidecars created under the default ACL are readable/writable by both the group user and `nanoclaw-svc`; other `ncg-*` users have no ACL entry and no access.
 
-This gives nanoclaw-svc transparent read/write access to every runtime dir's IPC files without elevating through the helper, while keeping ncg-* users fully isolated from each other.
+This gives nanoclaw-svc transparent read/write access to every runtime dir's IPC files without elevating through the helper, while keeping `ncg-*` users isolated from each other. A shared runtime group is deliberately avoided because it would either fail for files created by the wrong owner or grant all run users access to all runtime directories.
 
 ### Lifecycle
 
-Users are created lazily by the helper on first run for a given (tenant, agent, group) tuple, and **never deleted**. Idle runs stop the process but keep the user and runtime directory on disk so the next message has a warm path. A separate `nanoclaw-user-gc` admin command can prune users for tenants that have been removed from config; this is operator-driven, not automatic.
+Users and runtime directories are prepared lazily by `nc-setuid-helper prepare` before the first run for a given (tenant, agent, group) tuple, and **never deleted automatically**. Idle runs stop the process but keep the user and runtime directory on disk so the next message has a warm path. A separate `nanoclaw-user-gc` admin command can prune users for tenants that have been removed from config; this is operator-driven, not automatic.
 
 State file `/var/lib/nanoclaw/users.db` (SQLite, owned by root, mode 0600) tracks every user the helper has created, so the helper can validate `spawn --uid` requests against history.
 
@@ -174,7 +199,7 @@ nanoclaw-tenants/
     "agent:finance-local"
   ],
   "channels": ["feishu"],
-  "envRefs": ["ANTHROPIC_API_KEY"],
+  "envRefs": ["llm:ANTHROPIC_API_KEY"],
   "limits": {
     "memoryMb": 1024,
     "pids": 256,
@@ -189,15 +214,21 @@ nanoclaw-tenants/
 {
   "mode": "websocket",
   "appId": "cli_acme_finance",
-  "appSecretRef": "FEISHU_APP_SECRET",
+  "appSecretRef": "channel:FEISHU_APP_SECRET",
   "webhook": {
-    "encryptKeyRef": "FEISHU_WEBHOOK_ENCRYPT_KEY",
-    "verificationTokenRef": "FEISHU_WEBHOOK_VERIFICATION_TOKEN"
+    "encryptKeyRef": "channel:FEISHU_WEBHOOK_ENCRYPT_KEY",
+    "verificationTokenRef": "channel:FEISHU_WEBHOOK_VERIFICATION_TOKEN"
   }
 }
 ```
 
-Actual secret values are never in the tenant repo. They live in `store/auth/tenants/<tenant>/<agent>/feishu/credentials.json` (mode 0600, owner=nanoclaw-svc). The repo carries only references.
+Actual secret values are never in the tenant repo. The canonical auth root is `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/`. The repo carries only typed references:
+
+- `llm:<name>` may be resolved into the run environment because it targets the internal LLM gateway.
+- `channel:<name>` may be resolved only inside the control plane and is never written to runtime DBs, run envs, logs, or skill bundles.
+- Unknown or untyped refs fail config validation.
+
+Channel secrets live under `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/<channel>/credentials.json` (mode 0600, owner=nanoclaw-svc).
 
 ## Channel registry and webhook routing
 
@@ -224,7 +255,7 @@ For channels using outbound connections (Feishu WebSocket mode, Slack Socket Mod
 Each `FeishuClient` (and equivalent for other channels) is constructed with its own credentials, owns its own `Lark.Client` / WebSocket connection / event handler map, and is state-safe for multiple instances in one process. The current code already supports this; the only changes are:
 
 1. `src/channels/feishu.ts:1026` — registry key from string literal to composite `(tenant, agent, type)`.
-2. `src/feishu/auth.ts:13-14` — credential file path from `store/auth/feishu/credentials.json` to `store/auth/tenants/<tenant>/<agent>/feishu/credentials.json`.
+2. `src/feishu/auth.ts:13-14` — credential file path from legacy `store/auth/feishu/credentials.json` to `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/feishu/credentials.json`.
 3. `src/feishu/auth.ts:72-88` — drop env-var overrides; webhook settings come from `channels/feishu.json`.
 4. `src/index.ts:899` / `src/ipc.ts:242` — replace `getFeishuChannel()` with `getChannel(tenantId, agentId, 'feishu')`.
 
@@ -236,20 +267,20 @@ Two-tier threat model:
 
 ### LLM credentials (low risk)
 
-Anthropic API credentials point at an internal gateway. They are useless if leaked outside the internal network. Delivery: env injection at spawn time.
+Anthropic API credentials point at NanoClaw's internal LLM gateway, and the run process calls only that internal gateway endpoint. These credentials are not public Anthropic credentials; they are accepted only by the internal service and are useless from outside the internal network. Delivery: env injection at spawn time.
 
 ```
 ANTHROPIC_BASE_URL=<internal-gateway-url>      # from tenant/agent config
-ANTHROPIC_API_KEY=<internal-credential>        # from store/auth/tenants/.../credentials.json
+ANTHROPIC_API_KEY=<internal-gateway-credential> # from /var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/llm/credentials.json
 ```
 
-No credential proxy, no scoped tokens, no `SO_PEERCRED`. Files are still 0600 / owned by `nanoclaw-svc` for general hygiene.
+Only `llm:` refs may enter the run environment. No credential proxy, no scoped tokens, no `SO_PEERCRED`. Files are still 0600 / owned by `nanoclaw-svc` for general hygiene.
 
 ### Channel credentials (high risk)
 
 Feishu `app_secret`, Slack bot tokens, Telegram bot tokens, Discord bot tokens are real external credentials. They live only in:
 
-- `store/auth/tenants/<tenant>/<agent>/<channel>/credentials.json` — 0600, owner=`nanoclaw-svc`
+- `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/<channel>/credentials.json` — 0600, owner=`nanoclaw-svc`
 - Control plane process memory after load
 
 Run processes **never** see channel credentials. They request channel operations through tool IPC (write to `tools.db`), control plane tool worker executes against the channel client, result written back to `tools.db`.
@@ -258,7 +289,7 @@ This pattern is inherited from the current architecture and is unchanged in the 
 
 ### Runtime data (high risk)
 
-Chat history, provider continuation, generated skills, downloaded files. Protected by Linux user ownership and 0700 directory modes. Cross-group, cross-agent, cross-tenant reads fail with permission denied.
+Chat history, provider continuation, generated skills, downloaded files. Protected by Linux user ownership, 0700 directory modes, and per-runtime ACLs for `nanoclaw-svc`. Cross-group, cross-agent, cross-tenant reads fail with permission denied.
 
 ## Runtime directories
 
@@ -270,7 +301,8 @@ Chat history, provider continuation, generated skills, downloaded files. Protect
   tenants -> /path/to/nanoclaw-tenants      # symlink, or direct path
   auth/
     tenants/
-      <tenant>/<agent>/<channel>/credentials.json   # 0600, owner=nanoclaw-svc
+      <tenant>/<agent>/llm/credentials.json         # internal gateway credential, 0600, owner=nanoclaw-svc
+      <tenant>/<agent>/<channel>/credentials.json   # external channel credential, 0600, owner=nanoclaw-svc
   runtime/
     <tenant>/<agent>/<group>/
       live/
@@ -297,11 +329,11 @@ Chat history, provider continuation, generated skills, downloaded files. Protect
 
 Runtime directory ownership:
 
-- Owner: `ncg-<tenant>-<agent>-<group>`
-- Group: `nc-runtime` (single shared group containing only `nanoclaw-svc`)
-- Mode: 0770
+- Owner/group: mapped `ncg-*` user for `(tenant, agent, group)`
+- Mode: 0700 plus POSIX ACL for `nanoclaw-svc`
+- Default ACL: grants the mapped `ncg-*` user and `nanoclaw-svc` read/write access to runtime DB files and SQLite sidecars
 
-Control plane accesses IPC files (inbound, outbound, tools DBs) transparently via its `nc-runtime` membership. See "Control plane access to runtime directories" under User model for the rationale.
+Control plane accesses IPC files (inbound, outbound, tools DBs) transparently via per-runtime ACLs. See "Control plane access to runtime directories" under User model for the rationale.
 
 ### Run process view
 
@@ -309,18 +341,27 @@ The run process's cwd and home are `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/{live|
 
 - Its own `inbound.db` / `outbound.db` / `state.db` / `tools.db` (read/write)
 - Its own `skills/generated/` (read/write)
-- Shared read-only `/opt/nanoclaw/skills/{builtin,tenant/<t>,agent/<t>/<a>}/` (mounted in, owner=nanoclaw-svc, mode 0755)
+- A per-run read-only resolved skill bundle under its own runtime directory (`skills/resolved/<revision>/`). This bundle contains the selected builtin, tenant, and agent skills for that run only.
 - `/opt/nanoclaw/agent-runner/` (read-only platform code)
 
 It cannot see:
 
-- Other tenants/agents/groups runtime directories (owned by other users, mode 0770)
+- Other tenants/agents/groups runtime directories (owned by other users, mode 0700 plus ACL only for `nanoclaw-svc`)
 - `auth/` and `users.db` (owned by nanoclaw-svc or root, mode 0600)
-- Tenant repo source files (loaded only into control plane memory; run process gets a resolved skill manifest copy under its own runtime dir)
+- Tenant repo source files and other tenants' resolved skill bundles (loaded only into control plane memory; run process gets only its resolved skill bundle and manifest under its own runtime dir)
 
 ## IPC and data flow
 
 DB-backed IPC is inherited unchanged from `docs/runtime-rework/03-db-backed-ipc.md`. Only the path prefix changes from `/runtime/groups/<group>/` to `/var/lib/nanoclaw/runtime/<tenant>/<agent>/<group>/`.
+
+The control-plane host DB is partitioned by `(tenant, agent)`, for example `/var/lib/nanoclaw/data/tenants/<tenant>/<agent>/messages.db`. Inside each per-agent DB, channel-derived tables and cursors must include `channel_type` in their identity:
+
+- `chats`: `(channel_type, jid)`
+- `messages`: `channel_type` plus the channel message identity
+- `registered_groups`: `(channel_type, jid)`
+- `router_state`: `last_timestamp[channel_type]` and `last_agent_timestamp[channel_type, chat_jid]`
+
+This keeps per-agent SQLite files small while preventing one multi-channel agent from comparing or overwriting unrelated channel cursors.
 
 | File | Writer | Reader |
 |------|--------|--------|
@@ -353,12 +394,12 @@ Each run writes its own API usage (model, tokens, latency, status) into `state.d
 - **ADR-021**: Each (tenant, agent) tuple may declare its own external channel identity. Channel registry key is `(tenant_id, agent_id, channel_type)`.
 - **ADR-022**: Inbound webhook URL `/<tenant>/<agent>/<channel>/event` is the routing key. One shared HTTP server in control plane dispatches by path.
 - **ADR-023**: Privileged operations only through `nc-setuid-helper` (SUID root). Control plane holds no Linux capabilities.
-- **ADR-024**: Two-tier credential threat model. LLM credentials (internal gateway) — env injection. Channel credentials (real external) — host-side only, run processes use tool IPC. Runtime data — Linux user isolation.
+- **ADR-024**: Two-tier credential threat model. LLM credentials are internal-gateway credentials accepted only by the internal LLM gateway — typed `llm:` refs may be injected into run envs. Channel credentials are real external credentials — typed `channel:` refs are host-side only and run processes use tool IPC. Runtime data — Linux user isolation.
 - **ADR-025**: Channel registry uses composite key. All `getFeishuChannel()`-style singleton accessors are removed in favour of `getChannel(tenantId, agentId, channelType)`.
 
 ### Kept unchanged
 
-ADR-001 (tenant/skill boundary), ADR-003 (DB IPC), ADR-006 (isolated task uses same group user), ADR-007 (isolated task does not reuse live continuation), ADR-009 (provider differences behind `AgentProvider`), ADR-010 (OpenCode optional), ADR-011 (secrets host-side — now sharpened by ADR-024), ADR-012 (no world-writable IPC), ADR-013 (registered ≠ active), ADR-015 (tenant skills read-only inputs), ADR-016 (generated skills group-local), ADR-017 (central host DB source of truth), ADR-018 (host-side authz), ADR-020 (additional mount scope explicit).
+ADR-001 (tenant/skill boundary), ADR-003 (DB IPC), ADR-006 (isolated task uses same group user), ADR-007 (isolated task does not reuse live continuation), ADR-009 (provider differences behind `AgentProvider`), ADR-010 (OpenCode optional), ADR-011 (secrets host-side — now sharpened by ADR-024), ADR-012 (no world-writable IPC), ADR-013 (registered ≠ active), ADR-015 (tenant skills read-only inputs), ADR-016 (generated skills group-local), ADR-017 (partitioned host DBs remain the control-plane source of truth), ADR-018 (host-side authz), ADR-020 (additional mount scope explicit).
 
 ## Migration
 
@@ -375,20 +416,22 @@ The script:
    ─────────────────────────────────────────────────────────────────────────
    groups/<name>/CLAUDE.md                  →     tenants/<t>/agents/<name>/instructions.md
                                                                                    + agent.json (provider=claude)
-   store/auth/feishu/credentials.json       →     store/auth/tenants/<t>/<name>/feishu/credentials.json
+   store/auth/feishu/credentials.json       →     /var/lib/nanoclaw/auth/tenants/<t>/<name>/feishu/credentials.json
    data/sessions/<group>/                          → /var/lib/nanoclaw/runtime/<t>/<name>/<group>/live/
      (Claude SDK state repacked into state.db)
      agent-runner-src/                             ← dropped (platform code is shared in new model)
    data/ipc/<group>/                               → dropped (file IPC not supported; backed up only)
-   data/nanoclaw.db                                → schema migration adds tenant_id, agent_id columns
-                                                    (default tenant=<default-tenant-id>, agent=<folder>)
-   data/messages.db, store/messages.db             → schema migration adds tenant_id column
+   data/nanoclaw.db, data/messages.db,
+   store/messages.db                               → split into per-(tenant, agent) host DBs under
+                                                    /var/lib/nanoclaw/data/tenants/<t>/<agent>/
+                                                    (legacy default tenant=<default-tenant-id>, agent=<folder>)
+                                                    and populate channel_type in chat/message/group/cursor keys
    ```
 
 4. Verifies result via `npm run verify:migration`:
    - Every legacy group has a 1:1 mapping to a new (tenant, agent, group) tuple.
    - Message counts match between source and target DBs.
-   - Every credentials file is mode 0600, owner=nanoclaw-svc.
+   - Every credentials file under `/var/lib/nanoclaw/auth/` is mode 0600, owner=nanoclaw-svc.
    - Tenant config loader successfully loads the new repo with no diagnostics.
 
 The migration is **irreversible** by design (no `docker-per-group` fallback). Operators must validate the dry-run report before confirming.
@@ -399,10 +442,12 @@ The migration is **irreversible** by design (no `docker-per-group` fallback). Op
 
 Run inside a test host with multiple `ncg-*` users created:
 
-- `ncg-a-x-y` cannot read or write `ncg-a-x-z`'s `state.db`.
-- `ncg-a-x-y` cannot read any file under `auth/`.
-- `ncg-a-x-y` cannot read `ncg-b-x-y`'s runtime directory (cross-tenant).
-- Run process environment contains only `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, and run config — no channel credentials, no other tenant's data.
+- The mapped run user for `(a, x, y)` cannot read or write `(a, x, z)`'s `state.db`.
+- The mapped run user for `(a, x, y)` cannot read any file under `auth/`.
+- The mapped run user for `(a, x, y)` cannot read `(b, x, y)`'s runtime directory (cross-tenant).
+- The mapped run user for `(a, x, y)` cannot read another tenant/agent's resolved skill bundle.
+- `nanoclaw-svc` and the mapped `ncg-*` user can both read/write runtime DB files and SQLite sidecars created by either process.
+- Run process environment contains only run config and typed `llm:` credentials such as `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` for the internal LLM gateway — no `channel:` credentials, no other tenant's data.
 
 ### Webhook routing
 
@@ -420,16 +465,20 @@ Run inside a test host with multiple `ncg-*` users created:
 - Control plane kills a run → process exits, audit row written, runtime directory preserved.
 - Run process crashes → control plane detects via SIGCHLD and `/proc/<pid>` absence, DB state reconciled.
 - Idle-reap timer fires → idle runs killed via helper.
-- Host restart → control plane reconciles DB-listed active PIDs against `/proc/`; missing PIDs marked crashed.
+- Host restart → control plane reconciles DB-listed active PIDs against `/proc/` plus helper `status`; missing or identity-mismatched PIDs are marked crashed/stale.
+- PID reuse test: a process with the same PID but different `/proc/<pid>/stat` start time or cgroup is never treated as the old run and is never signalled by helper `kill`.
 
 ### Setuid helper
 
 Standalone C test suite for the helper binary:
 
+- `prepare` creates the expected Linux user/group mapping, runtime tree, ACLs, and runtime DB files for a new `(tenant, agent, group)` tuple.
+- `prepare` is idempotent for an existing tuple and rejects any tuple-to-username remap or username collision.
 - Rejects `spawn --uid` not matching `^ncg-`.
 - Rejects `spawn --uid` for users not in `users.db`.
-- Rejects `spawn --runtime-dir` not owned by `--uid`.
-- Rejects `kill --pid` whose real UID is not `ncg-*`.
+- Rejects `spawn --runtime-dir` not matching the recorded tuple/user mapping or missing expected ACLs.
+- Rejects `kill --pid` whose real UID is not the expected mapped `ncg-*` user.
+- Rejects `kill` and `status` when PID start time, runtime dir, cgroup, or expected UID does not match the active-run record.
 - Rejects invocations from any UID other than `nanoclaw-svc`.
 - After successful `spawn`, the exec'd process has dropped all capabilities and runs with the requested UID/GID.
 
@@ -450,7 +499,7 @@ Not part of the initial implementation. Triggered when the control plane binary 
 If NanoClaw ever runs untrusted tenants (e.g., multi-customer SaaS), upgrade credential delivery from env injection to a per-run Unix socket proxy:
 
 - Each run gets its own Unix socket at `/var/run/nanoclaw/cred-proxy.<runId>.sock`.
-- Socket file mode 0660, owner=nanoclaw-svc, group=ncg-<t>-<a>-<g>.
+- Socket file access is granted only to `nanoclaw-svc` and the mapped `ncg-*` user for that run.
 - Kernel-enforced access control: only that run can connect.
 - Anthropic SDK configured with custom HTTP agent targeting the socket.
 - Proxy injects credentials server-side.
@@ -466,7 +515,7 @@ Once the basic runtime is stable, add `skills.reload` to the run lifecycle so te
 Deferred to implementation planning:
 
 - Exact JSON schemas for `tenant.json`, `agent.json`, `channels/<channel>.json`, skill manifests.
-- Whether the host-side DB (`data/nanoclaw.db`) stays as SQLite or moves to embedded Postgres for multi-tenant query patterns.
+- Whether the per-`(tenant, agent)` host DB stays as SQLite or moves to embedded Postgres for larger multi-tenant query patterns.
 - Resource limit defaults (memoryMb, pids, cpuShares) per agent — likely tenant-overridable.
 - Whether `/var/lib/nanoclaw/users.db` should be SQLite (current proposal) or a simpler append-only format.
 - Cgroup v2 delegation: does the control plane get its own delegated cgroup subtree, or does the helper manage the full `/sys/fs/cgroup/nanoclaw/` tree as root?

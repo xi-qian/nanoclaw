@@ -11,7 +11,7 @@ Code that the rework will touch or replace:
 **Control plane (host-side, current process)**:
 
 - `src/index.ts` — orchestrator: state, message loop, agent invocation. Channel callbacks, sender filtering, auto-registration, message cursors, typing indicators, scheduler/IPC/reporter wiring.
-- `src/db.ts` — central SQLite for chats, messages, scheduled tasks, task run logs, router cursors, sessions, registered groups.
+- `src/db.ts` — current central SQLite for chats, messages, scheduled tasks, task run logs, router cursors, sessions, registered groups. Target shape is one control-plane SQLite DB per `(tenant, agent)`, with channel-scoped keys inside each DB.
 - `src/router.ts` — channel ownership lookup and XML prompt formatting (sender IDs, attachments, card actions, timezone context).
 - `src/group-queue.ts` — per-group concurrency, follow-up message reuse, retry backoff, idle close, active process tracking.
 - `src/task-scheduler.ts` — `context_mode` semantics and isolated task runs.
@@ -31,7 +31,7 @@ Code that the rework will touch or replace:
 
 - `src/channels/registry.ts` — singleton-keyed registry. Will move to composite `(tenant, agent, type)` keys.
 - `src/channels/feishu.ts` — singleton Feishu channel. Will become multi-instance.
-- `src/feishu/auth.ts` — hardcoded credential file path. Will accept per-tenant path.
+- `src/feishu/auth.ts` — hardcoded credential file path. Will resolve typed refs under `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/`.
 - `src/feishu/client.ts` — per-instance client. Already state-safe for multi-instance.
 
 **IPC, tools, and host-only capabilities**:
@@ -48,16 +48,19 @@ Code that the rework will touch or replace:
 
 ## Host DB and Runtime DB
 
-The central host DB remains the control-plane source of truth. Per-run runtime DBs are durable queues and state for one live run or isolated task; they are not a replacement for host routing state.
+The control-plane source of truth is partitioned by `(tenant, agent)`: each agent service has its own host DB, e.g. `/var/lib/nanoclaw/data/tenants/<tenant>/<agent>/messages.db`. Per-run runtime DBs are durable queues and state for one live run or isolated task; they are not a replacement for host routing state.
+
+Tenant and agent are the physical DB partition. `channel_type` remains a required logical key inside each DB because one agent may bind multiple channels whose chat IDs, message IDs, cursor formats, and timestamp ordering are independent.
 
 ### Central DB ownership
 
-- `chats` — channel/chat discovery and names.
-- `messages` — authoritative inbound history, bot-message filtering, attachments, card actions, scheduled task linkage.
+- `chats` — channel/chat discovery and names. Identity is `(channel_type, jid)` within the per-agent DB.
+- `messages` — authoritative inbound history, bot-message filtering, attachments, card actions, scheduled task linkage. Uniqueness includes `channel_type` plus the channel message identity.
 - `scheduled_tasks`, `task_run_logs` — task source of truth and audit.
-- `router_state` — `last_timestamp` and `last_agent_timestamp`.
-- `sessions` — legacy Claude session IDs until provider state is fully runtime-scoped.
-- `registered_groups` — group-folder routing, trigger config, JID/channel ownership. Will be extended with `tenant_id`, `agent_id` columns.
+- `router_state` — per-channel `last_timestamp` and per-`(channel_type, chat_jid)` `last_agent_timestamp`.
+- `sessions` — legacy Claude session IDs until provider state is fully runtime-scoped. Keys must not be bare JIDs; use runtime group identity.
+- `registered_groups` — group-folder routing, trigger config, JID/channel ownership. Identity is `(channel_type, jid)` within the per-agent DB.
+- `active_runs` — run lifecycle identity for restart reconciliation and kill/status validation: `pid`, `/proc/<pid>/stat` start time ticks, expected uid, runtime dir, cgroup path, tenant, agent, group, and run id.
 
 ### Runtime DB ownership
 
@@ -70,11 +73,11 @@ Do not let both DB layers independently decide routing progress. The host must a
 
 ### Cursor rules
 
-- `last_timestamp` means "channel messages seen by the host message loop".
-- `last_agent_timestamp[chat_jid]` means "latest user message successfully handed to an agent run or active run".
-- If an agent run fails before any user-visible output is delivered, roll back `last_agent_timestamp[chat_jid]` so the next run can retry the same messages.
+- `last_timestamp[channel_type]` means "messages from this channel seen by the host message loop".
+- `last_agent_timestamp[channel_type, chat_jid]` means "latest user message from this channel/chat successfully handed to an agent run or active run".
+- If an agent run fails before any user-visible output is delivered, roll back `last_agent_timestamp[channel_type, chat_jid]` so the next run can retry the same messages.
 - If output was delivered and a later provider error happens, do not roll back the cursor (would risk duplicate replies).
-- Runtime inbound rows should carry source message IDs so retries are idempotent.
+- Runtime inbound rows should carry `channel_type` and source message IDs so retries are idempotent.
 
 ## Message Metadata Contract
 
@@ -82,7 +85,7 @@ DB-backed IPC must preserve all metadata that currently reaches the prompt or de
 
 ### Inbound records
 
-- tenant ID, agent ID, group folder, chat JID, channel name
+- tenant ID, agent ID, group folder, chat JID, channel type/name (required routing identity)
 - source message ID or scheduled task ID
 - sender ID, sender name, `is_from_me`, trigger reason
 - content, timestamp, message type, attachment JSON, card action JSON
@@ -90,7 +93,7 @@ DB-backed IPC must preserve all metadata that currently reaches the prompt or de
 
 ### Outbound records
 
-- tenant ID, agent ID, group folder, chat JID, channel name
+- tenant ID, agent ID, group folder, chat JID, channel type/name (required routing identity)
 - source inbound IDs or tool request ID
 - text content, optional sender/persona, message type, attachment path/key
 - delivery status, channel message ID, error, retry count, idempotency key
@@ -144,14 +147,14 @@ These gates stay host-side. A run process can request work or tools, but the con
 - `instructions` — path to instructions file
 - `skills` — list of skill references (`builtin:`, `tenant:`, `agent:`)
 - `channels` — list of channel types this agent uses
-- `envRefs` — list of secret reference names (resolved at load time)
+- `envRefs` — list of typed LLM secret references (`llm:<name>`) resolved at load time; channel secrets are not valid run env refs
 - `limits` — resource limits (memoryMb, pids, concurrentTasksPerGroup)
 
 ### Group representation
 
-A group is the runtime representation of a chat — identified by `(tenant, agent, chat_jid)`. Existing `registered_groups` table is extended with `tenant_id` and `agent_id` columns. Fields that must round-trip through migration:
+A group is the runtime representation of a chat — identified by `(tenant, agent, channel_type, chat_jid)`. Host DBs are already partitioned by `(tenant, agent)`, so `registered_groups` is keyed by `(channel_type, jid)` inside each per-agent DB. Fields that must round-trip through migration:
 
-- JID and channel ownership
+- JID and channel ownership (`channel_type`, channel-specific chat ID)
 - display name
 - folder (mapped to `<tenant>/<agent>/<group>` runtime path)
 - trigger pattern
@@ -178,9 +181,15 @@ Rules:
 
 Two-tier credential threat model (ADR-024):
 
-- **LLM credentials (low risk)**: point at an internal gateway. Delivered via env at spawn time. No proxy, no scoped tokens. Still kept in `0600` files for general hygiene.
-- **Channel credentials (high risk)**: real external credentials. Live only in `0600` files owned by `nanoclaw-svc` and in control plane process memory. Run processes access channels via tool IPC.
-- **Runtime data (high risk)**: chat history, continuation, generated skills, downloaded files. Protected by Linux user ownership and `0770` directory modes.
+- **LLM credentials (low risk)**: point at NanoClaw's internal LLM gateway. The agent connects to the internal gateway endpoint with an internal credential that is accepted only inside the internal network, not to a public LLM provider endpoint. Delivered via env at spawn time. No proxy, no scoped tokens. Still kept in `0600` files under `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/llm/credentials.json` for general hygiene.
+- **Channel credentials (high risk)**: real external credentials. Live only in `0600` files owned by `nanoclaw-svc` under `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/<channel>/credentials.json` and in control plane process memory. Run processes access channels via tool IPC.
+- **Runtime data (high risk)**: chat history, continuation, generated skills, downloaded files. Protected by Linux user ownership, `0700` runtime directories, and per-runtime POSIX ACLs that grant only `nanoclaw-svc` access.
+
+Secret references are typed:
+
+- `llm:<name>` may resolve into a run environment.
+- `channel:<name>` may resolve only inside the control plane.
+- Unknown or untyped refs fail config validation.
 
 Do not put real channel credentials into:
 
@@ -198,7 +207,7 @@ Final rule:
 
 - Platform runner, helper, and provider code is image/distribution-owned and read-only.
 - Group-created behaviour lives in group-generated skills or group memory files.
-- Tenant/agent skills are reviewed inputs and exposed read-only.
+- Tenant/agent skills are reviewed inputs and exposed read-only through a per-run resolved skill bundle under the run runtime directory. They must not be copied into world-readable `/opt` paths.
 - Runtime-generated skills remain under the group runtime directory until explicit promotion.
 
 Reporter/local API methods that edit skills or memory must write to the new generated skill root or group memory path, never to tenant skill repositories.
@@ -251,19 +260,25 @@ Keep these outside run processes:
 
 The final runtime status command should include host process state, active runs, queue depth, helper health, and (post-migration) verify output.
 
+## Deployment Wrapper Requirements
+
+Bare-metal/systemd is the reference deployment. A single Docker container or Kubernetes pod is only a packaging wrapper and is supported only when it provides the same host-direct primitives: SUID execution, helper capabilities for user switching/signalling/ACL/cgroup writes, persistent `/var/lib/nanoclaw` with POSIX ACL support, local user/NSS support or an equivalent helper-owned user database, and a writable or delegated cgroup v2 subtree at `/sys/fs/cgroup/nanoclaw/`.
+
+If these prerequisites are unavailable, the Docker/Kubernetes wrapper is unsupported for this architecture.
+
 ## Cleanup and Migration Data
 
 The one-shot migration command must classify and either transform or back up:
 
 - `groups/<group>/CLAUDE.md` and other group memory files → `tenants/<t>/agents/<name>/instructions.md` + `agent.json`
 - `groups/<group>/logs` → `logs/<t>/<a>/<group>/`
-- `store/auth/feishu/credentials.json` → `store/auth/tenants/<t>/<name>/feishu/credentials.json`
+- `store/auth/feishu/credentials.json` → `/var/lib/nanoclaw/auth/tenants/<t>/<name>/feishu/credentials.json`
 - `data/ipc/<group>/**` → backed up only; not migrated (file IPC unsupported in V2.0)
 - `data/sessions/<group>/.claude` → repacked into runtime `state.db`
 - `data/sessions/<group>/agent-runner-src` → dropped (platform code is shared)
 - `data/sessions/<group>/isolated-ipc-*` → dropped
-- `data/nanoclaw.db` → schema migration adds `tenant_id`, `agent_id` columns; defaults `tenant=<configured-default>`, `agent=<folder>`
-- `data/messages.db`, `store/messages.db` → schema migration adds `tenant_id` column
+- `data/nanoclaw.db`, `data/messages.db`, `store/messages.db` → split into per-`(tenant, agent)` host DBs under `/var/lib/nanoclaw/data/tenants/<tenant>/<agent>/`; legacy sources without tenant/agent identity use `tenant=<configured-default>` and `agent=<folder>`
+- `chats`, `messages`, `registered_groups`, `router_state`, `sessions`, `scheduled_tasks` → populate `channel_type` wherever the table stores channel/chat/message identity; legacy single-channel rows default to the source channel (for example `feishu`)
 - `approval-allowlist.json` → retained (host-side policy)
 - `~/.config/nanoclaw/mount-allowlist.json` → retained
 - `~/.config/nanoclaw/sender-allowlist.json` → retained
@@ -286,7 +301,10 @@ Before declaring V2.0 shippable:
 - Remote control remains main-group-only and host-side.
 - Run process cannot read another run's runtime DBs.
 - Run process cannot read channel credentials.
-- Run process env contains only LLM credentials and run config — no channel secrets.
+- Run process cannot read another tenant/agent's resolved skill bundle.
+- `nanoclaw-svc` and the mapped run user can both read/write runtime DB files and SQLite sidecars created by either process.
+- Run process env contains only typed `llm:` credentials and run config — no `channel:` secrets.
 - Webhook routing distinguishes (tenant, agent) tuples correctly.
-- Helper rejects out-of-scope spawn/kill/cgroup requests.
+- Helper prepares users/runtime dirs idempotently, rejects tuple-to-username collisions, rejects PID start-time/cgroup/runtime-dir mismatches, and rejects out-of-scope spawn/kill/cgroup requests.
+- Restart reconciliation treats PID reuse as stale and never kills a process unless PID, start time, expected UID, runtime dir, and cgroup all match the active-run record.
 - Migration dry-run produces an accurate transformation report; verify passes after migration.

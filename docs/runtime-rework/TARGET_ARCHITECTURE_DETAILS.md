@@ -8,7 +8,7 @@ For the design rationale behind these decisions, see [`../superpowers/specs/2026
 
 ```mermaid
 flowchart TD
-  Host["NanoClaw host<br/>(bare-metal systemd OR one Docker container)"]
+  Host["NanoClaw host<br/>(bare-metal systemd OR supported wrapper)"]
 
   subgraph CP["Control plane process (uid=nanoclaw-svc, no capabilities)"]
     direction TB
@@ -17,13 +17,13 @@ flowchart TD
     Routing["router, scheduler,<br/>sender/trigger policy"]
     Tools["tool workers (host-side:<br/>Feishu, approval, file, task APIs)"]
     Loader["tenant config loader"]
-    Lifecycle["run lifecycle manager<br/>spawn, monitor (/proc),<br/>reap (SIGCHLD + waitpid),<br/>kill (via helper), idle-reap, reconcile"]
+    Lifecycle["run lifecycle manager<br/>prepare, spawn, monitor (/proc),<br/>reap (SIGCHLD + waitpid),<br/>kill (via helper), idle-reap, reconcile"]
     Spawner["run spawner<br/>invokes nc-setuid-helper"]
   end
 
-  Helper["nc-setuid-helper<br/>(SUID root binary)<br/>spawn / kill / cgroup / status"]
+  Helper["nc-setuid-helper<br/>(SUID root binary)<br/>prepare / spawn / kill / cgroup / status"]
 
-  Run["Run processes<br/>(uid=ncg-[tenant]-[agent]-[group])<br/>agent-runner<br/>(Claude / OpenCode / mock)"]
+  Run["Run processes<br/>(uid=mapped ncg-* user)<br/>agent-runner<br/>(Claude / OpenCode / mock)"]
 
   Host --- CP
   Host --- Helper
@@ -42,7 +42,7 @@ The control plane runs as `uid=nanoclaw-svc` with no Linux capabilities. It:
 
 - Receives channel events via per-(tenant, agent) channel instances.
 - Receives inbound webhooks via the shared HTTP server.
-- Stores authoritative message history in the central host DB.
+- Stores authoritative message history in per-`(tenant, agent)` host DBs.
 - Applies sender allowlists, trigger rules, card-action routing, main-group privileges, approval allowlists, mount allowlists.
 - Owns `registered_groups`, task state, router cursors, channel metadata.
 - Loads tenant and agent config from `NANOCLAW_TENANTS_DIR`, resolves skill manifests.
@@ -53,20 +53,22 @@ The control plane runs as `uid=nanoclaw-svc` with no Linux capabilities. It:
 
 ### nc-setuid-helper
 
-The helper is a SUID root C binary installed at `/usr/lib/nanoclaw/nc-setuid-helper` (mode 4750, owner=root, group=nc-priv). Only `nanoclaw-svc` (the sole member of `nc-priv`) can invoke it. It exposes four operations:
+The helper is a SUID root C binary installed at `/usr/lib/nanoclaw/nc-setuid-helper` (mode 4750, owner=root, group=nc-priv). Only `nanoclaw-svc` (the sole member of `nc-priv`) can invoke it. It exposes five operations:
 
 ```
+nc-setuid-helper prepare --tenant=<t> --agent=<a> --group=<g> --runtime-dir=<dir>
 nc-setuid-helper spawn  --uid=<u> --gid=<g> --cgroup=<path> --runtime-dir=<dir> -- <cmd...>
-nc-setuid-helper kill   --pid=<p> --signal=<sig>
+nc-setuid-helper kill   --pid=<p> --signal=<sig> --uid=<u> --runtime-dir=<dir> --cgroup=<path> --start-time=<ticks>
 nc-setuid-helper cgroup --path=<path> --mem=<mb> --pids=<n> --cpu=<shares>
-nc-setuid-helper status --pid=<p>
+nc-setuid-helper status --pid=<p> --uid=<u> --runtime-dir=<dir> --cgroup=<path> --start-time=<ticks>
 ```
 
 Validation:
 
-- `--uid` and `--gid` must match `^ncg-` and correspond to a user recorded in `/var/lib/nanoclaw/users.db` (owned by root, mode 0600).
-- `--runtime-dir` must be owned by `--uid:--gid` and live under `/var/lib/nanoclaw/runtime/`.
-- `kill --pid` must target a process whose real UID matches an `ncg-*` user.
+- `prepare` validates `(tenant, agent, group)`, derives the collision-resistant Linux username, creates the user/group if missing, creates or repairs the runtime tree, applies ACLs and modes, pre-creates runtime DB files, and records the mapping in `/var/lib/nanoclaw/users.db` (owned by root, mode 0600).
+- `--uid` and `--gid` for `spawn` must match `^ncg-` and correspond to the exact tuple mapping recorded by `prepare`.
+- `--runtime-dir` must live under `/var/lib/nanoclaw/runtime/`, match the recorded mapping, and have expected owner/mode/ACLs.
+- `kill` and `status` must match PID, `/proc/<pid>/stat` start time, expected real UID, runtime dir, and cgroup path. PID reuse is treated as a stale active-run record, not as a live run.
 - `cgroup` paths must live under `/sys/fs/cgroup/nanoclaw/`.
 
 Any violation: the helper exits non-zero without performing the operation. The control plane sees the failure and reports it.
@@ -77,7 +79,7 @@ After `spawn`, the exec'd process has dropped all capabilities and runs with the
 
 Each run process is the agent-runner invoked with a specific runtime directory. It:
 
-- Runs as `ncg-<tenant>-<agent>-<group>`.
+- Runs as the mapped `ncg-*` Linux user for `(tenant, agent, group)`.
 - Reads inbound work from its `inbound.db`.
 - Invokes the configured provider with the resolved skill manifest and group-generated skills.
 - Writes outbound responses and tool requests to its DBs.
@@ -85,30 +87,45 @@ Each run process is the agent-runner invoked with a specific runtime directory. 
 
 ## Privilege and Access Model
 
+### Deployment wrapper prerequisites
+
+Bare-metal/systemd is the reference deployment. A single Docker container or Kubernetes pod can wrap the deployment only if it permits the same host-direct primitives:
+
+- SUID execution is allowed; `no_new_privileges` must not block `nc-setuid-helper`.
+- The helper has narrowly scoped ability to create/switch users, signal mapped `ncg-*` processes, apply POSIX ACLs, and write the NanoClaw cgroup subtree.
+- NSS/user creation is available inside the wrapper, or an equivalent helper-owned local user database is provided.
+- `/var/lib/nanoclaw` is persistent and mounted with POSIX ACL support.
+- A cgroup v2 subtree is writable or delegated at `/sys/fs/cgroup/nanoclaw/`.
+
+If these prerequisites are absent, Docker/Kubernetes deployment is unsupported for this architecture.
+
 ### Process ownership
 
 | Process | UID | GID | Supplementary | Capabilities |
 |---------|-----|-----|---------------|--------------|
-| Control plane | `nanoclaw-svc` | `nanoclaw-svc` | `nc-runtime`, `nc-priv` | none |
+| Control plane | `nanoclaw-svc` | `nanoclaw-svc` | `nc-priv` | none |
 | nc-setuid-helper (during execution) | root (via SUID) | root | — | CAP_SETUID, CAP_SETGID, CAP_KILL, CAP_SYS_ADMIN (for cgroup writes); dropped before exec |
-| Run process | `ncg-<t>-<a>-<g>` | `ncg-<t>-<a>-<g>` | none | none |
+| Run process | mapped `ncg-*` user for `(t, a, g)` | matching mapped `ncg-*` group | none | none |
 
 ### Filesystem access
 
 - `/var/lib/nanoclaw/` — owned by `nanoclaw-svc`, mode 0755.
 - `/var/lib/nanoclaw/users.db` — owned by root, mode 0600. Only the helper accesses this.
-- `/var/lib/nanoclaw/auth/tenants/<t>/<a>/<channel>/credentials.json` — owned by `nanoclaw-svc`, mode 0600.
-- `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/` — owned by `ncg-<t>-<a>-<g>:nc-runtime`, mode 0770.
+- `/var/lib/nanoclaw/auth/tenants/<t>/<a>/llm/credentials.json` — internal gateway credential, owned by `nanoclaw-svc`, mode 0600.
+- `/var/lib/nanoclaw/auth/tenants/<t>/<a>/<channel>/credentials.json` — external channel credential, owned by `nanoclaw-svc`, mode 0600.
+- `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/` — owned by the mapped `ncg-*` user/group, mode 0700, with POSIX ACLs granting `nanoclaw-svc` access.
 - `/opt/nanoclaw/agent-runner/` — owned by `nanoclaw-svc`, mode 0755. World-readable (run processes read platform code).
-- `/opt/nanoclaw/skills/` — owned by `nanoclaw-svc`, mode 0755. World-readable (read-only skill inputs).
+- `/opt/nanoclaw/skills/builtin/` — owned by `nanoclaw-svc`, mode 0755. World-readable only for non-tenant platform builtin skills.
+- Tenant and agent skills are staged into per-run read-only bundles under the run's runtime directory; they are not exposed through a world-readable `/opt` path.
 
-### The `nc-runtime` group
+### Runtime directory ACLs
 
-Group `nc-runtime` exists with **only** `nanoclaw-svc` as a member. Every runtime directory is `owner=ncg-<t>-<a>-<g>`, `group=nc-runtime`, `mode=0770`.
+`nc-setuid-helper prepare` installs POSIX ACLs on every runtime directory:
 
-- Owner (the ncg user) gets rwx.
-- Group (only `nanoclaw-svc`) gets rwx — control plane reads/writes IPC files transparently.
-- Other `ncg-*` users fall to "other" → no access.
+- Owner (the mapped `ncg-*` user) gets rwx.
+- `nanoclaw-svc` gets rwx via an explicit user ACL.
+- Default ACLs grant both identities access to newly created runtime DB files and SQLite sidecars.
+- Other `ncg-*` users have no ACL entry and no permission bits.
 
 This gives the control plane transparent access to every runtime dir without elevating through the helper, while keeping `ncg-*` users fully isolated from each other.
 
@@ -116,18 +133,18 @@ This gives the control plane transparent access to every runtime dir without ele
 
 ### Naming
 
-Linux user name format: `ncg-<tenant>-<agent>-<group>`.
+Conceptual Linux user identity: `ncg-<tenant>-<agent>-<group>`.
 
-Sanitisation:
+Actual Linux username format: `ncg-<tenant8>-<agent8>-<hash10>`.
 
-- All segments lowercased.
-- Allowed characters: `[a-z0-9-]`. Anything else replaced with `-`.
-- Tenant and agent IDs: max 16 chars each, validated at tenant-config load time.
-- Group ID: variable length, sanitised to `[a-z0-9-]+`. If the resulting username would exceed 32 chars, the group segment is replaced with `g<sha1(group).substr(0,8)>`.
+- Tenant and agent IDs are lowercased, validated at tenant-config load time, and truncated only for the username prefix.
+- `<hash10>` is derived from the canonical `(tenant, agent, group)` tuple before sanitisation.
+- `/var/lib/nanoclaw/users.db` stores the authoritative tuple-to-uid/gid/username mapping.
+- The helper rejects tuple remaps and username collisions.
 
 ### Lifecycle
 
-Users are created lazily by the helper on first run for a given (tenant, agent, group) tuple, and **never deleted automatically**. Idle runs stop the process but keep the user and runtime directory on disk so the next message has a warm path. A separate `nanoclaw-user-gc` admin command can prune users for tenants removed from config; this is operator-driven.
+Users and runtime directories are prepared lazily by `nc-setuid-helper prepare` before the first run for a given (tenant, agent, group) tuple, and **never deleted automatically**. Idle runs stop the process but keep the user and runtime directory on disk so the next message has a warm path. A separate `nanoclaw-user-gc` admin command can prune users for tenants removed from config; this is operator-driven.
 
 State file `/var/lib/nanoclaw/users.db` (SQLite, root:root 0600) tracks every user the helper has created.
 
@@ -137,7 +154,7 @@ State file `/var/lib/nanoclaw/users.db` (SQLite, root:root 0600) tracks every us
 |------|------------|
 | Tenant | Deployment, configuration, and skill-management layer. May own multiple agents. Not a runtime isolation unit. |
 | Agent service | One configured (provider, model, instructions, skills, channels, limits) tuple. May own multiple groups. |
-| Group | One Linux user `ncg-<t>-<a>-<g>` inside the host. One live runtime directory. Zero or more isolated task runtime directories. Group-local generated skills and memory. |
+| Group | One mapped `ncg-*` Linux user inside the host. One live runtime directory. Zero or more isolated task runtime directories. Group-local generated skills and memory. |
 | Run | One live or isolated process lifecycle. One set of runtime DBs. One provider continuation namespace. |
 
 ## Runtime Directory Layout
@@ -149,6 +166,7 @@ Host path:
   users.db
   auth/
     tenants/
+      <tenant>/<agent>/llm/credentials.json
       <tenant>/<agent>/<channel>/credentials.json
   runtime/
     <tenant>/<agent>/<group>/
@@ -177,14 +195,14 @@ Host path:
 Run process view (cwd and home):
 
 - `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/{live|runs/<runId>}/` — read/write own DBs, files, generated skills.
-- `/opt/nanoclaw/skills/{builtin,tenant/<t>,agent/<t>/<a>}/` — read-only.
+- `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/{live|runs/<runId>}/skills/resolved/<revision>/` — read-only resolved builtin, tenant, and agent skill bundle for this run.
 - `/opt/nanoclaw/agent-runner/` — read-only platform code.
 
 Cannot see:
 
 - Other tenants/agents/groups runtime directories.
 - `auth/` and `users.db`.
-- Tenant repo source files (loaded only into control plane memory; run process gets a resolved skill manifest copy under its own runtime dir).
+- Tenant repo source files and other tenants' resolved skill bundles (loaded only into control plane memory; run process gets only its resolved skill bundle and manifest under its own runtime dir).
 
 ## Tenant Configuration
 
@@ -230,7 +248,7 @@ nanoclaw-tenants/
     "agent:finance-local"
   ],
   "channels": ["feishu"],
-  "envRefs": ["ANTHROPIC_API_KEY"],
+  "envRefs": ["llm:ANTHROPIC_API_KEY"],
   "limits": {
     "memoryMb": 1024,
     "pids": 256,
@@ -245,15 +263,21 @@ nanoclaw-tenants/
 {
   "mode": "websocket",
   "appId": "cli_acme_finance",
-  "appSecretRef": "FEISHU_APP_SECRET",
+  "appSecretRef": "channel:FEISHU_APP_SECRET",
   "webhook": {
-    "encryptKeyRef": "FEISHU_WEBHOOK_ENCRYPT_KEY",
-    "verificationTokenRef": "FEISHU_WEBHOOK_VERIFICATION_TOKEN"
+    "encryptKeyRef": "channel:FEISHU_WEBHOOK_ENCRYPT_KEY",
+    "verificationTokenRef": "channel:FEISHU_WEBHOOK_VERIFICATION_TOKEN"
   }
 }
 ```
 
-Secret values live in `store/auth/tenants/<tenant>/<agent>/feishu/credentials.json` (0600, owner=nanoclaw-svc). The repo carries only references.
+The canonical auth root is `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/`. The repo carries only typed references:
+
+- `llm:<name>` may be resolved into the run environment because it targets the internal LLM gateway.
+- `channel:<name>` may be resolved only inside the control plane.
+- Unknown or untyped refs fail config validation.
+
+Channel secret values live in `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/feishu/credentials.json` (0600, owner=nanoclaw-svc).
 
 ## Channel Registry and Webhook Routing
 
@@ -285,47 +309,49 @@ sequenceDiagram
   participant User
   participant Channel as "Channel adapter (tenant, agent)"
   participant Host as "Control plane message loop"
-  participant DB as "Central host DB"
+  participant DB as "Per-(tenant, agent) host DB"
   participant Helper as "nc-setuid-helper"
   participant Runner as "Run process (ncg-...)"
   participant Provider
   participant Outbound as "Host outbound poller"
 
   User->>Channel: Send message
-  Channel->>Host: onMessage(chatJid, message)
+  Channel->>Host: onMessage(channelType, chatJid, message)
   Host->>Host: Apply sender drop policy
-  Host->>DB: storeMessage(message)
-  Host->>DB: update chat metadata if needed
-  Host->>Host: Load registered group and trigger policy
+  Host->>DB: storeMessage(channelType, message)
+  Host->>DB: update (channelType, chatJid) metadata if needed
+  Host->>Host: Load registered group by (channelType, chatJid)
   alt message should not trigger yet
     Host->>DB: keep as context only
   else message should be processed
-    Host->>DB: select messages since last_agent_timestamp
+    Host->>DB: select messages since last_agent_timestamp[channelType, chatJid]
+    Host->>Helper: prepare --tenant=t --agent=a --group=g --runtime-dir=...
     Host->>Host: Write inbound.db rows under t/a/g/live/
     alt live runner already active
       Host->>Runner: wake by DB polling
     else no live runner
-      Host->>Helper: spawn --uid=ncg-t-a-g --runtime-dir=... -- node agent-runner --mode=live
-      Helper->>Runner: exec as ncg-t-a-g
+      Host->>Helper: spawn --uid=<mapped ncg user> --runtime-dir=... -- node agent-runner --mode=live
+      Helper->>Runner: exec as mapped ncg user
     end
     Runner->>Runner: claim inbound rows
     Runner->>Provider: query(prompt, continuation, skills)
     Provider-->>Runner: stream events and result
     Runner->>Runner: write outbound.db row
     Runner->>Runner: mark inbound completed
-    Outbound->>Runner: claim outbound row (via shared nc-runtime group)
+    Outbound->>Runner: claim outbound row (via runtime ACL)
     Outbound->>Channel: sendMessage(chatJid, text)
     Channel-->>Outbound: channel message ID
     Outbound->>Runner: mark delivered
-    Outbound->>DB: advance last_agent_timestamp and audit delivery
+    Outbound->>DB: advance last_agent_timestamp[channelType, chatJid] and audit delivery
   end
 ```
 
 Key rules:
 
-- The central host DB remains authoritative for source message history and cursors.
+- The per-`(tenant, agent)` host DB remains authoritative for source message history and cursors.
+- `channel_type` is mandatory in chat, message, registered group, and router cursor keys inside each per-agent DB.
 - Runtime inbound rows carry source message IDs for idempotent retry.
-- If a run fails before user-visible output is delivered, the host rolls back `last_agent_timestamp[chat_jid]`.
+- If a run fails before user-visible output is delivered, the host rolls back `last_agent_timestamp[channelType, chat_jid]`.
 - If output was delivered and a later provider error happens, the host does not roll back the cursor.
 - Active follow-up messages are written as new inbound rows.
 
@@ -333,7 +359,7 @@ Key rules:
 
 Group-context scheduled task:
 
-1. Scheduler reads due tasks from the central host DB.
+1. Scheduler reads due tasks from the per-`(tenant, agent)` host DB.
 2. Host formats the task as a synthetic inbound message for the target group.
 3. Host uses the same live runtime path as normal messages.
 4. The task can use existing live conversation continuation.
@@ -341,7 +367,7 @@ Group-context scheduled task:
 
 Isolated scheduled task:
 
-1. Scheduler reads due task from the central host DB.
+1. Scheduler reads due task from the per-`(tenant, agent)` host DB.
 2. Host creates `runs/<runId>/` under the group runtime directory.
 3. Host writes the task prompt to that run's `inbound.db`.
 4. Helper starts an `isolated-task` runner as the same group Linux user.
@@ -405,8 +431,8 @@ flowchart TB
   Tenant["tenant-managed skills"] --> Resolve
   Agent["agent-local skills"] --> Resolve
   Resolve --> Manifest["skills.manifest.json<br/>per (tenant, agent)"]
-  Manifest --> Mounts["Read-only copies under<br/>/opt/nanoclaw/skills/{builtin,tenant,agent}/"]
-  Mounts --> Runner["agent-runner"]
+  Manifest --> Bundle["Per-run read-only bundle<br/>runtime/.../skills/resolved/{revision}/"]
+  Bundle --> Runner["agent-runner"]
   Generated["/runtime/t/a/g/skills/generated"] --> Runner
   Manifest --> Runner
   Runner --> Adapter{"SkillLoaderAdapter"}
@@ -421,18 +447,20 @@ flowchart TB
 Loading steps:
 
 1. Tenant loader resolves `builtin:`, `tenant:`, and `agent:` references at startup.
-2. Control plane copies resolved skills into `/opt/nanoclaw/skills/{builtin,tenant/<t>,agent/<t>/<a>}/` (or mounts them, in container deployments).
-3. Control plane writes a normalized `skills.manifest.json` into each run's runtime dir at spawn time.
-4. Run process reads the manifest and resolves the group generated skill root.
-5. Provider-specific `SkillLoaderAdapter` prepares provider-native skill paths.
-6. Provider query runs with the prepared skill configuration.
+2. `nc-setuid-helper prepare` creates the runtime dir and ACLs before any bundle materialization.
+3. Control plane builds a resolved skill bundle for the specific `(tenant, agent, group, run)` under that run's runtime dir.
+4. Spawn-time setup locks the resolved bundle read-only for the run user (directories 0550, files 0440) while preserving `nanoclaw-svc` ACL access. Tenant/agent skill source paths are never world-readable.
+5. Control plane writes a normalized `skills.manifest.json` into each run's runtime dir at spawn time.
+6. Run process reads the manifest and resolves the group generated skill root.
+7. Provider-specific `SkillLoaderAdapter` prepares provider-native skill paths.
+8. Provider query runs with the prepared skill configuration.
 
 ## Skill Authoring and Promotion Flow
 
 Group-generated skill:
 
 1. Run process or reporter/local API writes under `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/skills/generated/<skill>/`.
-2. Only that group user (and the control plane via `nc-runtime`) can read/write it.
+2. Only that group user (and the control plane via the runtime ACL) can read/write it.
 3. The skill is visible to future runs for that group.
 4. It is not copied into the tenant repository automatically.
 
@@ -453,10 +481,12 @@ Promotion must be explicit so tenant repositories remain the source of truth for
 
 ### Control plane restart
 
-- Central DB retains messages, tasks, groups, and cursors.
+- Per-`(tenant, agent)` host DBs retain messages, tasks, groups, and cursors.
 - Runtime DB rows remain on disk.
-- Control plane scans pending inbound/outbound rows and central cursor state.
-- DB-listed active run PIDs are checked against `/proc/`; missing ones marked crashed and reconciled.
+- Control plane scans pending inbound/outbound rows and per-agent cursor state.
+- DB-listed active run PIDs are checked against `/proc/` and helper `status` using PID start time, expected UID, runtime dir, and cgroup. Missing or identity-mismatched PIDs are marked crashed/stale and reconciled.
+
+Active-run records must persist `pid`, `/proc/<pid>/stat` start time ticks, expected uid, runtime dir, cgroup path, tenant, agent, group, and run id. PID alone is never a valid runtime identity.
 
 ### Run process crash
 
