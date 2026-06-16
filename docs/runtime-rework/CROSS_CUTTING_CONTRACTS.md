@@ -1,240 +1,214 @@
-# Cross-cutting Migration Contracts
+# Cross-cutting Contracts
 
-This document captures migration details that cut across the phased version
-documents. Read it before implementing any phase. The version documents define
-when work happens; this file defines behavior that must not be lost while moving
-from the custom NanoClaw 1.0 runtime to the new agent-service runtime.
+This document captures behaviour that spans implementation phases. The phase plan defines when work happens; this file defines behaviour that must not be lost while moving from the V1.x runtime to the V2.0 host-direct multi-tenant runtime.
 
-## Current 1.0 Source Inventory
+Implementation phases are produced by the implementation plan. Read this document before implementing any phase.
 
-Host control plane:
+## Current Source Inventory
 
-- `src/index.ts`: channel callbacks, sender filtering, auto-registration,
-  message cursors, typing indicators, scheduler/IPC/reporter wiring.
-- `src/db.ts`: central SQLite store for chats, messages, scheduled tasks,
-  task run logs, router cursors, sessions, and registered groups.
-- `src/router.ts`: channel ownership lookup and XML prompt formatting,
-  including sender IDs, attachments, card actions, and timezone context.
-- `src/group-queue.ts`: per-group concurrency, follow-up message reuse,
-  retry backoff, idle close, and active process tracking.
-- `src/task-scheduler.ts`: `context_mode` semantics and isolated task runs.
+Code that the rework will touch or replace:
 
-Runtime launch and filesystem:
+**Control plane (host-side, current process)**:
 
-- `src/container-runner.ts`: Docker args, mounts, per-group `.claude`,
-  task/group snapshots, writable agent-runner source copies, output sentinel
-  parsing, logs, and idle timeout handling.
-- `src/container-runtime.ts`: Docker runtime selection, host gateway,
-  read-only mount helpers, orphan cleanup.
-- `src/group-folder.ts`: folder validation and runtime path resolution.
-- `src/mount-security.ts`: external mount allowlist and non-main read-only
-  policy.
+- `src/index.ts` — orchestrator: state, message loop, agent invocation. Channel callbacks, sender filtering, auto-registration, message cursors, typing indicators, scheduler/IPC/reporter wiring.
+- `src/db.ts` — central SQLite for chats, messages, scheduled tasks, task run logs, router cursors, sessions, registered groups.
+- `src/router.ts` — channel ownership lookup and XML prompt formatting (sender IDs, attachments, card actions, timezone context).
+- `src/group-queue.ts` — per-group concurrency, follow-up message reuse, retry backoff, idle close, active process tracking.
+- `src/task-scheduler.ts` — `context_mode` semantics and isolated task runs.
+- `src/sender-allowlist.ts`, `src/approval-allowlist.ts` — host-side authorization gates.
+- `src/mount-security.ts` — external mount allowlist and non-main read-only policy.
+- `src/remote-control.ts` — main-group host process for Claude remote control.
+- `src/reporter/*` — monitor/local API, group memory and skill editing.
 
-IPC, tools, and host-only capabilities:
+**Runtime launch and filesystem (to be replaced by host-direct + SUID helper)**:
 
-- `src/ipc.ts`: legacy file IPC watcher for messages, scheduling, group
-  registration, session reset, Feishu tools, approvals, uploads/downloads, and
-  P2P chat auto-registration.
-- `container/agent-runner/src/ipc-mcp-stdio.ts`: MCP tool definitions that
-  write legacy IPC files and wait for result files.
-- `src/credential-proxy.ts`: host-side provider credential proxy.
-- `src/approval-allowlist.ts` and `src/sender-allowlist.ts`: host-side
-  authorization gates.
-- `src/remote-control.ts`: main-group host process for Claude remote control.
-- `src/reporter/*`: monitor/local API, including group memory and skill editing.
+- `src/container-runner.ts` — Docker args, mounts, per-group `.claude`, task/group snapshots, output sentinel parsing, idle timeout handling.
+- `src/container-runtime.ts` — Docker runtime selection, host gateway, read-only mount helpers, orphan cleanup.
+- `src/group-folder.ts` — folder validation and runtime path resolution.
+- `src/credential-proxy.ts` — Anthropic credential proxy (no longer needed under two-tier model; will be removed or repurposed).
 
-Setup and operations:
+**Channels and Feishu (to become multi-instance per (tenant, agent))**:
 
-- `setup/*`: setup, status, service, verify, environment, container, and group
-  registration flows.
-- `launchd/com.nanoclaw.plist`: service management.
-- Root config files under `.env`, `approval-allowlist.json`, and
-  `~/.config/nanoclaw/*.json`.
+- `src/channels/registry.ts` — singleton-keyed registry. Will move to composite `(tenant, agent, type)` keys.
+- `src/channels/feishu.ts` — singleton Feishu channel. Will become multi-instance.
+- `src/feishu/auth.ts` — hardcoded credential file path. Will accept per-tenant path.
+- `src/feishu/client.ts` — per-instance client. Already state-safe for multi-instance.
+
+**IPC, tools, and host-only capabilities**:
+
+- `src/ipc.ts` — legacy file IPC watcher for messages, scheduling, group registration, session reset, Feishu tools, approvals, uploads/downloads, P2P chat auto-registration.
+- `container/agent-runner/src/ipc-mcp-stdio.ts` — MCP tool definitions that write legacy IPC files and wait for result files.
+- `container/agent-runner/src/index.ts` — container entrypoint. Becomes the run process entrypoint, invoked by SUID helper.
+
+**Setup and operations**:
+
+- `setup/*` — setup, status, service, verify, environment, container, group registration flows.
+- `launchd/com.nanoclaw.plist` / `deploy.sh` / systemd unit — service management.
+- Root config: `.env`, `approval-allowlist.json`, `~/.config/nanoclaw/*.json`.
 
 ## Host DB and Runtime DB
 
-The central host DB remains the control-plane source of truth until an explicit
-later migration replaces it. Per-run runtime DBs are durable queues and state for
-one live run or isolated task; they are not a replacement for host routing state.
+The central host DB remains the control-plane source of truth. Per-run runtime DBs are durable queues and state for one live run or isolated task; they are not a replacement for host routing state.
 
-Central DB ownership:
+### Central DB ownership
 
-- `chats`: channel/chat discovery and names.
-- `messages`: authoritative inbound history, bot-message filtering,
-  attachments, card actions, and scheduled task linkage.
-- `scheduled_tasks` and `task_run_logs`: task source of truth and audit.
-- `router_state`: `last_timestamp` and `last_agent_timestamp`.
-- `sessions`: legacy Claude session IDs until provider state is fully runtime
-  scoped.
-- `registered_groups`: legacy JID-to-folder routing and trigger config.
+- `chats` — channel/chat discovery and names.
+- `messages` — authoritative inbound history, bot-message filtering, attachments, card actions, scheduled task linkage.
+- `scheduled_tasks`, `task_run_logs` — task source of truth and audit.
+- `router_state` — `last_timestamp` and `last_agent_timestamp`.
+- `sessions` — legacy Claude session IDs until provider state is fully runtime-scoped.
+- `registered_groups` — group-folder routing, trigger config, JID/channel ownership. Will be extended with `tenant_id`, `agent_id` columns.
 
-Runtime DB ownership:
+### Runtime DB ownership
 
-- `inbound.db`: claimed work for one run.
-- `outbound.db`: delivery requests emitted by one run.
-- `state.db`: run-local control keys and provider continuation.
-- `tools.db`: tool requests generated by one run.
+- `inbound.db` — claimed work for one run.
+- `outbound.db` — delivery requests emitted by one run.
+- `state.db` — run-local control keys and provider continuation. Also used for per-run audit (model, tokens, latency, status).
+- `tools.db` — tool requests generated by one run.
 
-Do not let both DB layers independently decide routing progress. The host must
-advance and rollback cursors in one place.
+Do not let both DB layers independently decide routing progress. The host must advance and roll back cursors in one place.
 
-Cursor rules:
+### Cursor rules
 
 - `last_timestamp` means "channel messages seen by the host message loop".
-- `last_agent_timestamp[chat_jid]` means "latest user message successfully
-  handed to an agent run or active run".
-- If an agent run fails before any user-visible output is delivered, rollback
-  `last_agent_timestamp[chat_jid]` so the next run can retry the same messages.
-- If output was delivered and a later provider error happens, do not rollback
-  the cursor and risk duplicate replies.
-- Runtime inbound rows should carry source message IDs so retries are
-  idempotent.
+- `last_agent_timestamp[chat_jid]` means "latest user message successfully handed to an agent run or active run".
+- If an agent run fails before any user-visible output is delivered, roll back `last_agent_timestamp[chat_jid]` so the next run can retry the same messages.
+- If output was delivered and a later provider error happens, do not roll back the cursor (would risk duplicate replies).
+- Runtime inbound rows should carry source message IDs so retries are idempotent.
 
 ## Message Metadata Contract
 
-DB-backed IPC must preserve all metadata that currently reaches the prompt or
-delivery layer.
+DB-backed IPC must preserve all metadata that currently reaches the prompt or delivery layer.
 
-Inbound records need at least:
+### Inbound records
 
 - tenant ID, agent ID, group folder, chat JID, channel name
 - source message ID or scheduled task ID
-- sender ID, sender name, `is_from_me`, and trigger reason
+- sender ID, sender name, `is_from_me`, trigger reason
 - content, timestamp, message type, attachment JSON, card action JSON
-- dedupe key and attempt count
+- dedupe key, attempt count
 
-Outbound records need at least:
+### Outbound records
 
 - tenant ID, agent ID, group folder, chat JID, channel name
 - source inbound IDs or tool request ID
 - text content, optional sender/persona, message type, attachment path/key
 - delivery status, channel message ID, error, retry count, idempotency key
 
-The host outbound poller is responsible for channel delivery, typing indicator
-cleanup, and any central DB updates needed for audit.
+The host outbound poller is responsible for channel delivery, typing indicator cleanup, and any central DB updates needed for audit.
 
 ## Routing and Authorization
 
-These gates stay host-side. A group process can request work or tools, but the
-host/supervisor must validate identity and policy before executing it.
+These gates stay host-side. A run process can request work or tools, but the control plane must validate identity and policy before executing.
 
-Inbound message gates:
+### Inbound message gates
 
-- channel ownership via `findChannel`
-- registered group lookup
-- auto-registration when enabled
-- sender allowlist drop mode before storing content
-- trigger allowlist for non-main groups
-- card actions bypass normal trigger delay and enqueue immediately
+- Channel ownership via composite key `(tenant, agent, channelType)`.
+- Registered group lookup (now scoped by tenant).
+- Auto-registration when enabled (tenant-scoped).
+- Sender allowlist drop mode before storing content.
+- Trigger allowlist for non-main groups.
+- Card actions bypass normal trigger delay and enqueue immediately.
 
-Group privileges:
+### Group privileges
 
-- main group can register groups, refresh group metadata, and operate across
-  groups.
-- non-main groups can only send/schedule/update/cancel for themselves unless a
-  tenant policy explicitly grants more.
-- P2P chats created by `send_to_user` retain `source_group` for authorization
-  and audit.
+- Main group can register groups, refresh group metadata, operate across groups within its tenant.
+- Non-main groups can only send/schedule/update/cancel for themselves unless a tenant policy explicitly grants more.
+- P2P chats created by `send_to_user` retain `source_group` for authorization and audit.
 
-Tool gates:
+### Tool gates
 
-- scheduling tools enforce main/self authorization.
-- approval tools enforce `approval-allowlist.json`.
-- Feishu and other channel tools execute on the host or supervisor side where
-  channel credentials live.
-- additional mounts use the external mount allowlist and blocked-pattern policy.
+- Scheduling tools enforce main/self authorization.
+- Approval tools enforce `approval-allowlist.json`.
+- Feishu and other channel tools execute on the host side where channel credentials live.
+- Additional mounts use the external mount allowlist and blocked-pattern policy.
 
-## Tenant, Agent, Group, and Legacy Fields
+## Tenant, Agent, and Group Configuration
 
-The migration must map these existing `RegisteredGroup` fields, not just
-`folder` and `CLAUDE.md`:
+### Tenant config requirements
+
+`tenant.json` must provide:
+
+- `id` — tenant identifier (max 16 chars, `[a-z][a-z0-9-]*`)
+- `name` — display name
+- `enabled` — boolean
+
+### Agent config requirements
+
+`agent.json` must provide:
+
+- `id` — agent identifier (max 16 chars, `[a-z][a-z0-9-]*`)
+- `tenant` — parent tenant ID
+- `provider` — `claude`, `opencode`, or `mock`
+- `model` — provider-specific model identifier
+- `instructions` — path to instructions file
+- `skills` — list of skill references (`builtin:`, `tenant:`, `agent:`)
+- `channels` — list of channel types this agent uses
+- `envRefs` — list of secret reference names (resolved at load time)
+- `limits` — resource limits (memoryMb, pids, concurrentTasksPerGroup)
+
+### Group representation
+
+A group is the runtime representation of a chat — identified by `(tenant, agent, chat_jid)`. Existing `registered_groups` table is extended with `tenant_id` and `agent_id` columns. Fields that must round-trip through migration:
 
 - JID and channel ownership
 - display name
-- folder
+- folder (mapped to `<tenant>/<agent>/<group>` runtime path)
 - trigger pattern
 - `requiresTrigger`
 - `isMain`
-- `containerConfig.timeout`
-- `containerConfig.additionalMounts`
+- `containerConfig.timeout` (becomes `limits`)
+- `containerConfig.additionalMounts` (classified agent-wide vs group-specific; see below)
 - P2P metadata if present: `is_p2p`, `p2p_user`, `source_group`
-
-Tenant and agent config may own defaults, but group routing policy still needs a
-group-level representation. Legacy groups should either remain in
-`registered_groups` or be migrated to an explicit tenant/agent/group config file
-with equivalent fields.
 
 ## Additional Mounts
 
-Current additional mounts are declared per group and validated against
-`~/.config/nanoclaw/mount-allowlist.json`. In the new runtime, one agent
-container can serve multiple groups, so mount scope matters.
+Current additional mounts are declared per group and validated against `~/.config/nanoclaw/mount-allowlist.json`. In the new runtime, one control plane can serve multiple groups, so mount scope matters.
 
 Rules:
 
-- Agent-wide mounts are visible to every group in that agent service.
-- Group-specific mounts must be mounted under a per-group path and permissioned
-  to that group user, or rejected in the agent-container runtime.
+- Agent-wide mounts are visible to every group handled by that agent.
+- Group-specific mounts must be mounted under a per-group path and permissioned to that group user, or rejected.
 - Non-main read-only policy must remain enforced.
 - Blocked secret patterns stay blocked even if a tenant config requests them.
 - Host `.env` and other secret files must remain shadowed or unmounted.
-- `/workspace/extra/*` behavior used by Claude `additionalDirectories` must be
-  mapped deliberately for every provider.
+- `/workspace/extra/*` behaviour used by Claude `additionalDirectories` must be mapped deliberately for every provider.
 
 ## Secrets and Provider Credentials
 
-Group-readable runtime files must not contain shared secrets. After user
-isolation, provider credentials should be supplied through one of:
+Two-tier credential threat model (ADR-024):
 
-- host/supervisor credential proxy
-- short-lived scoped runtime token
-- per-run env injection limited to one process, used only as a compatibility
-  fallback
+- **LLM credentials (low risk)**: point at an internal gateway. Delivered via env at spawn time. No proxy, no scoped tokens. Still kept in `0600` files for general hygiene.
+- **Channel credentials (high risk)**: real external credentials. Live only in `0600` files owned by `nanoclaw-svc` and in control plane process memory. Run processes access channels via tool IPC.
+- **Runtime data (high risk)**: chat history, continuation, generated skills, downloaded files. Protected by Linux user ownership and `0770` directory modes.
 
-Do not put real provider or Feishu credentials into:
+Do not put real channel credentials into:
 
 - tenant repositories
 - runtime DB rows
-- shared supervisor environment
+- control plane shared environment (only specific run envs)
 - logs
 - group-readable snapshots
 
-Before Version 2.0, audit the legacy path that passes provider env vars into
-containers and replace it or gate it behind an explicit compatibility flag.
-
 ## Mutable Runner and Group-local Customization
 
-NanoClaw 1.0 copies `container/agent-runner/src` into a per-group writable path
-and mounts it as `/app/src`. That is a powerful self-modification mechanism and
-must not silently carry into the final runtime.
+NanoClaw V1.x copies `container/agent-runner/src` into a per-group writable path and mounts it as `/app/src`. That self-modification mechanism does **not** carry into V2.0.
 
 Final rule:
 
-- platform runner/supervisor/provider code is image-owned and read-only.
-- group-created behavior lives in group-generated skills or group memory files.
-- tenant/agent skills are reviewed inputs and mounted read-only.
-- runtime-generated skills remain under the group runtime directory until an
-  explicit promotion flow publishes them.
+- Platform runner, helper, and provider code is image/distribution-owned and read-only.
+- Group-created behaviour lives in group-generated skills or group memory files.
+- Tenant/agent skills are reviewed inputs and exposed read-only.
+- Runtime-generated skills remain under the group runtime directory until explicit promotion.
 
-Compatibility options:
-
-- keep writable runner source only for the `docker-per-group` rollback driver.
-- provide a temporary agent-container compatibility flag that stores modified
-  runner source under a group-only runtime directory, disabled by default.
-- migrate existing group `.claude/skills` edits to generated skills.
-
-Reporter/local API methods that edit skills or memory must be updated to write
-to the new generated skill root or group memory path, never to tenant skill
-repositories.
+Reporter/local API methods that edit skills or memory must write to the new generated skill root or group memory path, never to tenant skill repositories.
 
 ## Tool Inventory That Must Migrate
 
-Legacy file IPC includes more than generic message and task tools. The migration
-must account for:
+Tool IPC migration moves tools from legacy file IPC to `tools.db`. The inventory:
 
 - `send_message`
-- `schedule_task`, `list_tasks`, `pause_task`, `resume_task`, `cancel_task`,
-  `update_task`
+- `schedule_task`, `list_tasks`, `pause_task`, `resume_task`, `cancel_task`, `update_task`
 - `new_session`
 - `register_group`, `refresh_groups`
 - Feishu docs: fetch, create, update, delete, search
@@ -244,19 +218,16 @@ must account for:
 - Feishu resource download and file send
 - Feishu P2P/user tools: send to user, user department/name lookup
 - Feishu task and tasklist operations
-- approval query/get/approve/reject/transfer/comment
+- Approval query/get/approve/reject/transfer/comment
 
-For downloads/uploads, DB rows should reference files by controlled runtime file
-IDs or paths under the run's `files/` or `downloads/` directory. Avoid returning
-host paths to group processes.
+For downloads/uploads, DB rows should reference files by controlled runtime file IDs or paths under the run's `files/` or `downloads/` directory. Avoid returning host paths to run processes.
 
 ## Provider Parity Checks
 
-The Claude provider path currently relies on behavior that must either be
-preserved or explicitly documented as unsupported for other providers:
+The Claude provider currently relies on behaviour that must either be preserved or explicitly documented as unsupported for other providers:
 
 - session resume and session-not-found recovery
-- `resumeSessionAt`/last assistant UUID behavior
+- `resumeSessionAt` / last assistant UUID behaviour
 - PreCompact transcript archive to `conversations/`
 - additional directories and `CLAUDE.md` loading
 - MCP server inheritance by subagents
@@ -265,55 +236,57 @@ preserved or explicitly documented as unsupported for other providers:
 - streaming result markers and null-result session updates
 - follow-up messages pushed during active query
 
-OpenCode may implement these differently, but the provider adapter must expose a
-stable result, continuation, error, and follow-up contract to the poll loop.
+OpenCode may implement these differently, but the provider adapter must expose a stable result, continuation, error, and follow-up contract to the poll loop.
 
 ## Host-only Operations
 
-Keep these outside group users unless a later design explicitly changes them:
+Keep these outside run processes:
 
 - `/remote-control` and `/remote-control-end`
 - setup/status/verify/service management
 - channel connection and credential refresh
 - reporter websocket/local API server
-- orphan cleanup
-- migration and rollback commands
+- orphan cleanup (legacy Docker containers; new runtime has no orphans in the same sense)
+- migration commands
 
-The final runtime status command should include host process state, agent
-container state, supervisor state, active runs, queue depth, and stale legacy IPC
-directories.
+The final runtime status command should include host process state, active runs, queue depth, helper health, and (post-migration) verify output.
 
 ## Cleanup and Migration Data
 
-The migration command must classify and optionally migrate:
+The one-shot migration command must classify and either transform or back up:
 
-- `groups/<group>/CLAUDE.md` and other group memory files
-- `groups/<group>/logs`
-- `data/ipc/<group>/**`
-- `data/sessions/<group>/.claude`
-- `data/sessions/<group>/agent-runner-src`
-- `data/sessions/<group>/isolated-ipc-*`
-- `store/messages.db`
-- `approval-allowlist.json`
-- `~/.config/nanoclaw/mount-allowlist.json`
-- `~/.config/nanoclaw/sender-allowlist.json`
+- `groups/<group>/CLAUDE.md` and other group memory files → `tenants/<t>/agents/<name>/instructions.md` + `agent.json`
+- `groups/<group>/logs` → `logs/<t>/<a>/<group>/`
+- `store/auth/feishu/credentials.json` → `store/auth/tenants/<t>/<name>/feishu/credentials.json`
+- `data/ipc/<group>/**` → backed up only; not migrated (file IPC unsupported in V2.0)
+- `data/sessions/<group>/.claude` → repacked into runtime `state.db`
+- `data/sessions/<group>/agent-runner-src` → dropped (platform code is shared)
+- `data/sessions/<group>/isolated-ipc-*` → dropped
+- `data/nanoclaw.db` → schema migration adds `tenant_id`, `agent_id` columns; defaults `tenant=<configured-default>`, `agent=<folder>`
+- `data/messages.db`, `store/messages.db` → schema migration adds `tenant_id` column
+- `approval-allowlist.json` → retained (host-side policy)
+- `~/.config/nanoclaw/mount-allowlist.json` → retained
+- `~/.config/nanoclaw/sender-allowlist.json` → retained
 
-Do not delete legacy runtime data during migration unless the operator passes an
-explicit cleanup flag. The rollback driver may still need it.
+Do not delete legacy runtime data during migration unless the operator passes an explicit cleanup flag. The migration is one-shot; restoration is by file-level backup recovery.
 
-## Final Compatibility Gates
+## Acceptance Gates
 
-Before making `agent-container-users` the default:
+Before declaring V2.0 shippable:
 
-- normal messages do not duplicate or skip replies across restart.
-- triggered and non-triggered messages preserve current behavior.
-- sender allowlist drop and trigger modes still work.
-- card actions still enqueue immediately.
-- group and isolated scheduled tasks preserve context semantics.
+- Normal messages do not duplicate or skip replies across control plane restarts.
+- Triggered and non-triggered messages preserve current behaviour.
+- Sender allowlist drop and trigger modes still work.
+- Card actions still enqueue immediately.
+- Group and isolated scheduled tasks preserve context semantics.
 - `new_session` clears the correct provider continuation.
-- main/self authorization is enforced for message, task, group, and approval
-  tools.
-- file download/send works without exposing host paths or secrets.
-- reporter skill/memory edits target the new runtime paths.
-- remote control remains main-group-only and host-side.
-- rollback to `docker-per-group` does not require data loss.
+- Main/self authorization is enforced for message, task, group, and approval tools.
+- File download/send works without exposing host paths or secrets.
+- Reporter skill/memory edits target the new runtime paths.
+- Remote control remains main-group-only and host-side.
+- Run process cannot read another run's runtime DBs.
+- Run process cannot read channel credentials.
+- Run process env contains only LLM credentials and run config — no channel secrets.
+- Webhook routing distinguishes (tenant, agent) tuples correctly.
+- Helper rejects out-of-scope spawn/kill/cgroup requests.
+- Migration dry-run produces an accurate transformation report; verify passes after migration.
