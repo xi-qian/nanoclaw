@@ -11,7 +11,7 @@ The previous V1.x → V2.0 plan (Docker-per-agent-service) is archived at [`docs
 ## Target Architecture at a Glance
 
 ```text
-NanoClaw host (bare-metal systemd service OR supported wrapper)
+NanoClaw deployment (single Docker image OR equivalent pod)
 ├── Control plane process (uid=nanoclaw-svc, no capabilities)
 │   ├── HTTP webhook server: POST /<tenant>/<agent>/<channel>/event
 │   ├── channels: per-(tenant, agent) Feishu / Slack / Telegram / ... clients
@@ -27,7 +27,8 @@ NanoClaw host (bare-metal systemd service OR supported wrapper)
 
 Key shifts from V1.x plan:
 
-- **Isolation unit**: one mapped `ncg-*` Linux user per `(tenant, agent, group)`. Docker/Kubernetes is an optional deployment wrapper only when it exposes the required SUID, ACL, user/NSS, and cgroup primitives; it is not a security boundary.
+- **Isolation unit**: one mapped `ncg-*` Linux user per `(tenant, agent, group)` inside a single NanoClaw Docker image or equivalent pod. Docker/Kubernetes is the packaging boundary, not one security boundary per tenant, agent, or group.
+- **Docker deployment**: default operational profile is one long-running container with `--privileged`, SUID enabled, persistent `/var/lib/nanoclaw`, and writable/delegated cgroup v2 access; tighter profiles must pass helper and isolation tests.
 - **Process topology**: Single control plane process directly spawns runs via the SUID helper. No supervisor process in the initial implementation.
 - **Multi-tenant, multi-agent per host**: One NanoClaw instance supports many tenants and many agents. Each (tenant, agent) tuple may have its own external channel identity.
 - **Webhook routing**: URL path `/<tenant>/<agent>/<channel>/event` is the routing key for a single shared HTTP server.

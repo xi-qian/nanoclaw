@@ -43,7 +43,7 @@ Code that the rework will touch or replace:
 **Setup and operations**:
 
 - `setup/*` — setup, status, service, verify, environment, container, group registration flows.
-- `launchd/com.nanoclaw.plist` / `deploy.sh` / systemd unit — service management.
+- Docker image entrypoint, Kubernetes manifests, `deploy.sh`, and legacy launchd/systemd wrappers — service management.
 - Root config: `.env`, `approval-allowlist.json`, `~/.config/nanoclaw/*.json`.
 
 ## Host DB and Runtime DB
@@ -262,9 +262,20 @@ The final runtime status command should include host process state, active runs,
 
 ## Deployment Wrapper Requirements
 
-Bare-metal/systemd is the reference deployment. A single Docker container or Kubernetes pod is only a packaging wrapper and is supported only when it provides the same host-direct primitives: SUID execution, helper capabilities for user switching/signalling/ACL/cgroup writes, persistent `/var/lib/nanoclaw` with POSIX ACL support, local user/NSS support or an equivalent helper-owned user database, and a writable or delegated cgroup v2 subtree at `/sys/fs/cgroup/nanoclaw/`.
+The reference production deployment is a single NanoClaw Docker image. Run one long-lived container per NanoClaw instance, not one container per tenant, agent, or group.
 
-If these prerequisites are unavailable, the Docker/Kubernetes wrapper is unsupported for this architecture.
+Docker image configuration must provide:
+
+- A privilege profile that allows the helper to do its narrow job. The default operational profile is `--privileged`; a hardened profile must still allow SUID execution, `setuid/setgid`, signalling mapped `ncg-*` processes, POSIX ACL changes, and cgroup v2 writes.
+- `no_new_privileges` disabled, so `/usr/lib/nanoclaw/nc-setuid-helper` can execute as SUID root.
+- Persistent `/var/lib/nanoclaw` storage backed by a filesystem with POSIX ACL support.
+- Writable or delegated cgroup v2 access at `/sys/fs/cgroup/nanoclaw/`.
+- Container-local user/group management, or an equivalent helper-owned local user database, so `prepare` can create mapped `ncg-*` users.
+- Separate mounts for tenant repositories and auth storage when operators want independent backup and rotation policies.
+
+Kubernetes uses one equivalent pod per NanoClaw instance with matching `securityContext`, persistent volume, ACL support, and cgroup v2 delegation.
+
+The default Docker profile is `--privileged --security-opt no-new-privileges:false --cgroupns=host` with persistent `/var/lib/nanoclaw` and writable `/sys/fs/cgroup` mounts. A tighter runtime profile is acceptable only after the helper operations and isolation test suite pass under that profile.
 
 ## Cleanup and Migration Data
 

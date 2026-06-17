@@ -43,16 +43,18 @@ Reason for deletion: Clean replacement. The migration script moves what can be m
 
 Status: **Deleted 2026-06-16.**
 
-## ADR-005': Linux User Is the Isolation Unit; Docker Is an Optional Deployment Wrapper
+## ADR-005': Single Docker Image Is the Deployment Unit; Linux User Is the Isolation Unit
 
 Supersedes ADR-005 (one Docker container per agent service, per-group Linux users inside).
 
-Decision: Each run process runs as a distinct mapped `ncg-*` Linux user for its canonical `(tenant, agent, group)` tuple directly on the host. Docker or Kubernetes, when used, wraps the entire NanoClaw deployment (control plane + helper + run processes) as a packaging/deployment layer. It is not a security boundary and is supported only when it permits the same SUID helper, POSIX ACL, user/NSS, and cgroup primitives as the bare-metal/systemd reference deployment.
+Decision: Production deploys one NanoClaw Docker image, or one equivalent Kubernetes pod, per NanoClaw instance. The image contains the control plane, helper, and run processes. Each run process runs as a distinct mapped `ncg-*` Linux user for its canonical `(tenant, agent, group)` tuple inside that image. Docker/Kubernetes is the packaging and operations boundary, not one security boundary per tenant, agent, or group.
+
+Default Docker operational profile: one long-running `nanoclaw` container with `--privileged`, SUID enabled, persistent `/var/lib/nanoclaw`, and writable/delegated cgroup v2 access. Operators may harden that profile only after the helper operations and isolation test suite pass.
 
 Reason:
 
 - Docker adds no credential isolation on top of Linux user separation. Different UIDs already give different security domains via process memory isolation, `/proc/<pid>/environ` restrictions, and file permissions.
-- Deployment convenience favours one NanoClaw instance serving many tenants and agents over N Docker services.
+- Deployment convenience favours one NanoClaw image serving many tenants and agents over N Docker services.
 - The real protection targets are channel credentials and tenant runtime data — both of which Linux user isolation handles.
 
 Tradeoff:
@@ -251,7 +253,7 @@ Reason:
 
 - Keeping the privilege surface in a single small auditable binary is cleaner than running the control plane with elevated capabilities.
 - The helper rejects all out-of-scope invocations, so a control plane compromise cannot escalate to arbitrary root.
-- Works across deployment modes only when the wrapper exposes the required SUID, ACL, user/NSS, and cgroup primitives; bare-metal/systemd is the reference deployment.
+- The production Docker image is configured to expose the required SUID, ACL, user/NSS, and cgroup primitives to the helper.
 
 Status: Accepted 2026-06-16. Sharpened 2026-06-17 to add `prepare`, tuple-hashed usernames, runtime ACL validation, and PID start-time/cgroup checks.
 

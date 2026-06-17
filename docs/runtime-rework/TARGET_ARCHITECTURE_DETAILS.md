@@ -7,23 +7,28 @@ For the design rationale behind these decisions, see [`../superpowers/specs/2026
 ## Architecture Overview
 
 ```mermaid
-flowchart TD
-  Host["NanoClaw host<br/>(bare-metal systemd OR supported wrapper)"]
+flowchart TB
+  Host["NanoClaw deployment<br/>single Docker image / pod"]
 
-  subgraph CP["Control plane process (uid=nanoclaw-svc, no capabilities)"]
+  subgraph CP["Control plane<br/>uid=nanoclaw-svc<br/>no capabilities"]
     direction TB
-    Webhook["HTTP webhook server<br/>POST /[tenant]/[agent]/[channel]/event<br/>GET /[tenant]/[agent]/[channel]/verify"]
-    Channels["channels:<br/>per-(tenant, agent) Feishu / Slack /<br/>Telegram / Discord / ... clients"]
-    Routing["router, scheduler,<br/>sender/trigger policy"]
-    Tools["tool workers (host-side:<br/>Feishu, approval, file, task APIs)"]
-    Loader["tenant config loader"]
-    Lifecycle["run lifecycle manager<br/>prepare, spawn, monitor (/proc),<br/>reap (SIGCHLD + waitpid),<br/>kill (via helper), idle-reap, reconcile"]
-    Spawner["run spawner<br/>invokes nc-setuid-helper"]
+    Ingress["Ingress<br/>webhooks / sockets"]
+    Channels["Channel clients<br/>per tenant / agent"]
+    Policy["Routing + policy<br/>scheduler / triggers"]
+    Tools["Host tool workers<br/>Feishu / file / task"]
+    Config["Tenant config<br/>skills / limits"]
+    Lifecycle["Run lifecycle<br/>prepare / spawn / reap<br/>kill / reconcile"]
+    Spawner["Spawner<br/>calls helper"]
+
+    Ingress --> Channels --> Policy
+    Config --> Policy
+    Policy --> Tools
+    Policy --> Lifecycle --> Spawner
   end
 
-  Helper["nc-setuid-helper<br/>(SUID root binary)<br/>prepare / spawn / kill / cgroup / status"]
+  Helper["nc-setuid-helper<br/>SUID root<br/>prepare / spawn / kill<br/>cgroup / status"]
 
-  Run["Run processes<br/>(uid=mapped ncg-* user)<br/>agent-runner<br/>(Claude / OpenCode / mock)"]
+  Run["Run processes<br/>mapped ncg-* uid<br/>agent-runner"]
 
   Host --- CP
   Host --- Helper
@@ -87,17 +92,34 @@ Each run process is the agent-runner invoked with a specific runtime directory. 
 
 ## Privilege and Access Model
 
-### Deployment wrapper prerequisites
+### Docker image deployment settings
 
-Bare-metal/systemd is the reference deployment. A single Docker container or Kubernetes pod can wrap the deployment only if it permits the same host-direct primitives:
+The reference production deployment is a single NanoClaw Docker image. Run one container that contains the control plane, helper, and run processes. Configure the container as follows:
 
-- SUID execution is allowed; `no_new_privileges` must not block `nc-setuid-helper`.
-- The helper has narrowly scoped ability to create/switch users, signal mapped `ncg-*` processes, apply POSIX ACLs, and write the NanoClaw cgroup subtree.
-- NSS/user creation is available inside the wrapper, or an equivalent helper-owned local user database is provided.
-- `/var/lib/nanoclaw` is persistent and mounted with POSIX ACL support.
-- A cgroup v2 subtree is writable or delegated at `/sys/fs/cgroup/nanoclaw/`.
+- Start from the `nanoclaw` image as a long-running service container, not one container per tenant, agent, or group.
+- Use a privilege profile that allows the helper to do its narrow job. The default operational profile is `--privileged`; a hardened profile must still allow SUID execution, `setuid/setgid`, signalling mapped `ncg-*` processes, POSIX ACL changes, and cgroup v2 writes.
+- Do not enable `no_new_privileges`; `/usr/lib/nanoclaw/nc-setuid-helper` must be able to execute as SUID root.
+- Mount persistent data with ACL support, for example `-v /srv/nanoclaw:/var/lib/nanoclaw`. The backing filesystem must support POSIX ACLs.
+- Mount a writable cgroup v2 view or delegate `/sys/fs/cgroup/nanoclaw/` so the helper can create per-run cgroups and set memory/pid/cpu limits.
+- Run with container-local user/group management enabled. The image must include the local NSS/user/group mechanism used by `prepare` to create mapped `ncg-*` users.
+- Keep tenant repositories and auth storage as separate mounts when operators want independent backup and rotation policies.
 
-If these prerequisites are absent, Docker/Kubernetes deployment is unsupported for this architecture.
+Baseline Docker run shape:
+
+```bash
+docker run -d --name nanoclaw \
+  --privileged \
+  --security-opt no-new-privileges:false \
+  --cgroupns=host \
+  -v /srv/nanoclaw:/var/lib/nanoclaw \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  -e NANOCLAW_DATA_DIR=/var/lib/nanoclaw \
+  nanoclaw:<version>
+```
+
+Operators may replace `--privileged` with a tighter runtime profile after proving the helper can still perform `prepare`, `spawn`, `kill`, and `cgroup` operations and the isolation test suite passes.
+
+Kubernetes deployment follows the same shape: one pod per NanoClaw instance, with equivalent `securityContext`, persistent volume, POSIX ACL support, and writable/delegated cgroup v2 subtree. The pod is still packaging only; Linux UID separation inside the pod remains the isolation boundary.
 
 ### Process ownership
 

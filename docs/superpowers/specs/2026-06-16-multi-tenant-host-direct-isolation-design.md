@@ -7,7 +7,7 @@
 
 ## Background
 
-The existing `docs/runtime-rework/` plan targets "one Docker container per agent service, per-group Linux users inside each container". This design reverses that: Linux users become the isolation unit on the host directly, and Docker/Kubernetes drops to an optional deployment wrapper that is supported only when it exposes the required host-direct primitives.
+The existing `docs/runtime-rework/` plan targets "one Docker container per agent service, per-group Linux users inside each container". This design reverses that: the primary deployment is one NanoClaw Docker image (or one equivalent Kubernetes pod) containing the control plane, helper, and run processes. Linux users inside that deployment become the isolation unit; Docker is packaging and operations, not one security boundary per agent or group.
 
 The shift is driven by three realisations:
 
@@ -22,7 +22,7 @@ The shift is driven by three realisations:
 - Per-(tenant, agent) external identity: each agent can have its own Feishu app, Slack bot, etc.
 - Webhook URLs shaped `/<tenant>/<agent>/<channel>/event` route inbound events to the right channel instance.
 - Clean replacement of the existing `docker-per-group` runtime. No fallback mode.
-- Docker/Kubernetes remains usable as a one-image deployment wrapper when the deployment wrapper requirements below are met, but it is not the security boundary.
+- Primary deployment target: one Docker image per NanoClaw instance. Kubernetes uses one equivalent pod. Docker/Kubernetes is the packaging boundary, while per-group isolation is still the mapped `ncg-*` Linux user inside the image.
 
 ## Non-goals
 
@@ -35,7 +35,7 @@ The shift is driven by three realisations:
 ## Architecture Overview
 
 ```text
-NanoClaw host (bare-metal systemd service OR supported wrapper)
+NanoClaw deployment (single Docker container OR equivalent pod)
 ├── Control plane process (uid=nanoclaw-svc, no capabilities)
 │   ├── HTTP webhook server: POST /<tenant>/<agent>/<channel>/event
 │   ├── channels: per-(tenant, agent) Feishu / Slack / Telegram / ... clients
@@ -54,18 +54,34 @@ NanoClaw host (bare-metal systemd service OR supported wrapper)
 
 Control plane never holds any Linux capability. All privileged operations go through `nc-setuid-helper`, a small SUID root binary installed at `/usr/lib/nanoclaw/nc-setuid-helper` (mode 4750, owner=root, group=nc-priv). Only the `nanoclaw-svc` user is in the `nc-priv` group, so only the control plane can invoke the helper.
 
-### Deployment wrapper requirements
+### Docker image deployment settings
 
-Bare-metal/systemd is the reference deployment. A single Docker container or Kubernetes pod can wrap the whole NanoClaw deployment for packaging, but only when the wrapper permits the same host-direct primitives:
+The reference production deployment is a single NanoClaw Docker image. Run one container that contains the control plane, helper, and run processes. Configure the container as follows:
 
-- SUID execution is allowed (`no_new_privileges` must not block the helper).
-- The helper has the capabilities needed for its narrow operations: user/group switching, signalling mapped `ncg-*` processes, POSIX ACL setup, and cgroup writes.
-- NSS/user creation is available inside the deployment environment, or the deployment provides an equivalent local user database that the helper owns.
-- `/var/lib/nanoclaw` is persistent and mounted with POSIX ACL support.
-- A cgroup v2 subtree is writable or explicitly delegated to NanoClaw at `/sys/fs/cgroup/nanoclaw/`.
-- The container/pod does not claim to add per-group security boundaries; Linux UID separation inside the wrapper remains the isolation boundary.
+- Start from the `nanoclaw` image as a long-running service container, not one container per tenant, agent, or group.
+- Use a privilege profile that allows the helper to do its narrow job. The default operational profile is `--privileged`; a hardened profile must still allow SUID execution, `setuid/setgid`, signalling mapped `ncg-*` processes, POSIX ACL changes, and cgroup v2 writes.
+- Do not enable `no_new_privileges`; `/usr/lib/nanoclaw/nc-setuid-helper` must be able to execute as SUID root.
+- Mount persistent data with ACL support, for example `-v /srv/nanoclaw:/var/lib/nanoclaw`. The backing filesystem must support POSIX ACLs.
+- Mount a writable cgroup v2 view or delegate `/sys/fs/cgroup/nanoclaw/` so the helper can create per-run cgroups and set memory/pid/cpu limits.
+- Run with container-local user/group management enabled. The image must include the local NSS/user/group mechanism used by `prepare` to create mapped `ncg-*` users.
+- Keep tenant repositories and auth storage as separate mounts when operators want independent backup and rotation policies.
 
-If these prerequisites are not available, Docker/Kubernetes is unsupported for this architecture until a separate supervisor or different sandbox mechanism is introduced.
+Baseline Docker run shape:
+
+```bash
+docker run -d --name nanoclaw \
+  --privileged \
+  --security-opt no-new-privileges:false \
+  --cgroupns=host \
+  -v /srv/nanoclaw:/var/lib/nanoclaw \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  -e NANOCLAW_DATA_DIR=/var/lib/nanoclaw \
+  nanoclaw:<version>
+```
+
+Operators may replace `--privileged` with a tighter runtime profile after proving the helper can still perform `prepare`, `spawn`, `kill`, and `cgroup` operations and the isolation test suite passes.
+
+Kubernetes deployment follows the same shape: one pod per NanoClaw instance, with equivalent `securityContext`, persistent volume, POSIX ACL support, and writable/delegated cgroup v2 subtree. The pod is still packaging only; Linux UID separation inside the pod remains the isolation boundary.
 
 The helper exposes five operations, each with strict argument validation:
 
@@ -381,7 +397,7 @@ Each run writes its own API usage (model, tokens, latency, status) into `state.d
 ### Reversed
 
 - **ADR-002** (keep `docker-per-group` as fallback) → reversed. Clean replacement.
-- **ADR-005** (one Docker per agent service) → reversed. New ADR-005': Linux user is the isolation unit; Docker is an optional deployment wrapper.
+- **ADR-005** (one Docker per agent service) → reversed. New ADR-005': one Docker image is the deployment unit; mapped Linux users inside the image are the isolation unit.
 - **ADR-008** (supervisor owns group process lifecycle) → revised. Control plane owns lifecycle *policy*; privileged *mechanism* (setuid, signal, cgroup) is encapsulated in `nc-setuid-helper`. Control plane holds no capabilities.
 
 ### Deleted
