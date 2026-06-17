@@ -1,14 +1,14 @@
-# NanoClaw 2.0 Runtime Rework
+# NanoClaw 2.0 运行时重构
 
-This directory documents the runtime architecture for NanoClaw 2.0: a host-direct, multi-tenant, Linux-user-isolated runtime that replaces the previous Docker-per-agent-service model.
+本目录记录 NanoClaw 2.0 的运行时架构：一个 host-direct、多租户、基于 Linux user 隔离的运行时，用来替代此前每个 agent 服务一个 Docker 的模型。
 
-## Current Direction
+## 当前方向
 
-The design is finalised in [`docs/superpowers/specs/2026-06-16-multi-tenant-host-direct-isolation-design.md`](../superpowers/specs/2026-06-16-multi-tenant-host-direct-isolation-design.md). This directory mirrors the design as authoritative project documentation (decision record, target architecture, cross-cutting contracts). When the two disagree, the spec is the source of truth — fix the docs here.
+设计已在 [`docs/superpowers/specs/2026-06-16-multi-tenant-host-direct-isolation-design.md`](../superpowers/specs/2026-06-16-multi-tenant-host-direct-isolation-design.md) 中定稿。本目录把该设计同步为项目权威文档（决策记录、目标架构、跨领域契约）。如果两者不一致，以 spec 为事实源，并修正本目录文档。
 
-The previous V1.x → V2.0 plan (Docker-per-agent-service) is archived at [`docs/runtime-rework-archived/`](../runtime-rework-archived/). Decisions recorded there are no longer authoritative.
+此前的 V1.x → V2.0 计划（每个 agent 服务一个 Docker）已归档到 [`docs/runtime-rework-archived/`](../runtime-rework-archived/)。那里记录的决策不再具有权威性。
 
-## Target Architecture at a Glance
+## 目标架构概览
 
 ```text
 NanoClaw deployment (single Docker image OR equivalent pod)
@@ -25,66 +25,66 @@ NanoClaw deployment (single Docker image OR equivalent pod)
     └── agent-runner (Claude / OpenCode / mock provider)
 ```
 
-Key shifts from V1.x plan:
+相对 V1.x 计划的关键变化：
 
-- **Isolation unit**: one mapped `ncg-*` Linux user per `(tenant, agent, group)` inside a single NanoClaw Docker image or equivalent pod. Docker/Kubernetes is the packaging boundary, not one security boundary per tenant, agent, or group.
-- **Docker deployment**: default operational profile is one long-running container with `--privileged`, SUID enabled, persistent `/var/lib/nanoclaw`, and writable/delegated cgroup v2 access; tighter profiles must pass helper and isolation tests.
-- **Process topology**: Single control plane process directly spawns runs via the SUID helper. No supervisor process in the initial implementation.
-- **Multi-tenant, multi-agent per host**: One NanoClaw instance supports many tenants and many agents. Each (tenant, agent) tuple may have its own external channel identity.
-- **Webhook routing**: URL path `/<tenant>/<agent>/<channel>/event` is the routing key for a single shared HTTP server.
-- **Two-tier credential model**: LLM credentials are internal-gateway credentials accepted only by NanoClaw's internal LLM gateway, so they may be injected via env. Channel credentials (real external) stay host-side, accessed via tool IPC.
-- **Clean replacement**: No `docker-per-group` fallback. A one-shot migration script handles the cutover.
+- **隔离单元**：在单个 NanoClaw Docker image 或等价 pod 内，每个 `(tenant, agent, group)` 映射一个 `ncg-*` Linux user。Docker/Kubernetes 是打包边界，不是每个 tenant、agent 或 group 的安全边界。
+- **Docker 部署**：默认运维形态是一个长期运行的容器，启用 `--privileged`、SUID、持久化 `/var/lib/nanoclaw`，并提供可写或已委派的 cgroup v2 访问；更收紧的配置必须通过 helper 和隔离测试。
+- **进程拓扑**：单个控制平面进程通过 SUID helper 直接启动 run。初始实现不引入 supervisor 进程。
+- **每个 host 支持多租户、多 agent**：一个 NanoClaw 实例支持多个租户和多个 agent。每个 `(tenant, agent)` 元组可以拥有自己的外部渠道身份。
+- **Webhook 路由**：URL path `/<tenant>/<agent>/<channel>/event` 是单个共享 HTTP server 的路由键。
+- **两级凭据模型**：LLM 凭据是只被 NanoClaw 内部 LLM gateway 接受的内部 gateway 凭据，因此可以通过 env 注入。渠道凭据是真实外部凭据，保留在 host 侧，只能通过 tool IPC 访问。
+- **干净替换**：没有 `docker-per-group` fallback。一次性迁移脚本负责切换。
 
-## Documents in This Directory
+## 本目录文档
 
-| Document | Purpose |
+| 文档 | 用途 |
 |----------|---------|
-| [ADR.md](./ADR.md) | Architecture Decision Record. Authoritative; supersedes `runtime-rework-archived/ADR.md`. |
-| [TARGET_ARCHITECTURE_DETAILS.md](./TARGET_ARCHITECTURE_DETAILS.md) | Component responsibilities, data flows, message/task/tool/skill sequences. |
-| [CROSS_CUTTING_CONTRACTS.md](./CROSS_CUTTING_CONTRACTS.md) | Behaviour that spans implementation phases: message metadata, cursor rules, authorization gates, tool inventory. |
+| [ADR.md](./ADR.md) | 架构决策记录。权威文档；取代 `runtime-rework-archived/ADR.md`。 |
+| [TARGET_ARCHITECTURE_DETAILS.md](./TARGET_ARCHITECTURE_DETAILS.md) | 组件职责、数据流、消息/任务/tool/skill 序列。 |
+| [CROSS_CUTTING_CONTRACTS.md](./CROSS_CUTTING_CONTRACTS.md) | 跨实现阶段的行为：消息元数据、cursor 规则、授权 gate、tool 清单。 |
 
-Implementation-phase documents (version sequence, concrete coding tasks) are produced by the implementation plan and live alongside this directory when written.
+实现阶段文档（版本顺序、具体编码任务）由实施计划生成，写出后会与本目录并列保存。
 
-## Guiding Rules
+## 指导规则
 
-- Do not mix tenant business code with platform code.
-- Channel credentials (Feishu `app_secret`, Slack tokens, etc.) never leave the control plane process memory or `0600` files. Run processes access channels via tool IPC only.
-- LLM credentials may be injected via env at spawn time because the agent calls an internal LLM gateway with an internal credential that is not usable against the external provider or from outside the internal network.
-- Secret references are typed: only `llm:` refs may enter run envs; `channel:` refs are control-plane-only.
-- Linux user isolation plus per-runtime ACLs protect runtime data: chat history, continuation, generated skills.
-- Tenant/agent skills are exposed to runs only through per-run read-only resolved bundles, never world-readable tenant paths.
-- Privileged operations (`prepare`, `setuid`, signal, cgroup) only through `nc-setuid-helper`. The control plane holds no Linux capabilities.
-- Move IPC to SQLite queues (`inbound.db`, `outbound.db`, `state.db`, `tools.db`).
-- Provider differences stay behind `AgentProvider`.
-- Implementation tests must cover every isolation boundary before the runtime is considered shippable.
+- 不要把租户业务代码与平台代码混在一起。
+- 渠道凭据（Feishu `app_secret`、Slack token 等）绝不离开控制平面进程内存或 `0600` 文件。运行进程只能通过 tool IPC 访问渠道。
+- LLM 凭据可以在 spawn 时通过 env 注入，因为 agent 调用的是内部 LLM gateway，使用的内部凭据不能用于外部 provider，也不能从内部网络外使用。
+- Secret ref 有类型：只有 `llm:` ref 可以进入 run env；`channel:` ref 仅限控制平面。
+- Linux user 隔离加每个 runtime 的 ACL 保护运行时数据：聊天历史、continuation、生成的 skills。
+- 租户/agent skills 只通过每次运行的只读 resolved bundle 暴露给 run，绝不使用全局可读的租户路径。
+- 特权操作（`prepare`、`setuid`、signal、cgroup）只能通过 `nc-setuid-helper` 执行。控制平面不持有 Linux capabilities。
+- IPC 迁移到 SQLite 队列（`inbound.db`、`outbound.db`、`state.db`、`tools.db`）。
+- Provider 差异留在 `AgentProvider` 后面。
+- 在认为运行时可发布之前，实现测试必须覆盖每个隔离边界。
 
-## Existing Code Hotspots
+## 现有代码热点
 
-Code that the rework will touch or replace:
+重构会触及或替换的代码：
 
-| File | Current role |
+| 文件 | 当前角色 |
 |------|--------------|
-| `src/index.ts` | Orchestrator: state, message loop, agent invocation |
-| `src/channels/registry.ts` | Singleton-keyed channel registry (must move to composite `(tenant, agent, type)` keys) |
-| `src/channels/feishu.ts` | Singleton Feishu channel (must become multi-instance per (tenant, agent)) |
-| `src/feishu/auth.ts` | Hardcoded credential file path (must resolve typed refs under `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/`) |
-| `src/feishu/client.ts` | Per-instance FeishuClient (already state-safe for multi-instance) |
-| `src/container-runner.ts` | Spawns Docker containers — to be replaced by `nc-setuid-helper` invocation |
-| `src/group-queue.ts` | Active group process tracking |
-| `src/task-scheduler.ts` | Cron tasks with `context_mode` semantics |
-| `src/ipc.ts` | Legacy file IPC watcher — to be replaced by DB IPC + tool workers |
-| `src/db.ts` | Control-plane SQLite, target shape is per-`(tenant, agent)` DBs with channel-scoped routing, tasks, and cursors |
-| `src/router.ts` | Message formatting and outbound routing |
-| `src/credential-proxy.ts` | Anthropic credential proxy (no longer needed under two-tier model; will be removed or repurposed) |
-| `container/agent-runner/src/index.ts` | Container entrypoint (becomes the run process entrypoint, invoked by SUID helper) |
+| `src/index.ts` | Orchestrator：状态、消息循环、agent 调用 |
+| `src/channels/registry.ts` | 以 singleton key 建立的渠道注册表（必须迁移到复合 `(tenant, agent, type)` key） |
+| `src/channels/feishu.ts` | Singleton Feishu channel（必须改为每个 `(tenant, agent)` 多实例） |
+| `src/feishu/auth.ts` | 硬编码凭据文件路径（必须在 `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/` 下解析 typed refs） |
+| `src/feishu/client.ts` | 每实例 `FeishuClient`（已经具备多实例状态安全性） |
+| `src/container-runner.ts` | 启动 Docker containers，将被 `nc-setuid-helper` 调用替代 |
+| `src/group-queue.ts` | 活跃 group 进程跟踪 |
+| `src/task-scheduler.ts` | 带 `context_mode` 语义的 cron tasks |
+| `src/ipc.ts` | 旧文件 IPC watcher，将被 DB IPC + tool workers 替代 |
+| `src/db.ts` | 控制平面 SQLite；目标形态是 per-`(tenant, agent)` DB，带 channel-scoped 路由、tasks 和 cursors |
+| `src/router.ts` | 消息格式化和 outbound 路由 |
+| `src/credential-proxy.ts` | Anthropic credential proxy（两级模型下不再需要，将删除或改作他用） |
+| `container/agent-runner/src/index.ts` | Container entrypoint（变成 run process entrypoint，由 SUID helper 调用） |
 
-## Migration
+## 迁移
 
-A single one-shot migration script handles the cutover. No fallback mode is provided. See the spec's "Migration" section for the transformation table and verification steps.
+一次性迁移脚本负责切换。没有 fallback 模式。转换表和验证步骤见 spec 的 “Migration” 章节。
 
-Before running the migration in production:
+生产迁移前：
 
-1. Validate the dry-run report end-to-end.
-2. Back up all source data.
-3. Confirm `verify:migration` passes.
-4. Have a rollback-by-restore plan (file-level backup restoration) — there is no in-process rollback.
+1. 端到端验证 dry-run 报告。
+2. 备份所有源数据。
+3. 确认 `verify:migration` 通过。
+4. 准备按文件级备份恢复的 rollback 方案；没有进程内 rollback。

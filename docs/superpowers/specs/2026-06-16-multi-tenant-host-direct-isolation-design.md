@@ -1,38 +1,38 @@
-# Multi-tenant Host-direct Isolation — Architecture Design
+# 多租户 Host-direct 隔离架构设计
 
-**Date**: 2026-06-16
-**Status**: Design (pending implementation plan)
-**Supersedes**: ADR-002, ADR-005, ADR-008, ADR-012, ADR-019 (parts), ADR-004 of `docs/runtime-rework/ADR.md`
-**Keeps**: ADR-001, ADR-003, ADR-006, ADR-007, ADR-009, ADR-010, ADR-011, ADR-013, ADR-015, ADR-016, ADR-017, ADR-018, ADR-020
+**日期**: 2026-06-16
+**状态**: Design (pending implementation plan)
+**取代**: ADR-002, ADR-005, ADR-008, ADR-012, ADR-019 (parts), ADR-004 of `docs/runtime-rework/ADR.md`
+**保留**: ADR-001, ADR-003, ADR-006, ADR-007, ADR-009, ADR-010, ADR-011, ADR-013, ADR-015, ADR-016, ADR-017, ADR-018, ADR-020
 
-## Background
+## 背景
 
-The existing `docs/runtime-rework/` plan targets "one Docker container per agent service, per-group Linux users inside each container". This design reverses that: the primary deployment is one NanoClaw Docker image (or one equivalent Kubernetes pod) containing the control plane, helper, and run processes. Linux users inside that deployment become the isolation unit; Docker is packaging and operations, not one security boundary per agent or group.
+现有 `docs/runtime-rework/` 计划的目标是“每个 agent 服务一个 Docker container，并在每个 container 内为每个 group 使用 Linux users”。本设计反转该方向：主要部署形态是一个 NanoClaw Docker image（或一个等价 Kubernetes pod），其中包含控制平面、helper 和运行进程。该部署内部的 Linux users 成为隔离单元；Docker 是打包和运维边界，不是每个 agent 或 group 的安全边界。
 
-The shift is driven by three realisations:
+这一转向来自三个判断：
 
-1. Docker adds no credential isolation on top of Linux user separation. Process memory isolation, `/proc/<pid>/environ` restrictions, and file permissions already give different-UID processes different security domains. Docker's residual value is operational (image portability, cgroups, defence in depth), not security.
-2. Deployment convenience matters: one NanoClaw instance supporting many tenants and many agents is simpler to operate than N Docker services.
-3. Channel credentials (Feishu, Slack, etc.) and tenant runtime data — not LLM credentials — are the real protection targets. The current deployment routes agents to an internal LLM gateway using an internal endpoint and internal credential; that credential is not accepted by the public provider API and is useless outside the internal network, which downgrades the LLM credential threat model.
+1. 在 Linux user 分离之上，Docker 不再额外提供凭据隔离。进程内存隔离、`/proc/<pid>/environ` 限制和文件权限已经让不同 UID 的进程处于不同安全域。Docker 的剩余价值是运维性质的（image 可移植性、cgroups、defence in depth），而不是安全性。
+2. 部署便利性很重要：一个 NanoClaw 实例支持多个 tenants 和多个 agents，比 N 个 Docker services 更容易运维。
+3. 真正需要保护的是渠道凭据（Feishu、Slack 等）和 tenant runtime data，而不是 LLM 凭据。当前部署把 agents 路由到内部 LLM gateway，使用内部 endpoint 和内部 credential；该 credential 不被公共 provider API 接受，在内部网络之外也没有用处，因此 LLM credential 的威胁模型更低。
 
-## Goals
+## 目标
 
-- One NanoClaw control plane process supports multiple tenants, multiple agents per tenant, multiple groups per agent.
-- Isolation unit: one Linux user per `(tenant, agent, group)` tuple. Usernames use the `ncg-` prefix plus a stable tuple hash to avoid sanitisation collisions.
-- Per-(tenant, agent) external identity: each agent can have its own Feishu app, Slack bot, etc.
-- Webhook URLs shaped `/<tenant>/<agent>/<channel>/event` route inbound events to the right channel instance.
-- Clean replacement of the existing `docker-per-group` runtime. No fallback mode.
-- Primary deployment target: one Docker image per NanoClaw instance. Kubernetes uses one equivalent pod. Docker/Kubernetes is the packaging boundary, while per-group isolation is still the mapped `ncg-*` Linux user inside the image.
+- 一个 NanoClaw 控制平面进程支持多个 tenants、每个 tenant 多个 agents、每个 agent 多个 groups。
+- 隔离单元：每个 `(tenant, agent, group)` 元组一个 Linux user。Usernames 使用 `ncg-` 前缀加稳定 tuple hash，避免 sanitisation collisions。
+- Per-(tenant, agent) external identity：每个 agent 可以拥有自己的 Feishu app、Slack bot 等。
+- 形如 `/<tenant>/<agent>/<channel>/event` 的 Webhook URLs 将 inbound events 路由到正确的 channel instance。
+- 干净替换现有 `docker-per-group` runtime。没有 fallback mode。
+- 主要部署目标：每个 NanoClaw 实例一个 Docker image。Kubernetes 使用一个等价 pod。Docker/Kubernetes 是打包边界；per-group 隔离仍是 image 内部映射的 `ncg-*` Linux user。
 
-## Non-goals
+## 非目标
 
-- Per-group kernel namespace, per-group network namespace by default.
-- Protection against kernel exploits or container escapes (same threat surface as Docker, since both share the host kernel).
-- Backward-compatible operation of the existing `groups/<name>/` layout during transition. A one-shot migration script handles the cutover.
-- Multi-tenant billing or quota enforcement inside NanoClaw (handled by the internal LLM gateway or external channel platforms).
-- Approach A (separate supervisor process) — listed under "Future extensions" but not part of the initial implementation.
+- 默认不提供 per-group kernel namespace、per-group network namespace。
+- 不防御 kernel exploits 或 container escapes（与 Docker 威胁面相同，因为两者都共享宿主 kernel）。
+- 不在过渡期间兼容运行现有 `groups/<name>/` layout。一次性迁移脚本负责切换。
+- NanoClaw 内部不做 multi-tenant billing 或 quota enforcement（由内部 LLM gateway 或外部 channel platforms 处理）。
+- Approach A（独立 supervisor process）列在 “Future extensions” 下，但不属于初始实现。
 
-## Architecture Overview
+## 架构概览
 
 ```text
 NanoClaw deployment (single Docker container OR equivalent pod)
@@ -50,23 +50,23 @@ NanoClaw deployment (single Docker container OR equivalent pod)
     └── agent-runner: Claude / OpenCode / mock provider adapter
 ```
 
-### Privilege model
+### 权限模型
 
-Control plane never holds any Linux capability. All privileged operations go through `nc-setuid-helper`, a small SUID root binary installed at `/usr/lib/nanoclaw/nc-setuid-helper` (mode 4750, owner=root, group=nc-priv). Only the `nanoclaw-svc` user is in the `nc-priv` group, so only the control plane can invoke the helper.
+控制平面从不持有任何 Linux capability。所有特权操作都通过 `nc-setuid-helper`，这是一个安装在 `/usr/lib/nanoclaw/nc-setuid-helper` 的小型 SUID root binary（mode 4750，owner=root，group=nc-priv）。只有 `nanoclaw-svc` user 在 `nc-priv` group 中，因此只有控制平面可以调用 helper。
 
-### Docker image deployment settings
+### 部署设置：Docker image
 
-The reference production deployment is a single NanoClaw Docker image. Run one container that contains the control plane, helper, and run processes. Configure the container as follows:
+参考生产部署是单个 NanoClaw Docker image。运行一个包含控制平面、helper 和 run processes 的容器。容器配置如下：
 
-- Start from the `nanoclaw` image as a long-running service container, not one container per tenant, agent, or group.
-- Use a privilege profile that allows the helper to do its narrow job. The default operational profile is `--privileged`; a hardened profile must still allow SUID execution, `setuid/setgid`, signalling mapped `ncg-*` processes, POSIX ACL changes, and cgroup v2 writes.
-- Do not enable `no_new_privileges`; `/usr/lib/nanoclaw/nc-setuid-helper` must be able to execute as SUID root.
-- Mount persistent data with ACL support, for example `-v /srv/nanoclaw:/var/lib/nanoclaw`. The backing filesystem must support POSIX ACLs.
-- Mount a writable cgroup v2 view or delegate `/sys/fs/cgroup/nanoclaw/` so the helper can create per-run cgroups and set memory/pid/cpu limits.
-- Run with container-local user/group management enabled. The image must include the local NSS/user/group mechanism used by `prepare` to create mapped `ncg-*` users.
-- Keep tenant repositories and auth storage as separate mounts when operators want independent backup and rotation policies.
+- 从 `nanoclaw` image 启动为长期运行的 service container，不是每个 tenant、agent 或 group 一个 container。
+- 使用能让 helper 完成窄职责的 privilege profile。默认运维形态是 `--privileged`；hardened profile 仍必须允许 SUID execution、`setuid/setgid`、signal mapped `ncg-*` processes、POSIX ACL changes 和 cgroup v2 writes。
+- 不要启用 `no_new_privileges`；`/usr/lib/nanoclaw/nc-setuid-helper` 必须能以 SUID root 执行。
+- 挂载支持 ACL 的持久数据，例如 `-v /srv/nanoclaw:/var/lib/nanoclaw`。底层 filesystem 必须支持 POSIX ACLs。
+- 挂载可写 cgroup v2 view，或委派 `/sys/fs/cgroup/nanoclaw/`，让 helper 可以创建 per-run cgroups 并设置 memory/pid/cpu limits。
+- 启用 container-local user/group management。Image 必须包含 `prepare` 用来创建 mapped `ncg-*` users 的 local NSS/user/group 机制。
+- 当 operators 需要独立 backup 和 rotation policies 时，将 tenant repositories 和 auth storage 保持为独立 mounts。
 
-Baseline Docker run shape:
+基础 Docker run 形态：
 
 ```bash
 docker run -d --name nanoclaw \
@@ -79,11 +79,11 @@ docker run -d --name nanoclaw \
   nanoclaw:<version>
 ```
 
-Operators may replace `--privileged` with a tighter runtime profile after proving the helper can still perform `prepare`, `spawn`, `kill`, and `cgroup` operations and the isolation test suite passes.
+Operator 只有在证明 helper 仍能执行 `prepare`、`spawn`、`kill`、`cgroup` 操作，且 isolation test suite 通过后，才可以用更收紧的 runtime profile 替换 `--privileged`。
 
-Kubernetes deployment follows the same shape: one pod per NanoClaw instance, with equivalent `securityContext`, persistent volume, POSIX ACL support, and writable/delegated cgroup v2 subtree. The pod is still packaging only; Linux UID separation inside the pod remains the isolation boundary.
+在 Kubernetes 中，部署遵循相同形态：每个 NanoClaw 实例一个 pod，带等价 `securityContext`、persistent volume、POSIX ACL support 和 writable/delegated cgroup v2 subtree。Pod 仍只是打包形态；pod 内部的 Linux UID separation 仍是隔离边界。
 
-The helper exposes five operations, each with strict argument validation:
+Helper 暴露五个操作，每个操作都有严格参数校验：
 
 ```
 nc-setuid-helper prepare --tenant=<t> --agent=<a> --group=<g> --runtime-dir=<dir>
@@ -93,91 +93,91 @@ nc-setuid-helper cgroup --path=<path> --mem=<mb> --pids=<n> --cpu=<shares>
 nc-setuid-helper status --pid=<p> --uid=<u> --runtime-dir=<dir> --cgroup=<path> --start-time=<ticks>
 ```
 
-Validation rules:
+校验规则：
 
-- `prepare` validates `(tenant, agent, group)`, derives the collision-resistant Linux username, creates the user/group if missing, creates the runtime directory tree, applies ACLs and modes, pre-creates runtime DB files, and records the mapping in `/var/lib/nanoclaw/users.db`.
-- `--uid` and `--gid` for `spawn` must match `^ncg-` and correspond to the exact `(tenant, agent, group)` mapping the helper created via `prepare`.
-- `--runtime-dir` must live under `/var/lib/nanoclaw/runtime/`, match the recorded mapping, and have the expected owner/mode/ACLs.
-- `kill` and `status` must match the active-run identity recorded by the control plane: PID, `/proc/<pid>/stat` start time, expected real UID, runtime dir, and cgroup path. A PID whose start time or cgroup does not match is treated as stale PID reuse and is never signalled.
-- `cgroup` paths must live under `/sys/fs/cgroup/nanoclaw/`.
+- `prepare` 校验 `(tenant, agent, group)`，推导抗碰撞 Linux username，缺失时创建 user/group，创建 runtime directory tree，应用 ACLs 和 modes，预创建 runtime DB files，并在 `/var/lib/nanoclaw/users.db` 中记录 mapping。
+- `spawn` 的 `--uid` 和 `--gid` 必须匹配 `^ncg-`，并对应 helper 通过 `prepare` 创建的精确 `(tenant, agent, group)` mapping。
+- `--runtime-dir` 必须位于 `/var/lib/nanoclaw/runtime/` 下，匹配记录的 mapping，并具有预期 owner/mode/ACLs。
+- `kill` 和 `status` 必须匹配控制平面记录的 active-run identity：PID、`/proc/<pid>/stat` start time、expected real UID、runtime dir 和 cgroup path。Start time 或 cgroup 不匹配的 PID 会被视为 stale PID reuse，绝不会被 signal。
+- `cgroup` paths 必须位于 `/sys/fs/cgroup/nanoclaw/` 下。
 
-Any violation: helper exits non-zero without performing the operation. Control plane sees the failure and reports it.
+任何违规都会让 helper 以非零状态退出，且不执行操作。控制平面会看到失败并报告。
 
-### Process lifecycle
+### 进程生命周期
 
 | Operation | Owner | Mechanism |
 |-----------|-------|-----------|
-| Prepare user/runtime | control plane | `nc-setuid-helper prepare` creates/repairs Linux user, group, runtime dirs, ACLs, and runtime DB files |
-| Spawn | control plane | `posix_spawn` → child execs `nc-setuid-helper spawn` → helper setuids, sets up cgroup, execs agent-runner |
-| Liveness check | control plane | `stat("/proc/<pid>")` plus helper `status` check against PID start time, expected UID, runtime dir, and cgroup |
+| Prepare user/runtime | control plane | `nc-setuid-helper prepare` 创建/修复 Linux user、group、runtime dirs、ACLs 和 runtime DB files |
+| Spawn | control plane | `posix_spawn` → child execs `nc-setuid-helper spawn` → helper setuids、设置 cgroup、execs agent-runner |
+| Liveness check | control plane | `stat("/proc/<pid>")` 加 helper `status`，校验 PID start time、expected UID、runtime dir 和 cgroup |
 | Stop (SIGTERM/SIGKILL) | helper | `nc-setuid-helper kill --pid --signal --uid --runtime-dir --cgroup --start-time` |
-| Cgroup / resource limits | helper | Set up at spawn time; subsequent adjustments via `cgroup` command |
-| Zombie reaping | control plane | Run process is direct child of control plane (helper only bridges exec); normal SIGCHLD + `waitpid` |
-| Idle reap / timeout kill | control plane | Periodic timer scans active runs; calls helper kill when thresholds exceeded |
-| Host-restart reconcile | control plane | DB-listed active PIDs are checked against `/proc/` and helper `status`; missing or identity-mismatched PIDs are marked crashed/stale |
+| Cgroup / resource limits | helper | Spawn time 设置；后续通过 `cgroup` command 调整 |
+| Zombie reaping | control plane | Run process 是控制平面直接子进程（helper 只桥接 exec）；正常 SIGCHLD + `waitpid` |
+| Idle reap / timeout kill | control plane | 定时器扫描 active runs；超过阈值时调用 helper kill |
+| Host-restart reconcile | control plane | DB-listed active PIDs 通过 `/proc/` 和 helper `status` 检查；缺失或 identity mismatch 的 PIDs 标记为 crashed/stale |
 
-Each active-run DB record stores `pid`, `/proc/<pid>/stat` start time ticks, expected uid, runtime dir, cgroup path, tenant, agent, group, and run id. The helper never infers ownership from PID alone.
+每条 active-run DB record 存储 `pid`、`/proc/<pid>/stat` start time ticks、expected uid、runtime dir、cgroup path、tenant、agent、group 和 run id。Helper 永远不会只从 PID 推断 ownership。
 
-Two Linux rules shape this split:
+两条 Linux 规则决定了这个拆分：
 
-- `waitpid` ignores UID — control plane (uid=nanoclaw-svc) can reap a child whose UID was changed to `ncg-...` by the helper.
-- `kill` requires same-UID (or privilege) — control plane cannot signal `ncg-*` processes, so killing always goes through the helper.
+- `waitpid` 忽略 UID：控制平面（uid=nanoclaw-svc）可以 reap 由 helper 改为 `ncg-...` UID 的子进程。
+- `kill` 要求同 UID（或 privilege）：控制平面不能 signal `ncg-*` 进程，因此 kill 一律通过 helper。
 
-This keeps the privilege surface to a single auditable binary while letting control plane own all lifecycle policy.
+这样可以把特权面限制到单个可审计 binary，同时让控制平面拥有所有 lifecycle policy。
 
-## User model
+## 用户模型
 
-### Naming convention
+### 命名约定
 
-Conceptual Linux user identity:
+概念 Linux user identity：
 
 ```
 ncg-<tenant>-<agent>-<group>
 ```
 
-Actual Linux username:
+实际 Linux username：
 
 ```
 ncg-<tenant8>-<agent8>-<hash10>
 ```
 
-Rules:
+规则：
 
-- Tenant and agent IDs are lowercased, validated at tenant-config load time, and truncated only for the human-readable username prefix.
-- `<hash10>` is derived from the canonical tuple `(tenant, agent, group)` before sanitisation, so `a_b`, `a-b`, `a/b`, and case variants cannot collapse into the same Linux user.
-- `/var/lib/nanoclaw/users.db` stores the authoritative mapping from canonical tuple to Linux uid/gid/username. The helper rejects any username collision or tuple remap.
-- The username is an implementation detail; authorization and routing always use the canonical `(tenant, agent, group)` tuple.
+- Tenant 和 agent IDs 在 tenant-config load time 转为小写并校验，只在 human-readable username prefix 中截断。
+- `<hash10>` 在 sanitisation 之前从规范 tuple `(tenant, agent, group)` 推导，因此 `a_b`、`a-b`、`a/b` 和大小写变体不会折叠成同一个 Linux user。
+- `/var/lib/nanoclaw/users.db` 存储从规范 tuple 到 Linux uid/gid/username 的权威 mapping。Helper 拒绝任何 username collision 或 tuple remap。
+- Username 是实现细节；authorization 和 routing 始终使用规范 `(tenant, agent, group)` tuple。
 
-Each user gets:
+每个 user 获得：
 
-- A matching primary group for the mapped `ncg-*` username.
-- Home directory is the runtime directory itself (`/var/lib/nanoclaw/runtime/<t>/<a>/<g>/`). No separate `/home/ncg-*`.
-- No supplementary groups. Platform runner code under `/opt/nanoclaw/agent-runner/` is world-readable (mode 0755, owner=nanoclaw-svc) so no special group is needed for the run process to read it. Tenant and agent skills are not stored in world-readable paths.
+- 一个与 mapped `ncg-*` username 匹配的 primary group。
+- Home directory 就是 runtime directory 本身（`/var/lib/nanoclaw/runtime/<t>/<a>/<g>/`）。没有单独的 `/home/ncg-*`。
+- 没有 supplementary groups。`/opt/nanoclaw/agent-runner/` 下的 platform runner code 是 world-readable（mode 0755，owner=nanoclaw-svc），因此 run process 不需要特殊 group 也能读取。Tenant 和 agent skills 不存放在 world-readable paths。
 
-### Control plane access to runtime directories
+### 控制平面对 runtime directories 的访问
 
-The control plane (`uid=nanoclaw-svc`) needs to read and write the IPC databases inside each runtime directory without compromising isolation between `ncg-*` users. The mechanism is per-runtime POSIX ACLs installed by `nc-setuid-helper prepare`:
+控制平面（`uid=nanoclaw-svc`）需要读写每个 runtime directory 内的 IPC databases，同时不能破坏 `ncg-*` users 之间的隔离。机制是由 `nc-setuid-helper prepare` 安装的 per-runtime POSIX ACLs：
 
-- Every runtime directory is `owner=ncg-<mapped-user>`, `group=ncg-<mapped-user>`, `mode=0700`.
-- ACL grants `nanoclaw-svc` rwx on the directory tree.
-- Default ACL grants both the group user and `nanoclaw-svc` rwx on newly created directories and rw on newly created files.
-- Helper pre-created runtime DB files (`inbound.db`, `outbound.db`, `state.db`, `tools.db`) and SQLite sidecars created under the default ACL are readable/writable by both the group user and `nanoclaw-svc`; other `ncg-*` users have no ACL entry and no access.
+- 每个 runtime directory 都是 `owner=ncg-<mapped-user>`、`group=ncg-<mapped-user>`、`mode=0700`。
+- ACL 授予 `nanoclaw-svc` 对 directory tree 的 rwx。
+- Default ACL 授予 group user 和 `nanoclaw-svc` 对新建 directories 的 rwx，以及对新建 files 的 rw。
+- Helper 预创建的 runtime DB files（`inbound.db`、`outbound.db`、`state.db`、`tools.db`）以及在 default ACL 下创建的 SQLite sidecars 可由 group user 和 `nanoclaw-svc` 共同 read/write；其他 `ncg-*` users 没有 ACL entry，也无法访问。
 
-This gives nanoclaw-svc transparent read/write access to every runtime dir's IPC files without elevating through the helper, while keeping `ncg-*` users isolated from each other. A shared runtime group is deliberately avoided because it would either fail for files created by the wrong owner or grant all run users access to all runtime directories.
+这样 `nanoclaw-svc` 无需通过 helper 提权即可透明 read/write 每个 runtime dir 的 IPC files，同时保持 `ncg-*` users 彼此隔离。刻意避免 shared runtime group，因为它要么会在文件由错误 owner 创建时失败，要么会把所有 run users 对所有 runtime directories 的访问权授给彼此。
 
-### Lifecycle
+### 生命周期
 
-Users and runtime directories are prepared lazily by `nc-setuid-helper prepare` before the first run for a given (tenant, agent, group) tuple, and **never deleted automatically**. Idle runs stop the process but keep the user and runtime directory on disk so the next message has a warm path. A separate `nanoclaw-user-gc` admin command can prune users for tenants that have been removed from config; this is operator-driven, not automatic.
+Users 和 runtime directories 在给定 `(tenant, agent, group)` tuple 的第一次 run 前，由 `nc-setuid-helper prepare` 懒创建，并且**不会自动删除**。Idle runs 会停止进程，但保留 user 和 runtime directory 在磁盘上，让下一条消息走 warm path。独立的 `nanoclaw-user-gc` admin command 可以清理已从 config 移除的 tenants 对应 users；该动作由 operator 驱动，不自动执行。
 
-State file `/var/lib/nanoclaw/users.db` (SQLite, owned by root, mode 0600) tracks every user the helper has created, so the helper can validate `spawn --uid` requests against history.
+State file `/var/lib/nanoclaw/users.db`（SQLite，owned by root，mode 0600）跟踪 helper 创建过的每个 user，因此 helper 可以按历史记录校验 `spawn --uid` requests。
 
-## Tenant configuration
+## 租户配置
 
-### Source
+### 来源
 
-All tenant and agent configuration is loaded from a tenant repository on startup. The path is set via `NANOCLAW_TENANTS_DIR`. Loader validates schemas, resolves skill references, and produces in-memory `RegisteredTenant` / `RegisteredAgent` objects. No ad-hoc `groups/<name>/` directory is supported.
+所有 tenant 和 agent configuration 都在启动时从 tenant repository 加载。路径通过 `NANOCLAW_TENANTS_DIR` 设置。Loader 校验 schemas，解析 skill references，并生成内存中的 `RegisteredTenant` / `RegisteredAgent` objects。不支持 ad-hoc `groups/<name>/` directory。
 
-### Layout
+### 布局
 
 ```text
 nanoclaw-tenants/
@@ -238,23 +238,23 @@ nanoclaw-tenants/
 }
 ```
 
-Actual secret values are never in the tenant repo. The canonical auth root is `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/`. The repo carries only typed references:
+实际 secret values 绝不进入 tenant repo。规范 auth root 是 `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/`。Repo 只携带 typed references：
 
-- `llm:<name>` may be resolved into the run environment because it targets the internal LLM gateway.
-- `channel:<name>` may be resolved only inside the control plane and is never written to runtime DBs, run envs, logs, or skill bundles.
-- Unknown or untyped refs fail config validation.
+- `llm:<name>` 可以解析到 run environment，因为它指向内部 LLM gateway。
+- `channel:<name>` 只能在控制平面内解析，绝不写入 runtime DBs、run envs、logs 或 skill bundles。
+- 未知或无类型 refs 会导致 config validation 失败。
 
-Channel secrets live under `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/<channel>/credentials.json` (mode 0600, owner=nanoclaw-svc).
+Channel secrets 位于 `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/<channel>/credentials.json`（mode 0600，owner=nanoclaw-svc）。
 
-## Channel registry and webhook routing
+## 渠道注册表和 webhook 路由
 
-### Registry key
+### 注册表 key
 
-Channel registry uses composite key `(tenant_id, agent_id, channel_type)`. For each `agent.json` that declares a channel, the loader constructs a channel instance with that agent's external identity and registers it under the composite key. Lookup goes through `getChannel(tenantId, agentId, channelType)`; the existing singleton `getFeishuChannel()` accessor is removed.
+Channel registry 使用复合 key `(tenant_id, agent_id, channel_type)`。对于每个声明 channel 的 `agent.json`，loader 使用该 agent 的外部身份构造 channel instance，并在复合 key 下注册。Lookup 通过 `getChannel(tenantId, agentId, channelType)`；现有 singleton `getFeishuChannel()` accessor 被移除。
 
-### Inbound webhook server
+### 入站 webhook server
 
-Control plane runs **one** HTTP server. Each channel instance registers its URL prefix:
+控制平面运行**一个** HTTP server。每个 channel instance 注册自己的 URL prefix：
 
 ```
 POST /<tenant>/<agent>/feishu/event       → FeishuChannel(tenant, agent).handleWebhook
@@ -262,54 +262,54 @@ POST /<tenant>/<agent>/slack/event        → SlackChannel(tenant, agent).handle
 GET  /<tenant>/<agent>/<channel>/verify   # challenge / verification responses
 ```
 
-Feishu developer console configures the webhook URL to `https://nanoclaw.example.com/<tenant>/<agent>/feishu/event`. Different (tenant, agent) tuples get different URLs.
+Feishu developer console 将 webhook URL 配置为 `https://nanoclaw.example.com/<tenant>/<agent>/feishu/event`。不同 `(tenant, agent)` 元组使用不同 URL。
 
-For channels using outbound connections (Feishu WebSocket mode, Slack Socket Mode, Telegram long-poll), each channel instance owns its connection. NanoClaw identifies the source tenant/agent by which connection the event arrived on, not by URL path.
+对于使用 outbound connections 的 channels（Feishu WebSocket mode、Slack Socket Mode、Telegram long-poll），每个 channel instance 拥有自己的 connection。NanoClaw 根据 event 到达的 connection 识别源 tenant/agent，而不是根据 URL path。
 
-### Channel isolation
+### 渠道隔离
 
-Each `FeishuClient` (and equivalent for other channels) is constructed with its own credentials, owns its own `Lark.Client` / WebSocket connection / event handler map, and is state-safe for multiple instances in one process. The current code already supports this; the only changes are:
+每个 `FeishuClient`（以及其他 channels 的等价实现）都以自己的 credentials 构造，拥有自己的 `Lark.Client` / WebSocket connection / event handler map，并且在一个进程内对多个 instances 状态安全。当前代码已经支持这一点；需要的改动只有：
 
-1. `src/channels/feishu.ts:1026` — registry key from string literal to composite `(tenant, agent, type)`.
-2. `src/feishu/auth.ts:13-14` — credential file path from legacy `store/auth/feishu/credentials.json` to `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/feishu/credentials.json`.
-3. `src/feishu/auth.ts:72-88` — drop env-var overrides; webhook settings come from `channels/feishu.json`.
-4. `src/index.ts:899` / `src/ipc.ts:242` — replace `getFeishuChannel()` with `getChannel(tenantId, agentId, 'feishu')`.
+1. `src/channels/feishu.ts:1026`：registry key 从 string literal 改为复合 `(tenant, agent, type)`。
+2. `src/feishu/auth.ts:13-14`：credential file path 从 legacy `store/auth/feishu/credentials.json` 改为 `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/feishu/credentials.json`。
+3. `src/feishu/auth.ts:72-88`：移除 env-var overrides；webhook settings 来自 `channels/feishu.json`。
+4. `src/index.ts:899` / `src/ipc.ts:242`：用 `getChannel(tenantId, agentId, 'feishu')` 替换 `getFeishuChannel()`。
 
-Plus the architectural change: webhook HTTP server moves from per-`FeishuClient` to a shared server in the control plane.
+另有架构改动：webhook HTTP server 从 per-`FeishuClient` 移到控制平面中的共享 server。
 
-## Credential model
+## 凭据模型
 
-Two-tier threat model:
+两级威胁模型：
 
-### LLM credentials (low risk)
+### LLM 凭据（低风险）
 
-Anthropic API credentials point at NanoClaw's internal LLM gateway, and the run process calls only that internal gateway endpoint. These credentials are not public Anthropic credentials; they are accepted only by the internal service and are useless from outside the internal network. Delivery: env injection at spawn time.
+Anthropic API credentials 指向 NanoClaw 的内部 LLM gateway，run process 只调用该内部 gateway endpoint。这些凭据不是公共 Anthropic credentials；它们只被内部服务接受，从内部网络外不可用。交付方式：spawn time env injection。
 
 ```
 ANTHROPIC_BASE_URL=<internal-gateway-url>      # from tenant/agent config
 ANTHROPIC_API_KEY=<internal-gateway-credential> # from /var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/llm/credentials.json
 ```
 
-Only `llm:` refs may enter the run environment. No credential proxy, no scoped tokens, no `SO_PEERCRED`. Files are still 0600 / owned by `nanoclaw-svc` for general hygiene.
+只有 `llm:` refs 可以进入 run environment。不使用 credential proxy，不使用 scoped tokens，不使用 `SO_PEERCRED`。出于通用卫生要求，文件仍是 0600 / owned by `nanoclaw-svc`。
 
-### Channel credentials (high risk)
+### 渠道凭据（高风险）
 
-Feishu `app_secret`, Slack bot tokens, Telegram bot tokens, Discord bot tokens are real external credentials. They live only in:
+Feishu `app_secret`、Slack bot tokens、Telegram bot tokens、Discord bot tokens 是真实外部凭据。它们只存在于：
 
-- `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/<channel>/credentials.json` — 0600, owner=`nanoclaw-svc`
-- Control plane process memory after load
+- `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/<channel>/credentials.json`：0600，owner=`nanoclaw-svc`
+- 加载后的控制平面进程内存
 
-Run processes **never** see channel credentials. They request channel operations through tool IPC (write to `tools.db`), control plane tool worker executes against the channel client, result written back to `tools.db`.
+运行进程**永远**看不到 channel credentials。它们通过 tool IPC 请求 channel operations（写入 `tools.db`），控制平面 tool worker 对 channel client 执行操作，并把结果写回 `tools.db`。
 
-This pattern is inherited from the current architecture and is unchanged in the new design.
+这个模式继承自当前架构，新设计中保持不变。
 
-### Runtime data (high risk)
+### 运行时数据（高风险）
 
-Chat history, provider continuation, generated skills, downloaded files. Protected by Linux user ownership, 0700 directory modes, and per-runtime ACLs for `nanoclaw-svc`. Cross-group, cross-agent, cross-tenant reads fail with permission denied.
+聊天历史、provider continuation、生成的 skills、下载的 files。由 Linux user ownership、0700 directory modes 和给 `nanoclaw-svc` 的 per-runtime ACLs 保护。跨 group、跨 agent、跨 tenant 读取会因 permission denied 失败。
 
-## Runtime directories
+## 运行时目录
 
-### Host layout
+### 宿主侧布局
 
 ```text
 /var/lib/nanoclaw/                          # NANOCLAW_DATA_DIR (configurable)
@@ -343,41 +343,41 @@ Chat history, provider continuation, generated skills, downloaded files. Protect
       runs/<runId>.log
 ```
 
-Runtime directory ownership:
+运行时目录所有权：
 
-- Owner/group: mapped `ncg-*` user for `(tenant, agent, group)`
-- Mode: 0700 plus POSIX ACL for `nanoclaw-svc`
-- Default ACL: grants the mapped `ncg-*` user and `nanoclaw-svc` read/write access to runtime DB files and SQLite sidecars
+- Owner/group：mapped `ncg-*` user for `(tenant, agent, group)`
+- Mode：0700 加 `nanoclaw-svc` 的 POSIX ACL
+- Default ACL：授予 mapped `ncg-*` user 和 `nanoclaw-svc` 对 runtime DB files 和 SQLite sidecars 的 read/write access
 
-Control plane accesses IPC files (inbound, outbound, tools DBs) transparently via per-runtime ACLs. See "Control plane access to runtime directories" under User model for the rationale.
+控制平面通过 per-runtime ACLs 透明访问 IPC files（inbound、outbound、tools DBs）。理由见 User model 下的“控制平面对 runtime directories 的访问”。
 
-### Run process view
+### 运行进程视图
 
-The run process's cwd and home are `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/{live|runs/<runId>}`. It can see:
+运行进程的 cwd 和 home 是 `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/{live|runs/<runId>}`。它可以看到：
 
-- Its own `inbound.db` / `outbound.db` / `state.db` / `tools.db` (read/write)
-- Its own `skills/generated/` (read/write)
-- A per-run read-only resolved skill bundle under its own runtime directory (`skills/resolved/<revision>/`). This bundle contains the selected builtin, tenant, and agent skills for that run only.
-- `/opt/nanoclaw/agent-runner/` (read-only platform code)
+- 自己的 `inbound.db` / `outbound.db` / `state.db` / `tools.db`（read/write）
+- 自己的 `skills/generated/`（read/write）
+- 自己 runtime directory 下的 per-run read-only resolved skill bundle（`skills/resolved/<revision>/`）。该 bundle 只包含此 run 选中的 builtin、tenant 和 agent skills。
+- `/opt/nanoclaw/agent-runner/`（read-only platform code）
 
-It cannot see:
+它不能看到：
 
-- Other tenants/agents/groups runtime directories (owned by other users, mode 0700 plus ACL only for `nanoclaw-svc`)
-- `auth/` and `users.db` (owned by nanoclaw-svc or root, mode 0600)
-- Tenant repo source files and other tenants' resolved skill bundles (loaded only into control plane memory; run process gets only its resolved skill bundle and manifest under its own runtime dir)
+- 其他 tenants/agents/groups 的 runtime directories（由其他 users 拥有，mode 0700，并且 ACL 只授予 `nanoclaw-svc`）
+- `auth/` 和 `users.db`（owned by nanoclaw-svc 或 root，mode 0600）
+- Tenant repo source files 和其他 tenants 的 resolved skill bundles（只加载到控制平面内存；run process 只获得自己 runtime dir 下的 resolved skill bundle 和 manifest）
 
-## IPC and data flow
+## 数据流和 IPC
 
-DB-backed IPC is inherited unchanged from `docs/runtime-rework/03-db-backed-ipc.md`. Only the path prefix changes from `/runtime/groups/<group>/` to `/var/lib/nanoclaw/runtime/<tenant>/<agent>/<group>/`.
+DB-backed IPC 保持继承自 `docs/runtime-rework/03-db-backed-ipc.md` 的设计不变。只有路径前缀从 `/runtime/groups/<group>/` 改为 `/var/lib/nanoclaw/runtime/<tenant>/<agent>/<group>/`。
 
-The control-plane host DB is partitioned by `(tenant, agent)`, for example `/var/lib/nanoclaw/data/tenants/<tenant>/<agent>/messages.db`. Inside each per-agent DB, channel-derived tables and cursors must include `channel_type` in their identity:
+控制平面 host DB 按 `(tenant, agent)` 分区，例如 `/var/lib/nanoclaw/data/tenants/<tenant>/<agent>/messages.db`。每个 per-agent DB 内，channel-derived tables 和 cursors 的 identity 必须包含 `channel_type`：
 
-- `chats`: `(channel_type, jid)`
-- `messages`: `channel_type` plus the channel message identity
-- `registered_groups`: `(channel_type, jid)`
-- `router_state`: `last_timestamp[channel_type]` and `last_agent_timestamp[channel_type, chat_jid]`
+- `chats`：`(channel_type, jid)`
+- `messages`：`channel_type` 加 channel message identity
+- `registered_groups`：`(channel_type, jid)`
+- `router_state`：`last_timestamp[channel_type]` 和 `last_agent_timestamp[channel_type, chat_jid]`
 
-This keeps per-agent SQLite files small while preventing one multi-channel agent from comparing or overwriting unrelated channel cursors.
+这让 per-agent SQLite files 保持较小，同时防止一个 multi-channel agent 比较或覆盖无关 channel cursors。
 
 | File | Writer | Reader |
 |------|--------|--------|
@@ -386,46 +386,46 @@ This keeps per-agent SQLite files small while preventing one multi-channel agent
 | `state.db` | run process | run process (continuation, audit) |
 | `tools.db` | run process (request) / control plane tool worker (result) | both |
 
-Tool workers receive `(tenant, agent, group, runId)` from the request row's source identity, then look up the channel instance via `getChannel(tenantId, agentId, channelType)`. No global singleton lookup.
+Tool workers 从 request row 的 source identity 接收 `(tenant, agent, group, runId)`，然后通过 `getChannel(tenantId, agentId, channelType)` 查找 channel instance。没有全局 singleton lookup。
 
-### Audit logging
+### 审计日志
 
-Each run writes its own API usage (model, tokens, latency, status) into `state.db` or `outbound.db` as it goes. Control plane aggregates per-(tenant, agent) views on demand for the status dashboard. This avoids a central proxy while still allowing per-tenant reporting.
+每个 run 在执行过程中把自己的 API usage（model、tokens、latency、status）写入 `state.db` 或 `outbound.db`。控制平面按需聚合 per-(tenant, agent) view，供 status dashboard 使用。这样不需要 central proxy，也仍可做 per-tenant reporting。
 
-## ADR changes
+## 决策记录变更
 
-### Reversed
+### 已反转
 
-- **ADR-002** (keep `docker-per-group` as fallback) → reversed. Clean replacement.
-- **ADR-005** (one Docker per agent service) → reversed. New ADR-005': one Docker image is the deployment unit; mapped Linux users inside the image are the isolation unit.
-- **ADR-008** (supervisor owns group process lifecycle) → revised. Control plane owns lifecycle *policy*; privileged *mechanism* (setuid, signal, cgroup) is encapsulated in `nc-setuid-helper`. Control plane holds no capabilities.
+- **ADR-002**（保留 `docker-per-group` fallback）→ reversed。干净替换。
+- **ADR-005**（每个 agent service 一个 Docker）→ reversed。新 ADR-005'：一个 Docker image 是部署单元；image 内映射的 Linux users 是隔离单元。
+- **ADR-008**（supervisor 拥有 group process lifecycle）→ revised。控制平面拥有 lifecycle *policy*；特权 *mechanism*（setuid、signal、cgroup）封装在 `nc-setuid-helper`。控制平面不持有 capabilities。
 
-### Deleted
+### 已删除
 
-- **ADR-004** (legacy file IPC compatibility) → deleted. Clean replacement, no compatibility layer.
-- **ADR-019** (runtime code is immutable by default) → narrowed. The principle still applies to platform code under `/opt/nanoclaw/agent-runner/`, but the "no per-group writable runner source" rationale is now structural (Linux user can't write outside its runtime dir) rather than policy.
+- **ADR-004**（legacy file IPC compatibility）→ deleted。干净替换，无兼容层。
+- **ADR-019**（runtime code 默认 immutable）→ narrowed。原则仍适用于 `/opt/nanoclaw/agent-runner/` 下的平台代码，但“没有 per-group writable runner source”的理由现在是结构性的（Linux user 无法写出自己的 runtime dir），而不是 policy。
 
-### Added
+### 新增
 
-- **ADR-021**: Each (tenant, agent) tuple may declare its own external channel identity. Channel registry key is `(tenant_id, agent_id, channel_type)`.
-- **ADR-022**: Inbound webhook URL `/<tenant>/<agent>/<channel>/event` is the routing key. One shared HTTP server in control plane dispatches by path.
-- **ADR-023**: Privileged operations only through `nc-setuid-helper` (SUID root). Control plane holds no Linux capabilities.
-- **ADR-024**: Two-tier credential threat model. LLM credentials are internal-gateway credentials accepted only by the internal LLM gateway — typed `llm:` refs may be injected into run envs. Channel credentials are real external credentials — typed `channel:` refs are host-side only and run processes use tool IPC. Runtime data — Linux user isolation.
-- **ADR-025**: Channel registry uses composite key. All `getFeishuChannel()`-style singleton accessors are removed in favour of `getChannel(tenantId, agentId, channelType)`.
+- **ADR-021**：每个 `(tenant, agent)` tuple 可以声明自己的外部 channel identity。Channel registry key 是 `(tenant_id, agent_id, channel_type)`。
+- **ADR-022**：Inbound webhook URL `/<tenant>/<agent>/<channel>/event` 是 routing key。控制平面中的一个共享 HTTP server 按 path 分发。
+- **ADR-023**：特权操作只能通过 `nc-setuid-helper`（SUID root）。控制平面不持有 Linux capabilities。
+- **ADR-024**：两级 credential threat model。LLM credentials 是只被内部 LLM gateway 接受的 internal-gateway credentials，typed `llm:` refs 可以注入 run envs。Channel credentials 是真实外部凭据，typed `channel:` refs 仅限 host-side，run processes 使用 tool IPC。Runtime data 由 Linux user isolation 保护。
+- **ADR-025**：Channel registry 使用 composite key。所有 `getFeishuChannel()` 风格 singleton accessors 都移除，改用 `getChannel(tenantId, agentId, channelType)`。
 
-### Kept unchanged
+### 保持不变
 
-ADR-001 (tenant/skill boundary), ADR-003 (DB IPC), ADR-006 (isolated task uses same group user), ADR-007 (isolated task does not reuse live continuation), ADR-009 (provider differences behind `AgentProvider`), ADR-010 (OpenCode optional), ADR-011 (secrets host-side — now sharpened by ADR-024), ADR-012 (no world-writable IPC), ADR-013 (registered ≠ active), ADR-015 (tenant skills read-only inputs), ADR-016 (generated skills group-local), ADR-017 (partitioned host DBs remain the control-plane source of truth), ADR-018 (host-side authz), ADR-020 (additional mount scope explicit).
+ADR-001（tenant/skill boundary）、ADR-003（DB IPC）、ADR-006（isolated task uses same group user）、ADR-007（isolated task does not reuse live continuation）、ADR-009（provider differences behind `AgentProvider`）、ADR-010（OpenCode optional）、ADR-011（secrets host-side，由 ADR-024 sharpened）、ADR-012（no world-writable IPC）、ADR-013（registered ≠ active）、ADR-015（tenant skills read-only inputs）、ADR-016（generated skills group-local）、ADR-017（partitioned host DBs remain the control-plane source of truth）、ADR-018（host-side authz）、ADR-020（additional mount scope explicit）。
 
-## Migration
+## 迁移
 
-One-shot script: `npm run migrate:to-multi-tenant -- --tenant <default-tenant-id> --source ./legacy-backup --target ./nanoclaw-tenants`
+一次性脚本：`npm run migrate:to-multi-tenant -- --tenant <default-tenant-id> --source ./legacy-backup --target ./nanoclaw-tenants`
 
-The script:
+脚本：
 
-1. Runs in `--dry-run` first; produces a migration report listing every transformation. Waits for explicit confirmation before mutating anything.
-2. Backs up all source data to `legacy-backup-<timestamp>/` before any write.
-3. Transforms layout:
+1. 先以 `--dry-run` 运行，生成列出每项转换的 migration report。等待显式确认后才修改任何内容。
+2. 写入前先把所有 source data 备份到 `legacy-backup-<timestamp>/`。
+3. 转换 layout：
 
    ```text
    legacy                                          new
@@ -444,94 +444,94 @@ The script:
                                                     and populate channel_type in chat/message/group/cursor keys
    ```
 
-4. Verifies result via `npm run verify:migration`:
-   - Every legacy group has a 1:1 mapping to a new (tenant, agent, group) tuple.
-   - Message counts match between source and target DBs.
-   - Every credentials file under `/var/lib/nanoclaw/auth/` is mode 0600, owner=nanoclaw-svc.
-   - Tenant config loader successfully loads the new repo with no diagnostics.
+4. 通过 `npm run verify:migration` 验证结果：
+   - 每个 legacy group 都有到新 `(tenant, agent, group)` tuple 的 1:1 mapping。
+   - Source 和 target DBs 的 message counts 匹配。
+   - `/var/lib/nanoclaw/auth/` 下每个 credentials file 都是 mode 0600，owner=nanoclaw-svc。
+   - Tenant config loader 可以成功加载新 repo，且没有 diagnostics。
 
-The migration is **irreversible** by design (no `docker-per-group` fallback). Operators must validate the dry-run report before confirming.
+迁移设计为**不可逆**（没有 `docker-per-group` fallback）。Operators 必须在确认前验证 dry-run report。
 
-## Testing
+## 测试
 
-### Permission isolation (`npm run test:isolation`)
+### 权限隔离（`npm run test:isolation`）
 
-Run inside a test host with multiple `ncg-*` users created:
+在已创建多个 `ncg-*` users 的 test host 内运行：
 
-- The mapped run user for `(a, x, y)` cannot read or write `(a, x, z)`'s `state.db`.
-- The mapped run user for `(a, x, y)` cannot read any file under `auth/`.
-- The mapped run user for `(a, x, y)` cannot read `(b, x, y)`'s runtime directory (cross-tenant).
-- The mapped run user for `(a, x, y)` cannot read another tenant/agent's resolved skill bundle.
-- `nanoclaw-svc` and the mapped `ncg-*` user can both read/write runtime DB files and SQLite sidecars created by either process.
-- Run process environment contains only run config and typed `llm:` credentials such as `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` for the internal LLM gateway — no `channel:` credentials, no other tenant's data.
+- `(a, x, y)` 的 mapped run user 不能读取或写入 `(a, x, z)` 的 `state.db`。
+- `(a, x, y)` 的 mapped run user 不能读取 `auth/` 下任何文件。
+- `(a, x, y)` 的 mapped run user 不能读取 `(b, x, y)` 的 runtime directory（cross-tenant）。
+- `(a, x, y)` 的 mapped run user 不能读取另一个 tenant/agent 的 resolved skill bundle。
+- `nanoclaw-svc` 和 mapped `ncg-*` user 都可以 read/write 由任一进程创建的 runtime DB files 和 SQLite sidecars。
+- Run process environment 只包含 run config 和 typed `llm:` credentials，例如内部 LLM gateway 的 `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY`，不包含 `channel:` credentials，也不包含其他 tenant 的 data。
 
-### Webhook routing
+### Webhook 路由
 
-- POST `/t1/a1/feishu/event` triggers only `FeishuChannel(t1, a1)`.
-- POST to `/t1/a1/...` does not affect `FeishuChannel(t1, a2)` or `FeishuChannel(t2, a1)`.
-- WebSocket-mode channel events route to the correct (tenant, agent) based on connection identity.
+- POST `/t1/a1/feishu/event` 只触发 `FeishuChannel(t1, a1)`。
+- POST 到 `/t1/a1/...` 不影响 `FeishuChannel(t1, a2)` 或 `FeishuChannel(t2, a1)`。
+- WebSocket-mode channel events 根据 connection identity 路由到正确的 `(tenant, agent)`。
 
-### Channel credential isolation
+### 渠道凭据隔离
 
-- Run process for `(t1, a1, g1)` calls feishu tool → tool worker uses `FeishuChannel(t1, a1)` credentials, never `(t2, a1)` or `(t1, a2)`.
-- Grep on run process memory dump (test-only) finds no `app_secret` strings.
+- `(t1, a1, g1)` 的 run process 调用 feishu tool → tool worker 使用 `FeishuChannel(t1, a1)` credentials，绝不使用 `(t2, a1)` 或 `(t1, a2)`。
+- 对 run process memory dump 做 grep（test-only）找不到 `app_secret` strings。
 
-### Lifecycle
+### 生命周期
 
-- Control plane kills a run → process exits, audit row written, runtime directory preserved.
-- Run process crashes → control plane detects via SIGCHLD and `/proc/<pid>` absence, DB state reconciled.
-- Idle-reap timer fires → idle runs killed via helper.
-- Host restart → control plane reconciles DB-listed active PIDs against `/proc/` plus helper `status`; missing or identity-mismatched PIDs are marked crashed/stale.
-- PID reuse test: a process with the same PID but different `/proc/<pid>/stat` start time or cgroup is never treated as the old run and is never signalled by helper `kill`.
+- 控制平面 kill 一个 run → process 退出，audit row 写入，runtime directory 保留。
+- Run process crash → 控制平面通过 SIGCHLD 和 `/proc/<pid>` absence 检测，并 reconcile DB state。
+- Idle-reap timer 触发 → idle runs 通过 helper 被 kill。
+- Host restart → 控制平面用 `/proc/` 加 helper `status` reconcile DB-listed active PIDs；缺失或 identity mismatch 的 PIDs 标记为 crashed/stale。
+- PID reuse test：同 PID 但 `/proc/<pid>/stat` start time 或 cgroup 不同的进程，绝不会被视为旧 run，也绝不会被 helper `kill` signal。
 
-### Setuid helper
+### Setuid helper 测试
 
-Standalone C test suite for the helper binary:
+Helper binary 的 standalone C test suite：
 
-- `prepare` creates the expected Linux user/group mapping, runtime tree, ACLs, and runtime DB files for a new `(tenant, agent, group)` tuple.
-- `prepare` is idempotent for an existing tuple and rejects any tuple-to-username remap or username collision.
-- Rejects `spawn --uid` not matching `^ncg-`.
-- Rejects `spawn --uid` for users not in `users.db`.
-- Rejects `spawn --runtime-dir` not matching the recorded tuple/user mapping or missing expected ACLs.
-- Rejects `kill --pid` whose real UID is not the expected mapped `ncg-*` user.
-- Rejects `kill` and `status` when PID start time, runtime dir, cgroup, or expected UID does not match the active-run record.
-- Rejects invocations from any UID other than `nanoclaw-svc`.
-- After successful `spawn`, the exec'd process has dropped all capabilities and runs with the requested UID/GID.
+- `prepare` 为新的 `(tenant, agent, group)` tuple 创建预期 Linux user/group mapping、runtime tree、ACLs 和 runtime DB files。
+- `prepare` 对已有 tuple 幂等，并拒绝任何 tuple-to-username remap 或 username collision。
+- 拒绝不匹配 `^ncg-` 的 `spawn --uid`。
+- 拒绝 `users.db` 中不存在 users 的 `spawn --uid`。
+- 拒绝不匹配记录 tuple/user mapping 或缺少预期 ACLs 的 `spawn --runtime-dir`。
+- 拒绝 real UID 不是 expected mapped `ncg-*` user 的 `kill --pid`。
+- 当 PID start time、runtime dir、cgroup 或 expected UID 不匹配 active-run record 时，拒绝 `kill` 和 `status`。
+- 拒绝来自 `nanoclaw-svc` 以外任何 UID 的调用。
+- 成功 `spawn` 后，被 exec 的进程已经丢弃所有 capabilities，并以请求的 UID/GID 运行。
 
-## Future extensions
+## 未来扩展
 
-### Approach A: separate supervisor process
+### 方案 A: 独立 supervisor process
 
-If the control plane grows to the point where privilege separation inside NanoClaw itself is desirable, introduce a long-lived supervisor process that owns user lifecycle and run spawning. Control plane talks to supervisor via Unix socket. This:
+如果控制平面增长到需要在 NanoClaw 内部做 privilege separation 的程度，引入一个长期运行的 supervisor process，拥有 user lifecycle 和 run spawning。控制平面通过 Unix socket 与 supervisor 通信。这会：
 
-- Further shrinks the privilege surface (control plane no longer invokes the helper directly).
-- Allows the supervisor to be the only process needing `nc-priv` group membership.
-- Adds one IPC boundary and one long-lived process to operate.
+- 进一步缩小 privilege surface（控制平面不再直接调用 helper）。
+- 让 supervisor 成为唯一需要 `nc-priv` group membership 的进程。
+- 增加一个 IPC boundary 和一个需要运维的长期进程。
 
-Not part of the initial implementation. Triggered when the control plane binary exceeds a complexity threshold or when audit requirements demand clearer separation between routing logic and privileged operations.
+不属于初始实现。当控制平面 binary 超过复杂度阈值，或 audit requirements 需要更清晰地区分 routing logic 与 privileged operations 时触发。
 
-### Per-run Unix socket credential proxy
+### 每次运行的 Unix socket 凭据 proxy
 
-If NanoClaw ever runs untrusted tenants (e.g., multi-customer SaaS), upgrade credential delivery from env injection to a per-run Unix socket proxy:
+如果 NanoClaw 将来运行 untrusted tenants（例如 multi-customer SaaS），将 credential delivery 从 env injection 升级为 per-run Unix socket proxy：
 
-- Each run gets its own Unix socket at `/var/run/nanoclaw/cred-proxy.<runId>.sock`.
-- Socket file access is granted only to `nanoclaw-svc` and the mapped `ncg-*` user for that run.
-- Kernel-enforced access control: only that run can connect.
-- Anthropic SDK configured with custom HTTP agent targeting the socket.
-- Proxy injects credentials server-side.
+- 每个 run 在 `/var/run/nanoclaw/cred-proxy.<runId>.sock` 获得自己的 Unix socket。
+- Socket file access 只授予 `nanoclaw-svc` 和该 run 对应的 mapped `ncg-*` user。
+- Kernel-enforced access control：只有该 run 可以连接。
+- Anthropic SDK 配置 custom HTTP agent 指向该 socket。
+- Proxy 在 server-side 注入 credentials。
 
-Not needed for current internal deployment but documented as the upgrade path.
+当前内部部署不需要，但作为升级路径记录。
 
-### Skill hot-reload
+### Skill 热加载
 
-Once the basic runtime is stable, add `skills.reload` to the run lifecycle so tenant skill changes can take effect without restarting active runs. Requires provider-specific adapter support.
+基础 runtime 稳定后，在 run lifecycle 中加入 `skills.reload`，让 tenant skill changes 无需重启 active runs 即可生效。需要 provider-specific adapter support。
 
-## Open questions
+## 待定问题
 
-Deferred to implementation planning:
+推迟到实施计划：
 
-- Exact JSON schemas for `tenant.json`, `agent.json`, `channels/<channel>.json`, skill manifests.
-- Whether the per-`(tenant, agent)` host DB stays as SQLite or moves to embedded Postgres for larger multi-tenant query patterns.
-- Resource limit defaults (memoryMb, pids, cpuShares) per agent — likely tenant-overridable.
-- Whether `/var/lib/nanoclaw/users.db` should be SQLite (current proposal) or a simpler append-only format.
-- Cgroup v2 delegation: does the control plane get its own delegated cgroup subtree, or does the helper manage the full `/sys/fs/cgroup/nanoclaw/` tree as root?
+- `tenant.json`、`agent.json`、`channels/<channel>.json`、skill manifests 的精确 JSON schemas。
+- Per-`(tenant, agent)` host DB 是保持 SQLite，还是为更大的 multi-tenant query patterns 迁移到 embedded Postgres。
+- 每个 agent 的 resource limit defaults（memoryMb、pids、cpuShares），很可能允许 tenant override。
+- `/var/lib/nanoclaw/users.db` 应使用 SQLite（当前方案）还是更简单的 append-only format。
+- Cgroup v2 delegation：控制平面是否获得自己的 delegated cgroup subtree，或由 helper 以 root 管理完整 `/sys/fs/cgroup/nanoclaw/` tree。

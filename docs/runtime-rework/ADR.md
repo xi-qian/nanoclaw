@@ -1,294 +1,294 @@
-# Runtime Rework Architecture Decision Record
+# 运行时重构架构决策记录
 
-This is the authoritative decision record for NanoClaw 2.0. The previous record at [`../runtime-rework-archived/ADR.md`](../runtime-rework-archived/ADR.md) is retained for historical reference but is no longer authoritative.
+这是 NanoClaw 2.0 的权威决策记录。此前位于 [`../runtime-rework-archived/ADR.md`](../runtime-rework-archived/ADR.md) 的记录仅作为历史参考保留，不再具有权威性。
 
-Decisions marked **Reversed** or **Deleted** were valid for the V1.x plan and have been superseded. Decisions marked **Revised** retain their original intent with an updated mechanism. New decisions introduced by the 2.0 design carry IDs from ADR-021.
+标记为 **Reversed** 或 **Deleted** 的决策曾适用于 V1.x 计划，但已经被取代。标记为 **Revised** 的决策保留原始意图，但机制已更新。2.0 设计新增的决策从 ADR-021 开始编号。
 
-## ADR-001: Do Tenant and Skill Boundary Before Runtime Isolation
+## ADR-001: 先建立 Tenant 和 Skill 边界，再做 Runtime 隔离
 
-Decision: Split platform code from tenant/agent-service/business skills before implementing the runtime.
+决策：在实现 runtime 之前，先拆分平台代码与 tenant / agent-service / 业务 skills。
 
-Reason:
+理由：
 
-- Tenant is a deployment, configuration, and skill-management layer.
-- Runtime mount and permission policy depends on whether a path is platform code, tenant-managed config, agent-service config, group runtime state, or secret state.
-- Doing runtime first would make permission rules guesswork and cause rework.
+- Tenant 是部署、配置和 skill 管理层。
+- Runtime mount 和权限策略依赖路径类型：平台代码、tenant 管理的配置、agent-service 配置、group runtime state，或 secret state。
+- 先做 runtime 会让权限规则变成猜测，并导致返工。
 
-Status: Accepted. Unchanged from V1.x.
+Status: Accepted. 与 V1.x 保持不变。
 
-## ADR-002: ~~Keep Per-group Docker Runtime Until New Runtime Has Parity~~
+## ADR-002: ~~保持 Per-group Docker Runtime，直到新 Runtime 达到功能等价~~
 
-Original decision: Introduce `RuntimeDriver` and keep `docker-per-group` as default until Version 2.0.
+原决策：引入 `RuntimeDriver`，并在 Version 2.0 前保持 `docker-per-group` 为默认 runtime。
 
-Reason for reversal: The 2.0 design is a clean replacement. Maintaining both `docker-per-group` and `host-direct` runtimes doubles the test surface and complicates every cross-cutting change. Operators validate via the migration dry-run, not via parallel runtimes.
+反转理由：2.0 设计是干净替换。同时维护 `docker-per-group` 和 `host-direct` 两套 runtime 会让测试面翻倍，并让每个跨领域改动都复杂化。Operator 通过迁移 dry-run 验证，而不是通过并行 runtime 验证。
 
-Status: **Reversed 2026-06-16.** No `docker-per-group` fallback is provided. Migration is one-shot.
+Status: **Reversed 2026-06-16.** 不提供 `docker-per-group` fallback。迁移是一次性的。
 
-## ADR-003: Use DB-backed IPC as the New Core IPC
+## ADR-003: 使用 DB-backed IPC 作为新的核心 IPC
 
-Decision: Move core host-agent/group message exchange to SQLite `inbound.db`, `outbound.db`, `state.db`, and `tools.db`.
+决策：将核心 host-agent/group 消息交换迁移到 SQLite `inbound.db`、`outbound.db`、`state.db` 和 `tools.db`。
 
-Reason:
+理由：
 
-- File queues and sentinel files are fragile with warm processes and isolated tasks.
-- SQLite gives durable status, retry, ordering, and audit trails.
+- 文件队列和 sentinel 文件在 warm process 和 isolated task 下很脆弱。
+- SQLite 提供持久状态、重试、排序和审计记录。
 
-Status: Accepted. Unchanged from V1.x. Implementation paths updated to `/var/lib/nanoclaw/runtime/<tenant>/<agent>/<group>/`.
+Status: Accepted. 与 V1.x 保持不变。实现路径更新为 `/var/lib/nanoclaw/runtime/<tenant>/<agent>/<group>/`。
 
-## ADR-004: ~~Preserve Legacy File IPC Temporarily~~
+## ADR-004: ~~临时保留 Legacy File IPC~~
 
-Original decision: Keep old file IPC as a compatibility layer while migrating business tools.
+原决策：迁移业务 tools 时保留旧文件 IPC 作为兼容层。
 
-Reason for deletion: Clean replacement. The migration script moves what can be moved; legacy file IPC directories are backed up but not supported in the new runtime.
+删除理由：干净替换。迁移脚本会迁移可迁移内容；legacy file IPC 目录会被备份，但新 runtime 不支持它们。
 
 Status: **Deleted 2026-06-16.**
 
-## ADR-005': Single Docker Image Is the Deployment Unit; Linux User Is the Isolation Unit
+## ADR-005': 单 Docker Image 是部署单元；Linux User 是隔离单元
 
-Supersedes ADR-005 (one Docker container per agent service, per-group Linux users inside).
+取代 ADR-005（每个 agent 服务一个 Docker container，container 内每个 group 一个 Linux user）。
 
-Decision: Production deploys one NanoClaw Docker image, or one equivalent Kubernetes pod, per NanoClaw instance. The image contains the control plane, helper, and run processes. Each run process runs as a distinct mapped `ncg-*` Linux user for its canonical `(tenant, agent, group)` tuple inside that image. Docker/Kubernetes is the packaging and operations boundary, not one security boundary per tenant, agent, or group.
+决策：生产环境每个 NanoClaw 实例部署一个 NanoClaw Docker image，或一个等价 Kubernetes pod。该 image 包含控制平面、helper 和运行进程。每个运行进程在该 image 内以其规范 `(tenant, agent, group)` 元组对应的独立映射 `ncg-*` Linux user 运行。Docker/Kubernetes 是打包和运维边界，不是每个 tenant、agent 或 group 的安全边界。
 
-Default Docker operational profile: one long-running `nanoclaw` container with `--privileged`, SUID enabled, persistent `/var/lib/nanoclaw`, and writable/delegated cgroup v2 access. Operators may harden that profile only after the helper operations and isolation test suite pass.
+默认 Docker 运维形态：一个长期运行的 `nanoclaw` container，启用 `--privileged`、SUID、持久化 `/var/lib/nanoclaw`，并提供可写或已委派的 cgroup v2 访问。Operator 只有在 helper 操作和隔离测试套件通过后，才可以加固该配置。
 
-Reason:
+理由：
 
-- Docker adds no credential isolation on top of Linux user separation. Different UIDs already give different security domains via process memory isolation, `/proc/<pid>/environ` restrictions, and file permissions.
-- Deployment convenience favours one NanoClaw image serving many tenants and agents over N Docker services.
-- The real protection targets are channel credentials and tenant runtime data — both of which Linux user isolation handles.
+- 在 Linux user 分离之上，Docker 不再额外提供凭据隔离。不同 UID 已经通过进程内存隔离、`/proc/<pid>/environ` 限制和文件权限形成不同安全域。
+- 一个 NanoClaw image 服务多个 tenants 和 agents 的部署便利性优于 N 个 Docker services。
+- 真正需要保护的是渠道凭据和 tenant runtime data，而 Linux user 隔离可以处理这两者。
 
-Tradeoff:
+权衡：
 
-- Weaker than one container per group: no per-group kernel namespace, no per-group network namespace by default.
-- Same kernel-exploit threat surface as Docker (both share the host kernel).
+- 弱于每个 group 一个 container：默认没有 per-group kernel namespace，也没有 per-group network namespace。
+- 与 Docker 具有相同的 kernel exploit 威胁面（两者都共享宿主 kernel）。
 
 Status: Accepted 2026-06-16.
 
-## ADR-006: Isolated Task Uses Same Group User
+## ADR-006: Isolated Task 使用同一个 Group User
 
-Decision: An isolated task runs as the same Linux user as its parent group, but with its own runtime directory, DBs, continuation, and lifecycle.
+决策：isolated task 与其父 group 使用相同 Linux user，但拥有自己的 runtime directory、DB、continuation 和生命周期。
 
-Reason:
+理由：
 
-- Current semantics mean fresh context, not stronger security.
-- The task should access the same files and tools the group can access.
-- Creating a separate user per task would complicate ownership and not match product semantics.
+- 当前语义表示 fresh context，而不是更强的安全边界。
+- task 应该访问与 group 相同的文件和 tools。
+- 每个 task 创建一个独立 user 会让 ownership 复杂化，并且不符合产品语义。
 
-Status: Accepted. Unchanged.
+Status: Accepted. 保持不变。
 
-## ADR-007: Isolated Task Must Not Reuse Live Continuation
+## ADR-007: Isolated Task 不得复用 Live Continuation
 
-Decision: `context_mode: "isolated"` must not read or write the live chat continuation.
+决策：`context_mode: "isolated"` 不得读取或写入 live chat continuation。
 
-Reason:
+理由：
 
-- Current behavior is fresh session/no chat history.
-- Task prompts must be self-contained.
-- Prevents scheduled/background work from polluting live conversation context.
+- 当前行为是 fresh session / no chat history。
+- Task prompt 必须自包含。
+- 防止 scheduled/background work 污染 live conversation context。
 
-Status: Accepted. Unchanged.
+Status: Accepted. 保持不变。
 
-## ADR-008': Control Plane Owns Lifecycle Policy; Privileged Mechanism Encapsulated in SUID Helper
+## ADR-008': 控制平面拥有生命周期策略；特权机制封装在 SUID Helper 中
 
-Revises ADR-008 (supervisor owns group process lifecycle).
+修订 ADR-008（supervisor 拥有 group process lifecycle）。
 
-Decision: The control plane process owns run lifecycle **policy** — when to prepare a runtime, spawn, monitor, reap, kill, and reconcile. Privileged **mechanism** (user/group creation, runtime ACL setup, `setuid`, signal, cgroup) is encapsulated in `nc-setuid-helper`, a SUID root binary invokable only by `nanoclaw-svc`. The control plane holds no Linux capabilities.
+决策：控制平面进程拥有 run lifecycle **policy**，包括何时 prepare runtime、spawn、monitor、reap、kill 和 reconcile。特权 **mechanism**（user/group 创建、runtime ACL 设置、`setuid`、signal、cgroup）封装在 `nc-setuid-helper` 中，这是一个只能由 `nanoclaw-svc` 调用的 SUID root binary。控制平面不持有 Linux capabilities。
 
-Reason:
+理由：
 
-- Two Linux rules shape the split: `waitpid` ignores UID (control plane can reap its child whose UID was changed by the helper), but `kill` requires same-UID or privilege (control plane cannot signal `ncg-*` processes).
-- Keeping the privilege surface in a single small auditable binary is cleaner than running the entire control plane with elevated capabilities.
-- The supervisor-process approach (ADR-008 original, plus V1.x plan) is a future extension, not the initial implementation.
+- 两条 Linux 规则决定了这个拆分：`waitpid` 忽略 UID（控制平面可以 reap 由 helper 改过 UID 的子进程），但 `kill` 要求同 UID 或 privilege（控制平面不能 signal `ncg-*` 进程）。
+- 把特权面限制在一个小型、可审计的 binary 中，比让整个控制平面带 elevated capabilities 更清晰。
+- supervisor-process 方案（原 ADR-008 加 V1.x 计划）是未来扩展，不是初始实现。
 
-Status: Accepted 2026-06-16. The original ADR-008 design is listed under "Future extensions" in the spec.
+Status: Accepted 2026-06-16. 原 ADR-008 设计在 spec 的 “Future extensions” 中列出。
 
-## ADR-009: Provider Differences Stay Behind AgentProvider
+## ADR-009: Provider 差异留在 AgentProvider 后面
 
-Decision: Claude, OpenCode, and future providers must implement `AgentProvider`; scheduler/router must not contain provider-specific branches.
+决策：Claude、OpenCode 和未来 providers 必须实现 `AgentProvider`；scheduler/router 不得包含 provider-specific 分支。
 
-Reason:
+理由：
 
-- Claude Agent SDK and OpenCode have different session, hooks, tool, and event models.
-- Keeping provider differences isolated prevents runtime code from becoming provider-specific.
+- Claude Agent SDK 和 OpenCode 的 session、hooks、tool、event 模型不同。
+- 将 provider 差异隔离起来，可以防止 runtime 代码变成 provider-specific。
 
-Status: Accepted. Unchanged.
+Status: Accepted. 保持不变。
 
-## ADR-010: OpenCode Is Optional Before It Is Default
+## ADR-010: OpenCode 先作为可选项，再考虑默认
 
-Decision: OpenCode provider is added as an option first. Claude remains available.
+决策：OpenCode provider 先作为选项加入。Claude 仍保持可用。
 
-Reason:
+理由：
 
-- OpenCode reduces overhead for simple workloads but is not a drop-in equivalent for Claude Agent SDK.
-- Hooks, resume, and subagent behavior differ.
-- Production deployments need fallback.
+- OpenCode 可以降低简单 workload 的开销，但不是 Claude Agent SDK 的直接等价替代。
+- Hooks、resume 和 subagent 行为不同。
+- 生产部署需要 fallback。
 
-Status: Accepted. Unchanged.
+Status: Accepted. 保持不变。
 
-## ADR-011: Secrets Stay Host-side; Two-tier Credential Threat Model
+## ADR-011: Secrets 保留在 Host 侧；两级凭据威胁模型
 
-Sharpens the original ADR-011 (secrets stay host/supervisor-side).
+细化原 ADR-011（secrets 留在 host/supervisor 侧）。
 
-Decision: Tenant repositories may reference secrets but may not store secret values. Secret refs are typed: `llm:<name>` may be injected into a run environment, while `channel:<name>` may be resolved only inside the control plane. Channel credentials (`app_secret`, bot tokens) live only in `0600` files under `/var/lib/nanoclaw/auth/` owned by `nanoclaw-svc` and in control plane process memory; run processes access channels via tool IPC. LLM credentials may be injected directly via env because they target NanoClaw's internal LLM gateway, not a public provider endpoint.
+决策：Tenant repositories 可以引用 secrets，但不得存储 secret values。Secret refs 有类型：`llm:<name>` 可以注入 run environment，而 `channel:<name>` 只能在控制平面内解析。渠道凭据（`app_secret`、bot tokens）只存在于 `/var/lib/nanoclaw/auth/` 下由 `nanoclaw-svc` 拥有的 `0600` 文件和控制平面进程内存中；run processes 通过 tool IPC 访问渠道。LLM 凭据可以直接通过 env 注入，因为它们指向 NanoClaw 的内部 LLM gateway，而不是公共 provider endpoint。
 
-Reason:
+理由：
 
-- Business skill repositories may be shared or versioned.
-- Channel credentials are real external credentials; leaking them enables tenant impersonation and data exfiltration.
-- LLM credentials target an internal gateway; the agent uses the internal gateway endpoint and an internal credential accepted only inside the internal network. Even if a `ncg-*` process leaks them, they cannot be used against the external LLM provider or from outside the internal network.
+- Business skill repositories 可能被共享或版本化。
+- 渠道凭据是真实外部凭据；泄露后会导致 tenant impersonation 和 data exfiltration。
+- LLM 凭据指向内部 gateway；agent 使用内部 gateway endpoint 和只在内部网络中被接受的内部凭据。即使 `ncg-*` 进程泄露这些凭据，也不能用它们访问外部 LLM provider，也不能从内部网络外使用。
 
-Status: Accepted. Sharpened 2026-06-16 by ADR-024. Sharpened 2026-06-17 to require typed secret refs and canonical `/var/lib/nanoclaw/auth/` storage.
+Status: Accepted. 2026-06-16 由 ADR-024 细化。2026-06-17 进一步要求 typed secret refs 和规范 `/var/lib/nanoclaw/auth/` storage。
 
-## ADR-012: No World-writable Runtime IPC
+## ADR-012: Runtime IPC 不得 World-writable
 
-Decision: Runtime directories must not rely on `0777` directories or `0666` files.
+决策：Runtime directories 不得依赖 `0777` 目录或 `0666` 文件。
 
-Reason:
+理由：
 
-- World-writable IPC defeats Linux user isolation.
-- Per-group ownership plus per-runtime POSIX ACLs for `nanoclaw-svc` are the intended security boundary. A shared runtime group is avoided because it either fails for files created by the wrong owner or risks granting all run users access to all runtime directories.
+- World-writable IPC 会破坏 Linux user 隔离。
+- Per-group ownership 加上给 `nanoclaw-svc` 的 per-runtime POSIX ACL 是预期安全边界。避免 shared runtime group，因为它要么会在错误 owner 创建文件时失败，要么可能把所有 run users 的所有 runtime directories 访问权授给彼此。
 
-Status: Accepted. Sharpened 2026-06-17 to use per-runtime ACLs instead of a shared runtime group.
+Status: Accepted. 2026-06-17 细化为使用 per-runtime ACLs，而不是 shared runtime group。
 
-## ADR-013: Registered Groups Are Not the Same as Active Runs
+## ADR-013: Registered Groups 不等于 Active Runs
 
-Decision: Capacity planning and runtime status must distinguish configured groups from active runs.
+决策：容量规划和 runtime status 必须区分 configured groups 与 active runs。
 
-Reason:
+理由：
 
-- Stopped idle groups should consume no RAM.
-- The new architecture optimizes active light workloads.
-- Scheduling and monitoring need queue/run state, not only group registration state.
+- 停止的 idle groups 不应消耗 RAM。
+- 新架构优化 active light workloads。
+- Scheduling 和 monitoring 需要 queue/run state，而不只是 group registration state。
 
-Status: Accepted. Unchanged.
+Status: Accepted. 保持不变。
 
-## ADR-015: Tenant Skills Enter Runtime as Read-only Agent Inputs
+## ADR-015: Tenant Skills 作为只读 Agent Inputs 进入 Runtime
 
-Decision: Tenant-managed and agent-managed skills are resolved during deployment/config loading and exposed to run processes as read-only inputs through a per-run resolved skill bundle under that run's runtime directory. Run processes can read only the skills selected for their own `(tenant, agent, group, run)` and cannot modify them.
+决策：Tenant-managed 和 agent-managed skills 在部署/配置加载时解析，并通过每次运行的 resolved skill bundle 作为只读输入暴露给 run processes；该 bundle 位于该 run 的 runtime directory 下。Run processes 只能读取为自己的 `(tenant, agent, group, run)` 选择的 skills，且不能修改它们。
 
-Reason:
+理由：
 
-- Tenant is a management layer, not the runtime isolation unit.
-- One control plane can serve multiple groups that share the agent's configured skill set.
-- Group write access to tenant skill repositories would bypass review and make configuration drift hard to audit.
+- Tenant 是管理层，不是 runtime isolation unit。
+- 一个控制平面可以服务多个共享 agent 配置 skill set 的 groups。
+- 允许 group 写 tenant skill repositories 会绕过 review，并使 configuration drift 难以审计。
 
-Status: Accepted. Sharpened 2026-06-17 to require per-run skill bundles instead of world-readable tenant/agent skill paths.
+Status: Accepted. 2026-06-17 细化为要求 per-run skill bundles，而不是 world-readable tenant/agent skill paths。
 
-## ADR-016: Generated Skills Are Group-local Until Promoted
+## ADR-016: Generated Skills 在提升前保持 Group-local
 
-Decision: Skills created or modified by a group at runtime are stored under that group's runtime directory and are not copied into tenant repositories automatically.
+决策：Group 在 runtime 中创建或修改的 skills 存储在该 group 的 runtime directory 下，不会自动复制到 tenant repositories。
 
-Reason:
+理由：
 
-- Runtime-generated content should not mutate deployment source of truth.
-- Promotion to tenant skill should be explicit and reviewable.
-- Group-local generated skills preserve isolation expectations.
+- Runtime-generated content 不应修改部署事实源。
+- 提升为 tenant skill 应该显式且可审查。
+- Group-local generated skills 保持隔离预期。
 
-Status: Accepted. Unchanged.
+Status: Accepted. 保持不变。
 
-## ADR-017: Partitioned Host DBs Remain the Control-plane Source of Truth
+## ADR-017: 分区 Host DBs 仍是控制平面事实源
 
-Decision: Per-run runtime DBs are queues and run-local state. The control-plane host DBs are physically partitioned by `(tenant, agent)` and remain authoritative for chats, message history, scheduled tasks, task run logs, registered groups, router cursors, and legacy session IDs. Inside each per-agent DB, channel-derived state is keyed by `channel_type` because one agent may bind multiple channels.
+决策：Per-run runtime DBs 是队列和 run-local state。控制平面 host DBs 按 `(tenant, agent)` 物理分区，并且仍然是 chats、message history、scheduled tasks、task run logs、registered groups、router cursors 和 legacy session IDs 的权威来源。每个 per-agent DB 内部，channel-derived state 以 `channel_type` 为 key，因为一个 agent 可能绑定多个 channels。
 
-Reason:
+理由：
 
-- The host message loop uses `last_timestamp[channel_type]` and `last_agent_timestamp[channel_type, chat_jid]` to avoid duplicate replies and to retry failed runs.
-- Scheduled tasks, registered groups, sender policy, card actions, and channel metadata are host-level control-plane data, not one-run runtime data.
-- Treating runtime DBs as a second source of truth would create cursor drift and duplicate delivery risks.
+- Host message loop 使用 `last_timestamp[channel_type]` 和 `last_agent_timestamp[channel_type, chat_jid]` 避免重复回复并重试 failed runs。
+- Scheduled tasks、registered groups、sender policy、card actions 和 channel metadata 是 host-level control-plane data，不是单个 run 的 runtime data。
+- 把 runtime DBs 当成第二事实源会造成 cursor drift 和 duplicate delivery 风险。
 
-Status: Accepted. Unchanged.
+Status: Accepted. 保持不变。
 
-## ADR-018: Host-side Authorization Gates Stay Host-side
+## ADR-018: Host-side Authorization Gates 留在 Host-side
 
-Decision: Sender allowlists, trigger rules, main-group privileges, approval allowlists, mount allowlists, group registration rights, and channel credential checks remain enforced by the control plane before work is executed.
+决策：Sender allowlists、trigger rules、main-group privileges、approval allowlists、mount allowlists、group registration rights 和 channel credential checks 继续由控制平面在执行工作前强制执行。
 
-Reason:
+理由：
 
-- Run processes are not trusted to self-report authorization.
-- Feishu and channel credentials are control-plane capabilities.
-- Main/self authorization semantics must survive the tool IPC migration.
+- Run processes 不可信，不能让它们自报 authorization。
+- Feishu 和 channel credentials 是控制平面 capabilities。
+- Main/self authorization 语义必须在 tool IPC 迁移后继续成立。
 
-Status: Accepted. Unchanged.
+Status: Accepted. 保持不变。
 
-## ADR-020: Additional Mount Scope Must Be Explicit
+## ADR-020: Additional Mount Scope 必须显式
 
-Decision: Additional host mounts must declare whether they are agent-wide or group-specific. Group-specific mounts must not be promoted silently to agent-wide mounts.
+决策：Additional host mounts 必须声明自己是 agent-wide 还是 group-specific。Group-specific mounts 不得被静默提升为 agent-wide mounts。
 
-Reason:
+理由：
 
-- One control plane can serve multiple groups; an agent-wide mount becomes visible to every group user unless permissions prevent it.
-- The existing external mount allowlist and non-main read-only policy are part of the security model.
+- 一个控制平面可以服务多个 groups；agent-wide mount 会对该 agent 下的所有 group users 可见，除非权限阻止。
+- 现有 external mount allowlist 和 non-main read-only policy 是安全模型的一部分。
 
-Status: Accepted. Unchanged.
+Status: Accepted. 保持不变。
 
-## ADR-021: Per-(tenant, agent) External Channel Identity
+## ADR-021: 每个 `(tenant, agent)` 有独立外部渠道身份
 
-Decision: Channel registry uses composite key `(tenant_id, agent_id, channel_type)`. For each `agent.json` declaring a channel, the loader constructs a channel instance with that agent's external identity and registers it under the composite key.
+决策：Channel registry 使用复合 key `(tenant_id, agent_id, channel_type)`。对于每个声明 channel 的 `agent.json`，loader 使用该 agent 的外部身份构造 channel instance，并用复合 key 注册。
 
-Reason:
+理由：
 
-- Different agents under the same tenant may have different Feishu apps, Slack workspaces, or Telegram bots.
-- The webhook URL pattern `/<tenant>/<agent>/<channel>/event` requires per-(tenant, agent) granularity to be useful.
-- Singleton accessors (`getFeishuChannel()`) collapse to lookup-by-composite-key.
+- 同一 tenant 下的不同 agents 可能使用不同 Feishu apps、Slack workspaces 或 Telegram bots。
+- Webhook URL pattern `/<tenant>/<agent>/<channel>/event` 需要 per-(tenant, agent) 粒度才有意义。
+- Singleton accessors（`getFeishuChannel()`）收敛为按复合 key lookup。
 
 Status: Accepted 2026-06-16.
 
-## ADR-022: Shared Webhook HTTP Server with Path-based Routing
+## ADR-022: 共享 Webhook HTTP Server，按 Path 路由
 
-Decision: The control plane runs a single HTTP server. Each channel instance registers its URL prefix. Routing is by path: `/<tenant>/<agent>/<channel>/event`.
+决策：控制平面运行单个 HTTP server。每个 channel instance 注册自己的 URL prefix。按 path 路由：`/<tenant>/<agent>/<channel>/event`。
 
-Reason:
+理由：
 
-- Per-instance HTTP servers would require N exposed ports for N tenants — operationally infeasible.
-- WebSocket-mode channels (Feishu WS, Slack Socket Mode) need no HTTP path; their events are routed by connection identity.
-- Webhook-mode channels point their external configuration to the matching path on the single shared server.
-
-Status: Accepted 2026-06-16.
-
-## ADR-023: Privileged Operations Only Through nc-setuid-helper
-
-Decision: All privileged operations (`prepare` for user/runtime setup, `setuid`/`setgid` for run spawning, process signal, cgroup setup) go through `nc-setuid-helper`, a SUID root binary installed at `/usr/lib/nanoclaw/nc-setuid-helper` (mode 4750, owner=root, group=nc-priv). Only the `nanoclaw-svc` user is in `nc-priv`. The helper validates all arguments against an allowlist: UIDs must match a recorded `(tenant, agent, group)` mapping in `users.db`; usernames include a stable tuple hash to prevent sanitisation collisions; runtime dirs must match the recorded mapping and expected ACLs; kill/status requests must match PID, `/proc/<pid>/stat` start time, expected UID, runtime dir, and cgroup to prevent PID-reuse mistakes.
-
-Reason:
-
-- Keeping the privilege surface in a single small auditable binary is cleaner than running the control plane with elevated capabilities.
-- The helper rejects all out-of-scope invocations, so a control plane compromise cannot escalate to arbitrary root.
-- The production Docker image is configured to expose the required SUID, ACL, user/NSS, and cgroup primitives to the helper.
-
-Status: Accepted 2026-06-16. Sharpened 2026-06-17 to add `prepare`, tuple-hashed usernames, runtime ACL validation, and PID start-time/cgroup checks.
-
-## ADR-024: Two-tier Credential Threat Model
-
-Decision: Credentials are categorised and handled by tier:
-
-- **LLM credentials (low risk)**: point at NanoClaw's internal LLM gateway. The agent calls the internal gateway endpoint with an internal credential that is useless against the public provider endpoint and outside the internal network. Delivered via env at spawn time. No proxy, no scoped tokens.
-- **Channel credentials (high risk)**: real external credentials (Feishu `app_secret`, Slack bot tokens, Telegram bot tokens, Discord bot tokens). Stored only in `0600` files under `/var/lib/nanoclaw/auth/` owned by `nanoclaw-svc` and in control plane process memory. Run processes access channels via tool IPC — never see the raw credentials.
-- **Runtime data (high risk)**: chat history, provider continuation, generated skills, downloaded files. Protected by Linux user ownership, `0700` runtime directories, and per-runtime POSIX ACLs for `nanoclaw-svc`.
-
-Reason:
-
-- Treating all credentials as equally sensitive would force a credential proxy for LLM access, adding complexity without security benefit (the internal gateway is the real boundary).
-- Treating all credentials as equally low-risk would expose channel secrets to run processes, creating a real attack surface.
-- The two-tier model focuses protection effort where the threat actually is.
-
-Status: Accepted 2026-06-16. Sharpened 2026-06-17 to clarify that LLM credentials are internal-gateway credentials and to require typed refs.
-
-## ADR-025: Channel Registry Uses Composite Key; Singleton Accessors Removed
-
-Decision: All `getXxxChannel()` singleton accessors are removed. Channel lookup goes through `getChannel(tenantId, agentId, channelType)`. The registry is a `Map<compositeKey, ChannelInstance>`.
-
-Reason:
-
-- Singleton accessors encode the assumption of one channel per type, which breaks under multi-tenant.
-- Composite-key lookup makes tenant routing explicit at every call site, surfacing mistakes at compile time rather than runtime.
+- Per-instance HTTP servers 会要求为 N 个 tenants 暴露 N 个 ports，运维上不可行。
+- WebSocket-mode channels（Feishu WS、Slack Socket Mode）不需要 HTTP path；它们的 events 按 connection identity 路由。
+- Webhook-mode channels 把外部配置指向单个共享 server 上的对应 path。
 
 Status: Accepted 2026-06-16.
 
-## Future ADRs
+## ADR-023: 特权操作只能通过 nc-setuid-helper
 
-Decisions deferred to implementation:
+决策：所有特权操作（用于 user/runtime setup 的 `prepare`、用于 run spawning 的 `setuid`/`setgid`、process signal、cgroup setup）都通过 `nc-setuid-helper`，这是一个安装在 `/usr/lib/nanoclaw/nc-setuid-helper` 的 SUID root binary（mode 4750，owner=root，group=nc-priv）。只有 `nanoclaw-svc` user 在 `nc-priv` 中。Helper 根据 allowlist 校验所有参数：UID 必须匹配 `users.db` 中记录的 `(tenant, agent, group)` mapping；username 包含稳定 tuple hash 以防 sanitisation collisions；runtime dirs 必须匹配记录的 mapping 和预期 ACL；kill/status requests 必须匹配 PID、`/proc/<pid>/stat` start time、expected UID、runtime dir 和 cgroup，以防 PID reuse 错误。
 
-- Whether the per-`(tenant, agent)` host DB stays SQLite or moves to embedded Postgres for larger multi-tenant query patterns.
-- Cgroup v2 delegation: whether the control plane gets its own delegated cgroup subtree or the helper manages the full `/sys/fs/cgroup/nanoclaw/` tree as root.
-- Per-(tenant, agent) resource limit defaults.
-- Whether to introduce a separate supervisor process (ADR-008 original) as the codebase grows.
+理由：
+
+- 把特权面限制在一个小型、可审计的 binary 中，比让控制平面带 elevated capabilities 更清晰。
+- Helper 拒绝所有越界调用，因此控制平面被攻破也不能升级到 arbitrary root。
+- 生产 Docker image 会配置 helper 需要的 SUID、ACL、user/NSS 和 cgroup primitives。
+
+Status: Accepted 2026-06-16. 2026-06-17 细化为增加 `prepare`、tuple-hashed usernames、runtime ACL validation 和 PID start-time/cgroup checks。
+
+## ADR-024: 两级凭据威胁模型
+
+决策：凭据按级别分类和处理：
+
+- **LLM credentials (low risk)**：指向 NanoClaw 的内部 LLM gateway。Agent 使用内部 credential 调用内部 gateway endpoint；该 credential 对公共 provider endpoint 无效，在内部网络之外也不可用。Spawn 时通过 env 交付。不使用 proxy，也不使用 scoped tokens。
+- **Channel credentials (high risk)**：真实外部凭据（Feishu `app_secret`、Slack bot tokens、Telegram bot tokens、Discord bot tokens）。只存放在 `/var/lib/nanoclaw/auth/` 下由 `nanoclaw-svc` 拥有的 `0600` 文件和控制平面进程内存中。Run processes 通过 tool IPC 访问 channels，永远看不到原始凭据。
+- **Runtime data (high risk)**：聊天历史、provider continuation、生成的 skills、下载的 files。由 Linux user ownership、`0700` runtime directories 和给 `nanoclaw-svc` 的 per-runtime POSIX ACL 保护。
+
+理由：
+
+- 把所有凭据都视为同等敏感，会迫使 LLM access 使用 credential proxy，在没有安全收益的情况下增加复杂度（内部 gateway 才是真正边界）。
+- 把所有凭据都视为同等低风险，会把 channel secrets 暴露给 run processes，形成真实攻击面。
+- 两级模型把保护工作集中在真正存在威胁的位置。
+
+Status: Accepted 2026-06-16. 2026-06-17 细化为明确 LLM credentials 是 internal-gateway credentials，并要求 typed refs。
+
+## ADR-025: Channel Registry 使用复合 Key；移除 Singleton Accessors
+
+决策：移除所有 `getXxxChannel()` singleton accessors。Channel lookup 统一走 `getChannel(tenantId, agentId, channelType)`。Registry 是一个 `Map<compositeKey, ChannelInstance>`。
+
+理由：
+
+- Singleton accessors 编码了每种 channel 只有一个实例的假设，这在 multi-tenant 下会失效。
+- 复合 key lookup 让 tenant routing 在每个 call site 都显式化，使错误在 compile time 暴露，而不是 runtime 暴露。
+
+Status: Accepted 2026-06-16.
+
+## 未来 ADR
+
+推迟到实现阶段的决策：
+
+- Per-`(tenant, agent)` host DB 是继续使用 SQLite，还是为了更大的 multi-tenant query patterns 迁移到 embedded Postgres。
+- Cgroup v2 delegation：控制平面是否获得自己的 delegated cgroup subtree，或由 helper 以 root 管理完整 `/sys/fs/cgroup/nanoclaw/` tree。
+- Per-(tenant, agent) resource limit defaults。
+- 随着代码库增长，是否引入独立 supervisor process（原 ADR-008）。

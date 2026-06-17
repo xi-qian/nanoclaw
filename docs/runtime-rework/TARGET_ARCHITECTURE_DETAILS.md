@@ -1,10 +1,10 @@
-# Target Architecture Details
+# 目标架构细节
 
-This document expands the NanoClaw 2.0 target architecture. It is the reference for how the runtime is wired, how messages move through the system, and how tenant configuration, channels, and skills are deployed and loaded.
+本文展开 NanoClaw 2.0 目标架构，作为 runtime 如何接线、消息如何流经系统，以及 tenant configuration、channels、skills 如何部署和加载的参考。
 
-For the design rationale behind these decisions, see [`../superpowers/specs/2026-06-16-multi-tenant-host-direct-isolation-design.md`](../superpowers/specs/2026-06-16-multi-tenant-host-direct-isolation-design.md). For individual decisions, see [ADR.md](./ADR.md).
+这些决策背后的设计理由见 [`../superpowers/specs/2026-06-16-multi-tenant-host-direct-isolation-design.md`](../superpowers/specs/2026-06-16-multi-tenant-host-direct-isolation-design.md)。单项决策见 [ADR.md](./ADR.md)。
 
-## Architecture Overview
+## 架构概览
 
 ```mermaid
 flowchart TB
@@ -37,28 +37,28 @@ flowchart TB
   Helper -->|exec as ncg-...| Run
 ```
 
-The overview collapses to a vertical spine: control plane → helper → run processes. Auxiliary planes (channel connections, tool workers, scheduler) live alongside the control plane.
+概览可以简化为一条纵向主线：控制平面 → helper → 运行进程。辅助平面（channel connections、tool workers、scheduler）与控制平面并列。
 
-## Component Responsibilities
+## 组件职责
 
-### Control plane process
+### 控制平面进程
 
-The control plane runs as `uid=nanoclaw-svc` with no Linux capabilities. It:
+控制平面以 `uid=nanoclaw-svc` 运行，不持有 Linux capabilities。它负责：
 
-- Receives channel events via per-(tenant, agent) channel instances.
-- Receives inbound webhooks via the shared HTTP server.
-- Stores authoritative message history in per-`(tenant, agent)` host DBs.
-- Applies sender allowlists, trigger rules, card-action routing, main-group privileges, approval allowlists, mount allowlists.
-- Owns `registered_groups`, task state, router cursors, channel metadata.
-- Loads tenant and agent config from `NANOCLAW_TENANTS_DIR`, resolves skill manifests.
-- Spawns, monitors, reaps, and kills run processes via `nc-setuid-helper`.
-- Runs host-side tool workers for channel, Feishu, approval, file, and task operations.
-- Holds provider and channel credentials in memory; reads them from `0600` files at startup.
-- Exposes a reporter/local API for monitoring.
+- 通过 per-(tenant, agent) channel instances 接收 channel events。
+- 通过共享 HTTP server 接收 inbound webhooks。
+- 在 per-`(tenant, agent)` host DBs 中存储权威 message history。
+- 执行 sender allowlists、trigger rules、card-action routing、main-group privileges、approval allowlists、mount allowlists。
+- 拥有 `registered_groups`、task state、router cursors、channel metadata。
+- 从 `NANOCLAW_TENANTS_DIR` 加载 tenant 和 agent config，并解析 skill manifests。
+- 通过 `nc-setuid-helper` spawn、monitor、reap 和 kill run processes。
+- 运行 host-side tool workers，用于 channel、Feishu、approval、file 和 task 操作。
+- 在内存中持有 provider 和 channel credentials；启动时从 `0600` 文件读取。
+- 暴露 reporter/local API 用于监控。
 
-### nc-setuid-helper
+### Helper：nc-setuid-helper
 
-The helper is a SUID root C binary installed at `/usr/lib/nanoclaw/nc-setuid-helper` (mode 4750, owner=root, group=nc-priv). Only `nanoclaw-svc` (the sole member of `nc-priv`) can invoke it. It exposes five operations:
+Helper 是安装在 `/usr/lib/nanoclaw/nc-setuid-helper` 的 SUID root C binary（mode 4750，owner=root，group=nc-priv）。只有 `nanoclaw-svc`（`nc-priv` 唯一成员）可以调用它。它暴露五个操作：
 
 ```
 nc-setuid-helper prepare --tenant=<t> --agent=<a> --group=<g> --runtime-dir=<dir>
@@ -68,43 +68,43 @@ nc-setuid-helper cgroup --path=<path> --mem=<mb> --pids=<n> --cpu=<shares>
 nc-setuid-helper status --pid=<p> --uid=<u> --runtime-dir=<dir> --cgroup=<path> --start-time=<ticks>
 ```
 
-Validation:
+校验：
 
-- `prepare` validates `(tenant, agent, group)`, derives the collision-resistant Linux username, creates the user/group if missing, creates or repairs the runtime tree, applies ACLs and modes, pre-creates runtime DB files, and records the mapping in `/var/lib/nanoclaw/users.db` (owned by root, mode 0600).
-- `--uid` and `--gid` for `spawn` must match `^ncg-` and correspond to the exact tuple mapping recorded by `prepare`.
-- `--runtime-dir` must live under `/var/lib/nanoclaw/runtime/`, match the recorded mapping, and have expected owner/mode/ACLs.
-- `kill` and `status` must match PID, `/proc/<pid>/stat` start time, expected real UID, runtime dir, and cgroup path. PID reuse is treated as a stale active-run record, not as a live run.
-- `cgroup` paths must live under `/sys/fs/cgroup/nanoclaw/`.
+- `prepare` 校验 `(tenant, agent, group)`，推导抗碰撞 Linux username，缺失时创建 user/group，创建或修复 runtime tree，应用 ACLs 和 modes，预创建 runtime DB files，并在 `/var/lib/nanoclaw/users.db`（root 拥有，mode 0600）中记录 mapping。
+- `spawn` 的 `--uid` 和 `--gid` 必须匹配 `^ncg-`，并对应 `prepare` 记录的精确 tuple mapping。
+- `--runtime-dir` 必须位于 `/var/lib/nanoclaw/runtime/` 下，匹配记录的 mapping，并具有预期 owner/mode/ACLs。
+- `kill` 和 `status` 必须匹配 PID、`/proc/<pid>/stat` start time、expected real UID、runtime dir 和 cgroup path。PID reuse 被视为 stale active-run record，而不是 live run。
+- `cgroup` paths 必须位于 `/sys/fs/cgroup/nanoclaw/` 下。
 
-Any violation: the helper exits non-zero without performing the operation. The control plane sees the failure and reports it.
+任何违规都会让 helper 以非零状态退出，且不执行操作。控制平面会看到失败并报告。
 
-After `spawn`, the exec'd process has dropped all capabilities and runs with the requested UID/GID.
+`spawn` 之后，被 exec 的进程已经丢弃全部 capabilities，并以请求的 UID/GID 运行。
 
-### Run process
+### 运行进程
 
-Each run process is the agent-runner invoked with a specific runtime directory. It:
+每个 run process 都是以特定 runtime directory 调用的 agent-runner。它负责：
 
-- Runs as the mapped `ncg-*` Linux user for `(tenant, agent, group)`.
-- Reads inbound work from its `inbound.db`.
-- Invokes the configured provider with the resolved skill manifest and group-generated skills.
-- Writes outbound responses and tool requests to its DBs.
-- Exits on completion (isolated task) or after idle timeout (live runner).
+- 以 `(tenant, agent, group)` 对应的 mapped `ncg-*` Linux user 运行。
+- 从自己的 `inbound.db` 读取 inbound work。
+- 使用 resolved skill manifest 和 group-generated skills 调用已配置 provider。
+- 向自己的 DBs 写 outbound responses 和 tool requests。
+- 在完成后退出（isolated task）或在 idle timeout 后退出（live runner）。
 
-## Privilege and Access Model
+## 权限和访问模型
 
-### Docker image deployment settings
+### 部署设置：Docker image
 
-The reference production deployment is a single NanoClaw Docker image. Run one container that contains the control plane, helper, and run processes. Configure the container as follows:
+参考生产部署是单个 NanoClaw Docker image。运行一个包含控制平面、helper 和 run processes 的容器。容器配置如下：
 
-- Start from the `nanoclaw` image as a long-running service container, not one container per tenant, agent, or group.
-- Use a privilege profile that allows the helper to do its narrow job. The default operational profile is `--privileged`; a hardened profile must still allow SUID execution, `setuid/setgid`, signalling mapped `ncg-*` processes, POSIX ACL changes, and cgroup v2 writes.
-- Do not enable `no_new_privileges`; `/usr/lib/nanoclaw/nc-setuid-helper` must be able to execute as SUID root.
-- Mount persistent data with ACL support, for example `-v /srv/nanoclaw:/var/lib/nanoclaw`. The backing filesystem must support POSIX ACLs.
-- Mount a writable cgroup v2 view or delegate `/sys/fs/cgroup/nanoclaw/` so the helper can create per-run cgroups and set memory/pid/cpu limits.
-- Run with container-local user/group management enabled. The image must include the local NSS/user/group mechanism used by `prepare` to create mapped `ncg-*` users.
-- Keep tenant repositories and auth storage as separate mounts when operators want independent backup and rotation policies.
+- 从 `nanoclaw` image 启动为长期运行的 service container，不是每个 tenant、agent 或 group 一个 container。
+- 使用能让 helper 完成窄职责的 privilege profile。默认运维形态是 `--privileged`；hardened profile 仍必须允许 SUID execution、`setuid/setgid`、signal mapped `ncg-*` processes、POSIX ACL changes 和 cgroup v2 writes。
+- 不要启用 `no_new_privileges`；`/usr/lib/nanoclaw/nc-setuid-helper` 必须能以 SUID root 执行。
+- 挂载支持 ACL 的持久数据，例如 `-v /srv/nanoclaw:/var/lib/nanoclaw`。底层 filesystem 必须支持 POSIX ACLs。
+- 挂载可写 cgroup v2 view，或委派 `/sys/fs/cgroup/nanoclaw/`，让 helper 可以创建 per-run cgroups 并设置 memory/pid/cpu limits。
+- 启用 container-local user/group management。Image 必须包含 `prepare` 用来创建 mapped `ncg-*` users 的 local NSS/user/group 机制。
+- 当 operators 需要独立 backup 和 rotation policies 时，将 tenant repositories 和 auth storage 保持为独立 mounts。
 
-Baseline Docker run shape:
+基础 Docker run 形态：
 
 ```bash
 docker run -d --name nanoclaw \
@@ -117,11 +117,11 @@ docker run -d --name nanoclaw \
   nanoclaw:<version>
 ```
 
-Operators may replace `--privileged` with a tighter runtime profile after proving the helper can still perform `prepare`, `spawn`, `kill`, and `cgroup` operations and the isolation test suite passes.
+Operator 只有在证明 helper 仍能执行 `prepare`、`spawn`、`kill`、`cgroup` 操作，且 isolation test suite 通过后，才可以用更收紧的 runtime profile 替换 `--privileged`。
 
-Kubernetes deployment follows the same shape: one pod per NanoClaw instance, with equivalent `securityContext`, persistent volume, POSIX ACL support, and writable/delegated cgroup v2 subtree. The pod is still packaging only; Linux UID separation inside the pod remains the isolation boundary.
+在 Kubernetes 中，部署遵循相同形态：每个 NanoClaw 实例一个 pod，带等价 `securityContext`、persistent volume、POSIX ACL support 和 writable/delegated cgroup v2 subtree。Pod 仍只是打包形态；pod 内部的 Linux UID separation 仍是隔离边界。
 
-### Process ownership
+### 进程 ownership
 
 | Process | UID | GID | Supplementary | Capabilities |
 |---------|-----|-----|---------------|--------------|
@@ -129,59 +129,59 @@ Kubernetes deployment follows the same shape: one pod per NanoClaw instance, wit
 | nc-setuid-helper (during execution) | root (via SUID) | root | — | CAP_SETUID, CAP_SETGID, CAP_KILL, CAP_SYS_ADMIN (for cgroup writes); dropped before exec |
 | Run process | mapped `ncg-*` user for `(t, a, g)` | matching mapped `ncg-*` group | none | none |
 
-### Filesystem access
+### 文件系统访问
 
-- `/var/lib/nanoclaw/` — owned by `nanoclaw-svc`, mode 0755.
-- `/var/lib/nanoclaw/users.db` — owned by root, mode 0600. Only the helper accesses this.
-- `/var/lib/nanoclaw/auth/tenants/<t>/<a>/llm/credentials.json` — internal gateway credential, owned by `nanoclaw-svc`, mode 0600.
-- `/var/lib/nanoclaw/auth/tenants/<t>/<a>/<channel>/credentials.json` — external channel credential, owned by `nanoclaw-svc`, mode 0600.
-- `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/` — owned by the mapped `ncg-*` user/group, mode 0700, with POSIX ACLs granting `nanoclaw-svc` access.
-- `/opt/nanoclaw/agent-runner/` — owned by `nanoclaw-svc`, mode 0755. World-readable (run processes read platform code).
-- `/opt/nanoclaw/skills/builtin/` — owned by `nanoclaw-svc`, mode 0755. World-readable only for non-tenant platform builtin skills.
-- Tenant and agent skills are staged into per-run read-only bundles under the run's runtime directory; they are not exposed through a world-readable `/opt` path.
+- `/var/lib/nanoclaw/`：owned by `nanoclaw-svc`，mode 0755。
+- `/var/lib/nanoclaw/users.db`：owned by root，mode 0600。只有 helper 访问。
+- `/var/lib/nanoclaw/auth/tenants/<t>/<a>/llm/credentials.json`：internal gateway credential，owned by `nanoclaw-svc`，mode 0600。
+- `/var/lib/nanoclaw/auth/tenants/<t>/<a>/<channel>/credentials.json`：external channel credential，owned by `nanoclaw-svc`，mode 0600。
+- `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/`：owned by mapped `ncg-*` user/group，mode 0700，并通过 POSIX ACLs 授予 `nanoclaw-svc` 访问权。
+- `/opt/nanoclaw/agent-runner/`：owned by `nanoclaw-svc`，mode 0755。World-readable（run processes 读取 platform code）。
+- `/opt/nanoclaw/skills/builtin/`：owned by `nanoclaw-svc`，mode 0755。只对非 tenant 的 platform builtin skills 全局可读。
+- Tenant 和 agent skills 被 staging 到 run 的 runtime directory 下的 per-run read-only bundles；它们不通过 world-readable `/opt` path 暴露。
 
-### Runtime directory ACLs
+### 运行时目录 ACLs
 
-`nc-setuid-helper prepare` installs POSIX ACLs on every runtime directory:
+`nc-setuid-helper prepare` 会在每个 runtime directory 上安装 POSIX ACLs：
 
-- Owner (the mapped `ncg-*` user) gets rwx.
-- `nanoclaw-svc` gets rwx via an explicit user ACL.
-- Default ACLs grant both identities access to newly created runtime DB files and SQLite sidecars.
-- Other `ncg-*` users have no ACL entry and no permission bits.
+- Owner（mapped `ncg-*` user）获得 rwx。
+- `nanoclaw-svc` 通过显式 user ACL 获得 rwx。
+- Default ACLs 授予两个身份访问新创建 runtime DB files 和 SQLite sidecars 的权限。
+- 其他 `ncg-*` users 没有 ACL entry，也没有 permission bits。
 
-This gives the control plane transparent access to every runtime dir without elevating through the helper, while keeping `ncg-*` users fully isolated from each other.
+这样控制平面无需通过 helper 提权即可透明访问每个 runtime dir，同时保持 `ncg-*` users 彼此完全隔离。
 
-## User Model
+## 用户模型
 
-### Naming
+### 命名
 
-Conceptual Linux user identity: `ncg-<tenant>-<agent>-<group>`.
+概念 Linux user identity：`ncg-<tenant>-<agent>-<group>`。
 
-Actual Linux username format: `ncg-<tenant8>-<agent8>-<hash10>`.
+实际 Linux username 格式：`ncg-<tenant8>-<agent8>-<hash10>`。
 
-- Tenant and agent IDs are lowercased, validated at tenant-config load time, and truncated only for the username prefix.
-- `<hash10>` is derived from the canonical `(tenant, agent, group)` tuple before sanitisation.
-- `/var/lib/nanoclaw/users.db` stores the authoritative tuple-to-uid/gid/username mapping.
-- The helper rejects tuple remaps and username collisions.
+- Tenant 和 agent IDs 在 tenant-config load time 转为小写并校验，只在 username prefix 中截断。
+- `<hash10>` 在 sanitisation 之前从规范 `(tenant, agent, group)` tuple 推导。
+- `/var/lib/nanoclaw/users.db` 存储权威 tuple-to-uid/gid/username mapping。
+- Helper 拒绝 tuple remaps 和 username collisions。
 
-### Lifecycle
+### 生命周期
 
-Users and runtime directories are prepared lazily by `nc-setuid-helper prepare` before the first run for a given (tenant, agent, group) tuple, and **never deleted automatically**. Idle runs stop the process but keep the user and runtime directory on disk so the next message has a warm path. A separate `nanoclaw-user-gc` admin command can prune users for tenants removed from config; this is operator-driven.
+Users 和 runtime directories 在给定 `(tenant, agent, group)` tuple 的第一次 run 前，由 `nc-setuid-helper prepare` 懒创建，并且**不会自动删除**。Idle runs 会停止进程，但保留 user 和 runtime directory 在磁盘上，让下一条消息走 warm path。独立的 `nanoclaw-user-gc` admin command 可以清理已从 config 中移除的 tenants 对应 users；该动作由 operator 驱动。
 
-State file `/var/lib/nanoclaw/users.db` (SQLite, root:root 0600) tracks every user the helper has created.
+State file `/var/lib/nanoclaw/users.db`（SQLite，root:root 0600）跟踪 helper 创建过的每个 user。
 
-## Runtime Units and Data Ownership
+## 运行时单元和数据所有权
 
 | Unit | Definition |
 |------|------------|
-| Tenant | Deployment, configuration, and skill-management layer. May own multiple agents. Not a runtime isolation unit. |
-| Agent service | One configured (provider, model, instructions, skills, channels, limits) tuple. May own multiple groups. |
-| Group | One mapped `ncg-*` Linux user inside the host. One live runtime directory. Zero or more isolated task runtime directories. Group-local generated skills and memory. |
-| Run | One live or isolated process lifecycle. One set of runtime DBs. One provider continuation namespace. |
+| Tenant | 部署、配置和 skill 管理层。可以拥有多个 agents。不是 runtime isolation unit。 |
+| Agent service | 一个已配置的 (provider, model, instructions, skills, channels, limits) tuple。可以拥有多个 groups。 |
+| Group | Host 内一个 mapped `ncg-*` Linux user。一个 live runtime directory。零个或多个 isolated task runtime directories。Group-local generated skills 和 memory。 |
+| Run | 一个 live 或 isolated process lifecycle。一组 runtime DBs。一个 provider continuation namespace。 |
 
-## Runtime Directory Layout
+## 运行时目录布局
 
-Host path:
+宿主侧路径：
 
 ```text
 /var/lib/nanoclaw/
@@ -214,25 +214,25 @@ Host path:
       runs/<runId>.log
 ```
 
-Run process view (cwd and home):
+运行进程视图（cwd 和 home）：
 
-- `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/{live|runs/<runId>}/` — read/write own DBs, files, generated skills.
-- `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/{live|runs/<runId>}/skills/resolved/<revision>/` — read-only resolved builtin, tenant, and agent skill bundle for this run.
-- `/opt/nanoclaw/agent-runner/` — read-only platform code.
+- `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/{live|runs/<runId>}/`：read/write 自己的 DBs、files、generated skills。
+- `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/{live|runs/<runId>}/skills/resolved/<revision>/`：此 run 的只读 resolved builtin、tenant 和 agent skill bundle。
+- `/opt/nanoclaw/agent-runner/`：read-only platform code。
 
-Cannot see:
+不可见：
 
-- Other tenants/agents/groups runtime directories.
-- `auth/` and `users.db`.
-- Tenant repo source files and other tenants' resolved skill bundles (loaded only into control plane memory; run process gets only its resolved skill bundle and manifest under its own runtime dir).
+- 其他 tenants/agents/groups 的 runtime directories。
+- `auth/` 和 `users.db`。
+- Tenant repo source files 和其他 tenants 的 resolved skill bundles（只加载到控制平面内存；run process 只获得自己 runtime dir 下的 resolved skill bundle 和 manifest）。
 
-## Tenant Configuration
+## 租户配置
 
-### Source
+### 来源
 
-All tenant and agent configuration is loaded from a tenant repository on startup via `NANOCLAW_TENANTS_DIR`. The loader validates schemas, resolves skill references, and produces in-memory `RegisteredTenant` / `RegisteredAgent` objects.
+所有 tenant 和 agent configuration 都在启动时通过 `NANOCLAW_TENANTS_DIR` 从 tenant repository 加载。Loader 校验 schemas，解析 skill references，并生成内存中的 `RegisteredTenant` / `RegisteredAgent` objects。
 
-### Layout
+### 布局
 
 ```text
 nanoclaw-tenants/
@@ -293,23 +293,23 @@ nanoclaw-tenants/
 }
 ```
 
-The canonical auth root is `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/`. The repo carries only typed references:
+规范 auth root 是 `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/`。Repo 只携带 typed references：
 
-- `llm:<name>` may be resolved into the run environment because it targets the internal LLM gateway.
-- `channel:<name>` may be resolved only inside the control plane.
-- Unknown or untyped refs fail config validation.
+- `llm:<name>` 可以解析到 run environment，因为它指向内部 LLM gateway。
+- `channel:<name>` 只能在控制平面内解析。
+- 未知或无类型 refs 会导致 config validation 失败。
 
-Channel secret values live in `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/feishu/credentials.json` (0600, owner=nanoclaw-svc).
+Channel secret values 位于 `/var/lib/nanoclaw/auth/tenants/<tenant>/<agent>/feishu/credentials.json`（0600，owner=nanoclaw-svc）。
 
-## Channel Registry and Webhook Routing
+## 渠道注册表和 Webhook 路由
 
-### Registry key
+### 注册表 key
 
-Channel registry uses composite key `(tenant_id, agent_id, channel_type)`. For each `agent.json` that declares a channel, the loader constructs a channel instance with that agent's external identity and registers it. Lookup goes through `getChannel(tenantId, agentId, channelType)`.
+Channel registry 使用复合 key `(tenant_id, agent_id, channel_type)`。对于每个声明 channel 的 `agent.json`，loader 使用该 agent 的外部身份构造 channel instance 并注册。Lookup 通过 `getChannel(tenantId, agentId, channelType)`。
 
-### Inbound webhook server
+### 入站 webhook server
 
-Control plane runs **one** HTTP server. Each channel instance registers its URL prefix:
+控制平面运行**一个** HTTP server。每个 channel instance 注册自己的 URL prefix：
 
 ```text
 POST /<tenant>/<agent>/feishu/event       → FeishuChannel(tenant, agent).handleWebhook
@@ -317,13 +317,13 @@ POST /<tenant>/<agent>/slack/event        → SlackChannel(tenant, agent).handle
 GET  /<tenant>/<agent>/<channel>/verify
 ```
 
-For channels using outbound connections (Feishu WebSocket mode, Slack Socket Mode, Telegram long-poll), each channel instance owns its connection. NanoClaw identifies the source tenant/agent by which connection the event arrived on.
+对于使用 outbound connections 的 channels（Feishu WebSocket mode、Slack Socket Mode、Telegram long-poll），每个 channel instance 拥有自己的 connection。NanoClaw 通过 event 到达的 connection identity 识别源 tenant/agent。
 
-### Channel client inheritance
+### 渠道 client 继承
 
-`FeishuClient` (and equivalents) are constructed per-instance with their own credentials and are state-safe for multiple instances in one process. No module-level mutable state.
+`FeishuClient`（及等价实现）按实例构造，拥有自己的 credentials，并且在一个进程内对多个 instances 状态安全。不得有 module-level mutable state。
 
-## Normal Message Processing Flow
+## 普通消息处理流程
 
 ```mermaid
 sequenceDiagram
@@ -368,34 +368,34 @@ sequenceDiagram
   end
 ```
 
-Key rules:
+关键规则：
 
-- The per-`(tenant, agent)` host DB remains authoritative for source message history and cursors.
-- `channel_type` is mandatory in chat, message, registered group, and router cursor keys inside each per-agent DB.
-- Runtime inbound rows carry source message IDs for idempotent retry.
-- If a run fails before user-visible output is delivered, the host rolls back `last_agent_timestamp[channelType, chat_jid]`.
-- If output was delivered and a later provider error happens, the host does not roll back the cursor.
-- Active follow-up messages are written as new inbound rows.
+- Per-`(tenant, agent)` host DB 仍然是 source message history 和 cursors 的权威来源。
+- `channel_type` 在每个 per-agent DB 内的 chat、message、registered group 和 router cursor keys 中都是必需项。
+- Runtime inbound rows 携带 source message IDs，用于幂等重试。
+- 如果 run 在交付用户可见输出前失败，host 回滚 `last_agent_timestamp[channelType, chat_jid]`。
+- 如果已经交付输出，之后发生 provider error，host 不回滚 cursor。
+- Active follow-up messages 会作为新的 inbound rows 写入。
 
-## Scheduled Task Flow
+## 定时任务流程
 
-Group-context scheduled task:
+Group-context 定时任务：
 
-1. Scheduler reads due tasks from the per-`(tenant, agent)` host DB.
-2. Host formats the task as a synthetic inbound message for the target group.
-3. Host uses the same live runtime path as normal messages.
-4. The task can use existing live conversation continuation.
-5. Task result is delivered through the host outbound poller.
+1. Scheduler 从 per-`(tenant, agent)` host DB 读取 due tasks。
+2. Host 把 task 格式化为目标 group 的 synthetic inbound message。
+3. Host 使用与普通消息相同的 live runtime path。
+4. Task 可以使用现有 live conversation continuation。
+5. Task result 通过 host outbound poller 交付。
 
-Isolated scheduled task:
+Isolated 定时任务：
 
-1. Scheduler reads due task from the per-`(tenant, agent)` host DB.
-2. Host creates `runs/<runId>/` under the group runtime directory.
-3. Host writes the task prompt to that run's `inbound.db`.
-4. Helper starts an `isolated-task` runner as the same group Linux user.
-5. Runner does not read live conversation history or live continuation.
-6. Runner exits after result or error.
-7. Host records `task_run_logs` and updates `scheduled_tasks`.
+1. Scheduler 从 per-`(tenant, agent)` host DB 读取 due task。
+2. Host 在 group runtime directory 下创建 `runs/<runId>/`。
+3. Host 将 task prompt 写入该 run 的 `inbound.db`。
+4. Helper 以相同 group Linux user 启动 `isolated-task` runner。
+5. Runner 不读取 live conversation history 或 live continuation。
+6. Runner 在 result 或 error 后退出。
+7. Host 记录 `task_run_logs` 并更新 `scheduled_tasks`。
 
 ```mermaid
 flowchart LR
@@ -411,9 +411,9 @@ flowchart LR
   Delivery --> Logs[("task_run_logs")]
 ```
 
-## Tool Request Flow
+## Tool request 流程
 
-Tools are invoked by provider-visible MCP tools, but host capabilities remain host-side.
+Tools 由 provider-visible MCP tools 调用，但 host capabilities 保持在 host-side。
 
 ```mermaid
 sequenceDiagram
@@ -441,11 +441,11 @@ sequenceDiagram
   Mcp-->>Provider: tool response
 ```
 
-Tool workers validate the source runtime identity rather than trusting group IDs inside the request payload. The worker uses `getChannel(tenantId, agentId, channelType)` to pick the correct channel instance. File tools return runtime file IDs or container paths under the run directory, not host paths.
+Tool workers 校验 source runtime identity，而不是相信 request payload 里的 group IDs。Worker 使用 `getChannel(tenantId, agentId, channelType)` 选择正确的 channel instance。File tools 返回 runtime file IDs 或 run directory 下的 container paths，而不是 host paths。
 
-## Skill Deployment and Loading Flow
+## Skill 部署和加载流程
 
-Resolved skills become read-only inputs to the run. Group-generated skills are appended at run start.
+Resolved skills 成为 run 的只读输入。Group-generated skills 在 run start 时追加。
 
 ```mermaid
 flowchart TB
@@ -466,27 +466,27 @@ flowchart TB
   Mock --> Provider
 ```
 
-Loading steps:
+加载步骤：
 
-1. Tenant loader resolves `builtin:`, `tenant:`, and `agent:` references at startup.
-2. `nc-setuid-helper prepare` creates the runtime dir and ACLs before any bundle materialization.
-3. Control plane builds a resolved skill bundle for the specific `(tenant, agent, group, run)` under that run's runtime dir.
-4. Spawn-time setup locks the resolved bundle read-only for the run user (directories 0550, files 0440) while preserving `nanoclaw-svc` ACL access. Tenant/agent skill source paths are never world-readable.
-5. Control plane writes a normalized `skills.manifest.json` into each run's runtime dir at spawn time.
-6. Run process reads the manifest and resolves the group generated skill root.
-7. Provider-specific `SkillLoaderAdapter` prepares provider-native skill paths.
-8. Provider query runs with the prepared skill configuration.
+1. Tenant loader 在 startup 解析 `builtin:`、`tenant:` 和 `agent:` references。
+2. `nc-setuid-helper prepare` 在任何 bundle materialization 前创建 runtime dir 和 ACLs。
+3. 控制平面在该 run 的 runtime dir 下，为特定 `(tenant, agent, group, run)` 构建 resolved skill bundle。
+4. Spawn-time setup 将 resolved bundle 对 run user 锁定为只读（directories 0550，files 0440），同时保留 `nanoclaw-svc` ACL access。Tenant/agent skill source paths 永远不做 world-readable。
+5. 控制平面在 spawn time 将 normalized `skills.manifest.json` 写入每个 run 的 runtime dir。
+6. Run process 读取 manifest，并解析 group generated skill root。
+7. Provider-specific `SkillLoaderAdapter` 准备 provider-native skill paths。
+8. Provider query 使用准备好的 skill configuration 运行。
 
-## Skill Authoring and Promotion Flow
+## Skill 编写和提升流程
 
-Group-generated skill:
+Group 生成的 skill：
 
-1. Run process or reporter/local API writes under `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/skills/generated/<skill>/`.
-2. Only that group user (and the control plane via the runtime ACL) can read/write it.
-3. The skill is visible to future runs for that group.
-4. It is not copied into the tenant repository automatically.
+1. Run process 或 reporter/local API 写入 `/var/lib/nanoclaw/runtime/<t>/<a>/<g>/skills/generated/<skill>/`。
+2. 只有该 group user（以及通过 runtime ACL 访问的控制平面）可以 read/write。
+3. 该 skill 对该 group 的未来 runs 可见。
+4. 它不会自动复制到 tenant repository。
 
-Promotion to tenant skill:
+提升为 tenant skill：
 
 ```mermaid
 flowchart LR
@@ -497,57 +497,57 @@ flowchart LR
   Reload --> Readonly["read-only tenant skill mount"]
 ```
 
-Promotion must be explicit so tenant repositories remain the source of truth for shared business behavior.
+Promotion 必须显式进行，这样 tenant repositories 才能继续作为 shared business behavior 的事实源。
 
-## Failure and Recovery Behavior
+## 失败和恢复行为
 
-### Control plane restart
+### 控制平面重启
 
-- Per-`(tenant, agent)` host DBs retain messages, tasks, groups, and cursors.
-- Runtime DB rows remain on disk.
-- Control plane scans pending inbound/outbound rows and per-agent cursor state.
-- DB-listed active run PIDs are checked against `/proc/` and helper `status` using PID start time, expected UID, runtime dir, and cgroup. Missing or identity-mismatched PIDs are marked crashed/stale and reconciled.
+- Per-`(tenant, agent)` host DBs 保留 messages、tasks、groups 和 cursors。
+- Runtime DB rows 保留在磁盘上。
+- 控制平面扫描 pending inbound/outbound rows 和 per-agent cursor state。
+- DB 中列出的 active run PIDs 会通过 `/proc/` 和 helper `status` 检查 PID start time、expected UID、runtime dir 和 cgroup。缺失或 identity mismatch 的 PIDs 标记为 crashed/stale 并 reconcile。
 
-Active-run records must persist `pid`, `/proc/<pid>/stat` start time ticks, expected uid, runtime dir, cgroup path, tenant, agent, group, and run id. PID alone is never a valid runtime identity.
+Active-run records 必须持久化 `pid`、`/proc/<pid>/stat` start time ticks、expected uid、runtime dir、cgroup path、tenant、agent、group 和 run id。单独 PID 绝不是有效 runtime identity。
 
-### Run process crash
+### 运行进程崩溃
 
-- Control plane detects via SIGCHLD and `waitpid`.
-- Runtime directory preserved (no automatic cleanup).
-- Pending inbound rows remain claimable by the next live runner.
-- Pending outbound rows remain deliverable.
+- 控制平面通过 SIGCHLD 和 `waitpid` 检测。
+- Runtime directory 保留（不自动 cleanup）。
+- Pending inbound rows 仍可由下一个 live runner claim。
+- Pending outbound rows 仍可 delivery。
 
-### Provider failure
+### 故障：Provider
 
-- Provider adapter emits structured error.
-- Inbound rows are marked `error` or returned to `pending` according to retry policy.
-- Host cursor rollback follows the "output delivered or not" rule.
+- Provider adapter 产生 structured error。
+- Inbound rows 根据 retry policy 标记为 `error` 或返回 `pending`。
+- Host cursor rollback 遵循“是否已交付输出”的规则。
 
-### Tool worker failure
+### 故障：Tool worker
 
-- Pending tool rows are retryable until timeout.
-- Claimed rows older than a lease timeout return to pending or become timeout.
-- Denied requests complete with explicit tool errors.
+- Pending tool rows 在 timeout 前可重试。
+- 超过 lease timeout 的 claimed rows 返回 pending 或变为 timeout。
+- Denied requests 以明确 tool errors 完成。
 
-## Operational Status View
+## 运维状态视图
 
-The status command should report:
+状态命令应报告：
 
-- Control plane process health.
-- Connected channels per (tenant, agent).
-- Central DB path and cursor summary.
-- Configured tenants and agent services.
-- Active run count per (tenant, agent, group).
-- Runtime DB queue depths.
-- Per-group user and permission checks.
-- Skill manifest revisions per agent.
-- Helper health and recent invocations.
-- Migration state (post-cutover verify).
+- Control plane process health。
+- 每个 `(tenant, agent)` 的 connected channels。
+- Central DB path 和 cursor summary。
+- Configured tenants 和 agent services。
+- 每个 `(tenant, agent, group)` 的 active run count。
+- Runtime DB queue depths。
+- Per-group user 和 permission checks。
+- 每个 agent 的 skill manifest revisions。
+- Helper health 和 recent invocations。
+- Migration state（post-cutover verify）。
 
-## Future Extensions
+## 未来扩展
 
-Documented in the spec; not part of initial implementation:
+在 spec 中记录，不属于初始实现：
 
-- **Approach A**: Separate supervisor process that owns user lifecycle and run spawning. Shrinks the privilege surface further.
-- **Per-run Unix socket credential proxy**: If NanoClaw ever runs untrusted tenants, upgrade credential delivery from env injection to per-run Unix sockets with kernel-enforced access control.
-- **Skill hot-reload**: Add `skills.reload` to the run lifecycle so tenant skill changes take effect without restarting active runs.
+- **Approach A**：单独 supervisor process，拥有 user lifecycle 和 run spawning。进一步缩小特权面。
+- **Per-run Unix socket credential proxy**：如果 NanoClaw 将来运行 untrusted tenants，将 credential delivery 从 env injection 升级为每个 run 一个 Unix socket，并使用 kernel-enforced access control。
+- **Skill hot-reload**：在 run lifecycle 中加入 `skills.reload`，让 tenant skill changes 无需重启 active runs 即可生效。
